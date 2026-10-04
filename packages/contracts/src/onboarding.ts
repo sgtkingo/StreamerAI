@@ -107,6 +107,10 @@ export const PlaybackPreferencesSchema = z
     secondaryAudioSubtitleLanguage: z
       .union([z.literal("off"), MediaLanguageSchema])
       .default("cs"),
+    audioOutputDeviceId: z.string().trim().max(512).default("default"),
+    subtitleSizePercent: z.number().int().min(75).max(200).default(100),
+    subtitleColor: z.string().regex(/^#[0-9a-f]{6}$/i).default("#ffffff"),
+    subtitleFont: z.enum(["sans", "serif", "mono"]).default("sans"),
   })
   .strict();
 export type PlaybackPreferences = z.infer<typeof PlaybackPreferencesSchema>;

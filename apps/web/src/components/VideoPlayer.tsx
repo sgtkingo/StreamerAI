@@ -9,12 +9,15 @@ import type {
 } from "@streamer-ai/contracts";
 import type { StreamerApi } from "../api/client";
 import { safeErrorMessage } from "../api/client";
+import { applyAudioOutput } from "../audio-output";
 import {
   preferredAudioTrack,
   preferredEmbeddedSubtitle,
 } from "../playback-preferences";
 import { Brand } from "./Brand";
+import { adjacentEpisode, playableEpisodes } from "./episode-sequence";
 import { subtitleFileToVtt } from "./subtitle-file";
+import { parseWebVtt, subtitleTextAt, type SubtitleCue } from "./webvtt";
 
 interface LocalSubtitle {
   id: string;
@@ -97,9 +100,13 @@ export function VideoPlayer({
   const closingRef = useRef(false);
   const cleanupTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pauseBurstTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const skipNextEpisodeRef = useRef(false);
   const [info, setInfo] = useState<PlaybackMediaInfo | null>(null);
   const [loadingError, setLoadingError] = useState("");
   const [subtitleError, setSubtitleError] = useState("");
+  const [subtitleCues, setSubtitleCues] = useState<SubtitleCue[]>([]);
+  const [subtitleLoading, setSubtitleLoading] = useState(false);
+  const [audioOutputError, setAudioOutputError] = useState("");
   const [playbackError, setPlaybackError] = useState("");
   const [selectedAudio, setSelectedAudio] = useState<number | null>(null);
   const [selectedSubtitle, setSelectedSubtitle] = useState("off");
@@ -118,7 +125,7 @@ export function VideoPlayer({
   const [playing, setPlaying] = useState(false);
   const [hasEnded, setHasEnded] = useState(false);
   const [showPauseBurst, setShowPauseBurst] = useState(false);
-  const [, setNeedsClick] = useState(false);
+  const [needsClick, setNeedsClick] = useState(false);
   const [volume, setVolume] = useState(0.8);
   const [muted, setMuted] = useState(false);
   const [resumePrompt, setResumePrompt] = useState(false);
@@ -133,6 +140,7 @@ export function VideoPlayer({
   const [nextEpisodeCountdown, setNextEpisodeCountdown] = useState<
     number | null
   >(null);
+  const [findingNextEpisode, setFindingNextEpisode] = useState(false);
   const [episodeSwitching, setEpisodeSwitching] = useState(false);
   const [episodeError, setEpisodeError] = useState("");
 
@@ -143,15 +151,9 @@ export function VideoPlayer({
       .getTitleDetail(profileId, title.id)
       .then((detail) => {
         if (!active) return;
-        const episodes =
-          detail.series?.seasons
-            .flatMap((season) => season.episodes)
-            .filter((item) => item.availability === "available")
-            .sort(
-              (left, right) =>
-                left.seasonNumber - right.seasonNumber ||
-                left.episodeNumber - right.episodeNumber,
-            ) ?? [];
+        const episodes = playableEpisodes(
+          detail.series?.seasons.flatMap((season) => season.episodes) ?? [],
+        );
         setAvailableEpisodes(episodes);
         if (!episode || episodeTitle) return;
         const name = episodes.find(
@@ -167,27 +169,19 @@ export function VideoPlayer({
     };
   }, [api, profileId, title.id, title.kind, episode, episodeTitle]);
 
-  const currentEpisodeIndex = episode
-    ? availableEpisodes.findIndex(
-        (item) =>
-          item.seasonNumber === episode.seasonNumber &&
-          item.episodeNumber === episode.episodeNumber,
-      )
-    : -1;
-  const previousEpisode =
-    currentEpisodeIndex > 0
-      ? availableEpisodes[currentEpisodeIndex - 1]
-      : undefined;
-  const nextEpisode =
-    currentEpisodeIndex >= 0
-      ? availableEpisodes[currentEpisodeIndex + 1]
-      : undefined;
+  const previousEpisode = adjacentEpisode(
+    availableEpisodes,
+    episode,
+    "previous",
+  );
+  const nextEpisode = adjacentEpisode(availableEpisodes, episode, "next");
 
   const playEpisode = useCallback(
     async (item: SeriesEpisodeDetail) => {
       if (episodeSwitching) return;
       setEpisodeSwitching(true);
       setEpisodeError("");
+      setFindingNextEpisode(false);
       setNextEpisodeCountdown(null);
       videoRef.current?.pause();
       try {
@@ -201,10 +195,11 @@ export function VideoPlayer({
       } catch (error) {
         setEpisodeSwitching(false);
         setEpisodeError(safeErrorMessage(error));
-        void videoRef.current?.play().catch(() => setNeedsClick(true));
+        if (!hasEnded)
+          void videoRef.current?.play().catch(() => setNeedsClick(true));
       }
     },
-    [episodeSwitching, onPlayEpisode],
+    [episodeSwitching, hasEnded, onPlayEpisode],
   );
 
   useEffect(() => {
@@ -305,17 +300,10 @@ export function VideoPlayer({
 
   useEffect(() => {
     if (nextEpisodeCountdown === null || !nextEpisode) return;
-    if (nextEpisodeCountdown === 0) {
-      void playEpisode(nextEpisode);
-      return;
-    }
-    const timer = window.setTimeout(
-      () =>
-        setNextEpisodeCountdown((current) =>
-          current === null ? null : current - 1,
-        ),
-      1000,
-    );
+    const timer = window.setTimeout(() => {
+      if (nextEpisodeCountdown <= 1) void playEpisode(nextEpisode);
+      else setNextEpisodeCountdown(nextEpisodeCountdown - 1);
+    }, 1000);
     return () => window.clearTimeout(timer);
   }, [nextEpisodeCountdown, nextEpisode, playEpisode]);
 
@@ -491,6 +479,64 @@ export function VideoPlayer({
     (selectedEmbedded
       ? `${grant.url}/subtitles/${selectedEmbedded.streamIndex}`
       : null);
+  const captionText = subtitleTextAt(subtitleCues, position);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !info) return;
+    let active = true;
+    const output = preferences.audioOutputDeviceId;
+    void applyAudioOutput(video, output)
+      .then((result) => {
+        if (!active) return;
+        setAudioOutputError(
+          result === "unsupported"
+            ? "This browser cannot select the saved audio output. Using the system default."
+            : "",
+        );
+      })
+      .catch(() => {
+        if (!active) return;
+        setAudioOutputError(
+          "The selected audio output is unavailable. Using the system default.",
+        );
+        void applyAudioOutput(video, "default").catch(() => undefined);
+      });
+    return () => {
+      active = false;
+    };
+  }, [info, preferences.audioOutputDeviceId, selectedAudio, sourceVersion]);
+
+  useEffect(() => {
+    setSubtitleCues([]);
+    setSubtitleError("");
+    setSubtitleLoading(subtitleUrl !== null);
+    if (!subtitleUrl) return;
+    const controller = new AbortController();
+    void fetch(subtitleUrl, {
+      credentials: "same-origin",
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("Subtitle download failed.");
+        const cues = parseWebVtt(await response.text());
+        if (cues.length === 0) throw new Error("No readable subtitle cues found.");
+        return cues;
+      })
+      .then((cues) => {
+        if (controller.signal.aborted) return;
+        setSubtitleCues(cues);
+        setSubtitleLoading(false);
+      })
+      .catch(() => {
+        if (controller.signal.aborted) return;
+        setSubtitleLoading(false);
+        setSubtitleError(
+          "These subtitles could not be loaded. Choose another track or a local file.",
+        );
+      });
+    return () => controller.abort();
+  }, [subtitleUrl]);
 
   const restartAt = (seconds: number, audio = selectedAudio) => {
     const at = Math.min(Math.max(0, seconds), Math.max(0, duration - 0.2));
@@ -644,7 +690,27 @@ export function VideoPlayer({
               setHasEnded(true);
               if (duration > 0) setPosition(duration);
               progressRef.current = 100;
-              setNextEpisodeCountdown(nextEpisode ? 5 : null);
+              skipNextEpisodeRef.current = false;
+              if (nextEpisode) {
+                setNextEpisodeCountdown(5);
+              } else if (title.kind === "series" && episode) {
+                setFindingNextEpisode(true);
+                void api
+                  .getTitleDetail(profileId, title.id)
+                  .then((detail) => {
+                    const refreshed = playableEpisodes(
+                      detail.series?.seasons.flatMap((season) => season.episodes) ?? [],
+                    );
+                    setAvailableEpisodes(refreshed);
+                    if (
+                      !skipNextEpisodeRef.current &&
+                      adjacentEpisode(refreshed, episode, "next")
+                    )
+                      setNextEpisodeCountdown(5);
+                  })
+                  .catch(() => undefined)
+                  .finally(() => setFindingNextEpisode(false));
+              }
               void api
                 .savePlaybackProgress(grant.grantId, 100, duration, duration)
                 .catch(() => undefined);
@@ -657,37 +723,25 @@ export function VideoPlayer({
               );
             }}
             onClick={togglePlayback}
+          />
+        )}
+        {captionText && (
+          <div
+            className="video-player__captions"
+            aria-live="off"
+            style={{
+              color: preferences.subtitleColor,
+              fontFamily:
+                preferences.subtitleFont === "serif"
+                  ? "Georgia, serif"
+                  : preferences.subtitleFont === "mono"
+                    ? "Consolas, monospace"
+                    : "Arial, sans-serif",
+              fontSize: `clamp(${Math.round(16 * preferences.subtitleSizePercent / 100)}px, ${2.4 * preferences.subtitleSizePercent / 100}vw, ${Math.round(30 * preferences.subtitleSizePercent / 100)}px)`,
+            }}
           >
-            {subtitleUrl && (
-              <track
-                key={subtitleUrl}
-                kind="subtitles"
-                src={subtitleUrl}
-                srcLang={selectedEmbedded?.language ?? "en"}
-                label={
-                  selectedLocal?.name ?? selectedEmbedded?.title ?? "Subtitles"
-                }
-                default
-                onLoad={() => {
-                  const tracks = videoRef.current?.textTracks;
-                  if (tracks?.[0]) {
-                    tracks[0].mode = "showing";
-                    if (typeof VTTCue !== "undefined") {
-                      for (const cue of Array.from(tracks[0].cues ?? [])) {
-                        if (cue instanceof VTTCue) cue.line = 76;
-                      }
-                    }
-                  }
-                  setSubtitleError("");
-                }}
-                onError={() =>
-                  setSubtitleError(
-                    "These subtitles could not be loaded. Choose another track or a local file.",
-                  )
-                }
-              />
-            )}
-          </video>
+            <span>{captionText}</span>
+          </div>
         )}
         <div className="video-player__top">
           <div>
@@ -803,11 +857,36 @@ export function VideoPlayer({
                 <button
                   className="button button--secondary"
                   type="button"
-                  onClick={() => setNextEpisodeCountdown(null)}
+                  onClick={() => {
+                    skipNextEpisodeRef.current = true;
+                    setNextEpisodeCountdown(null);
+                  }}
                 >
                   Cancel
                 </button>
               </div>
+            </section>
+          </div>
+        )}
+        {findingNextEpisode && !nextEpisodeCountdown && (
+          <div className="video-player__next-episode-backdrop">
+            <section
+              className="video-player__next-episode"
+              role="status"
+              aria-label="Finding next episode"
+            >
+              <p className="video-player__eyebrow">Up next</p>
+              <h3>Checking for the next available episode…</h3>
+              <button
+                className="button button--secondary"
+                type="button"
+                onClick={() => {
+                  skipNextEpisodeRef.current = true;
+                  setFindingNextEpisode(false);
+                }}
+              >
+                Cancel autoplay
+              </button>
             </section>
           </div>
         )}
@@ -822,6 +901,21 @@ export function VideoPlayer({
 
         {info && (
           <div className="video-player__controls">
+            {needsClick && !playing && !resumePrompt && (
+              <p className="video-player__audio-notice" role="status">
+                Press Play to start playback with sound.
+              </p>
+            )}
+            {info.audioTracks.length === 0 && (
+              <p className="video-player__audio-notice" role="status">
+                No audio track was found in this file. Try another source.
+              </p>
+            )}
+            {audioOutputError && (
+              <p className="video-player__audio-notice" role="status">
+                {audioOutputError}
+              </p>
+            )}
             {episodeError && (
               <p className="video-player__subtitle-error" role="alert">
                 Could not start that episode: {episodeError}
@@ -830,6 +924,11 @@ export function VideoPlayer({
             {subtitleError && (
               <p className="video-player__subtitle-error" role="alert">
                 {subtitleError}
+              </p>
+            )}
+            {subtitleLoading && (
+              <p className="video-player__audio-notice" role="status">
+                Loading subtitles…
               </p>
             )}
             {duration > 0 && (

@@ -129,6 +129,53 @@ export function PlaybackLanguageFields({
               </select>
             </label>
           </div>
+          <div className="settings-field-grid">
+            <label className="field field--compact">
+              <span>Subtitle size</span>
+              <select
+                value={value.subtitleSizePercent}
+                onChange={(event) =>
+                  onChange({
+                    ...value,
+                    subtitleSizePercent: Number(event.target.value),
+                  })
+                }
+              >
+                {[75, 100, 125, 150, 175, 200].map((size) => (
+                  <option key={size} value={size}>
+                    {size}%
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="field field--compact">
+              <span>Subtitle font</span>
+              <select
+                value={value.subtitleFont}
+                onChange={(event) =>
+                  onChange({
+                    ...value,
+                    subtitleFont: event.target
+                      .value as PlaybackPreferences["subtitleFont"],
+                  })
+                }
+              >
+                <option value="sans">Sans-serif</option>
+                <option value="serif">Serif</option>
+                <option value="mono">Monospace</option>
+              </select>
+            </label>
+            <label className="field field--compact">
+              <span>Subtitle color</span>
+              <input
+                type="color"
+                value={value.subtitleColor}
+                onChange={(event) =>
+                  onChange({ ...value, subtitleColor: event.target.value })
+                }
+              />
+            </label>
+          </div>
         </>
       )}
     </div>

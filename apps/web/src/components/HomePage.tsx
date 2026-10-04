@@ -620,34 +620,27 @@ export function HomePage({
             }}
             placeholder={"Try “an autumn movie with Sandra Bullock”"}
           />
-          <span
-            className={`composer-submit-shell${isSearching ? " is-searching" : ""}`}
+          <button
+            className={`composer-submit${isSearching ? " is-searching" : ""}${isStopping ? " is-stopping" : ""}`}
+            type={isSearching ? "button" : "submit"}
+            onClick={isSearching ? stopSearch : undefined}
+            disabled={isStopping || (!isSearching && query.trim().length < 2)}
+            aria-label={
+              isStopping
+                ? "Stopping search"
+                : isSearching
+                  ? "Stop search"
+                  : "Find something"
+            }
           >
-            <button
-              className={`composer-submit${isSearching ? " is-searching" : ""}${isStopping ? " is-stopping" : ""}`}
-              type={isSearching ? "button" : "submit"}
-              onClick={isSearching ? stopSearch : undefined}
-              disabled={isStopping || (!isSearching && query.trim().length < 2)}
-              aria-label={
-                isStopping
-                  ? "Stopping search"
-                  : isSearching
-                    ? "Stop search"
-                    : "Find something"
-              }
-            >
-              <span
-                className="composer-submit__label"
-                aria-hidden={isSearching}
-              >
-                <span className="composer-submit__enter" aria-hidden="true">
-                  ↵
-                </span>
+            <span className="composer-submit__label" aria-hidden={isSearching}>
+              <span className="composer-submit__enter" aria-hidden="true">
+                ↵
               </span>
-              <span className="composer-submit__stop" aria-hidden="true" />
-              <span className="composer-submit__gleam" aria-hidden="true" />
-            </button>
-          </span>
+            </span>
+            <span className="composer-submit__stop" aria-hidden="true" />
+            <span className="composer-submit__gleam" aria-hidden="true" />
+          </button>
         </form>
         <div className="prompt-examples" aria-label="Example searches">
           {[

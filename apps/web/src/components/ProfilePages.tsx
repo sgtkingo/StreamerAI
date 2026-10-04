@@ -7,6 +7,7 @@ import type {
 import type { StreamerApi } from "../api/client";
 import { safeErrorMessage } from "../api/client";
 import { PlaybackLanguageFields } from "./PlaybackLanguageFields";
+import { AudioOutputPicker } from "./AudioOutputPicker";
 import { useToasts } from "./ToastProvider";
 
 export type ProfilePage = "settings" | "preferences" | "account" | "statistics";
@@ -181,14 +182,16 @@ export function ProfilePages({
               section="audio"
             />
             <h3>Audio output</h3>
-            <p className="settings-note">
-              Output-device selection is planned for the player settings. Your
-              browser currently uses the system output.
-            </p>
+            <AudioOutputPicker
+              value={playback.audioOutputDeviceId}
+              onChange={(audioOutputDeviceId) =>
+                setPlayback((current) => ({ ...current, audioOutputDeviceId }))
+              }
+            />
           </section>
           <section className="profile-page__section" id="settings-subtitles">
             <p className="eyebrow">03 / Subtitles</p>
-            <h2>Subtitle sources</h2>
+            <h2>Subtitle sources &amp; appearance</h2>
             <PlaybackLanguageFields
               value={playback}
               onChange={setPlayback}

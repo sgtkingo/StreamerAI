@@ -1774,43 +1774,6 @@ textarea:not(:disabled):hover {
   filter: none;
 }
 
-.composer-submit-shell {
-  position: relative;
-  display: grid;
-  place-items: center;
-  justify-self: end;
-  width: 54px;
-  height: 54px;
-  isolation: isolate;
-}
-
-.composer-submit-shell::before {
-  position: absolute;
-  z-index: -1;
-  inset: -7px;
-  border-radius: 50%;
-  background: conic-gradient(
-    #ff5b8b,
-    #65d6ff,
-    #f4d764,
-    #aa70ff,
-    #ff5b8b
-  );
-  content: "";
-  filter: blur(13px);
-  opacity: 0;
-  pointer-events: none;
-  transform: rotate(0deg);
-  transition: opacity 240ms ease-out;
-}
-
-.composer-submit-shell.is-searching::before {
-  animation:
-    composer-search-breathe 6s ease-in-out infinite,
-    composer-search-color 14s linear infinite;
-  will-change: opacity, transform;
-}
-
 .composer-submit {
   position: relative;
   display: grid;
@@ -1830,16 +1793,32 @@ textarea:not(:disabled):hover {
   transition:
     width 330ms cubic-bezier(0.2, 0.8, 0.2, 1),
     border-radius 330ms ease,
-    box-shadow 280ms ease,
+    box-shadow 380ms ease-out,
+    filter 220ms ease,
     opacity 280ms ease;
 }
 
+/*
+ * Search/Stop animation contract — keep these states and keyframes separate:
+ * - Idle Search hover first fades the glow in via the 380ms box-shadow
+ *   transition. The pulse starts after the same 380ms delay, at its 100%
+ *   keyframe, then cycles between 80–100% while hue rotates more slowly.
+ * - While searching, the button is Stop and runs the white composer-search-pulse.
+ * - Hovering Stop pauses that pulse and adds a stronger steady white glow;
+ *   leaving hover resumes the pulse at its paused phase.
+ * Do not change or merge these rules without preserving all three behaviors,
+ * the Search glow's 80–100% range, its matched transition/pulse delay, and
+ * the distinct timing of its two effects.
+ */
 .composer-submit:not(.is-searching):not(:disabled):hover {
   box-shadow:
-    0 0 13px 3px #ff5b8b70,
-    0 0 28px 8px #65d6ff55,
-    0 0 44px 13px #f4d76440;
-  animation: composer-rainbow 2.8s linear infinite;
+    0 0 15px 4px rgb(255 91 139 / 52%),
+    0 0 32px 9px rgb(101 214 255 / 38%),
+    0 0 48px 14px rgb(244 215 100 / 28%);
+  animation:
+    composer-search-hover-pulse 2.8s ease-in-out infinite,
+    composer-rainbow 5.6s linear infinite;
+  animation-delay: 380ms, 0ms;
 }
 
 .composer-submit__label {
@@ -1873,11 +1852,13 @@ textarea:not(:disabled):hover {
   border-radius: 50%;
 }
 
-.composer-submit.is-searching,
-.composer-submit.is-searching:hover,
-.composer-submit.is-searching:focus-visible {
-  box-shadow: none;
-  filter: none;
+.composer-submit.is-searching:not(:disabled) {
+  animation: composer-search-pulse 1.8s ease-in-out infinite;
+}
+
+.composer-submit.is-searching:not(:disabled):hover {
+  animation-play-state: paused;
+  filter: drop-shadow(0 0 12px rgb(255 255 255 / 68%));
 }
 
 .composer-submit.is-searching .composer-submit__label {
@@ -1945,24 +1926,41 @@ textarea:not(:disabled):hover {
 }
 
 @keyframes composer-rainbow {
+  from {
+    filter: hue-rotate(0deg);
+  }
   to {
     filter: hue-rotate(360deg);
   }
 }
 
-@keyframes composer-search-breathe {
+@keyframes composer-search-hover-pulse {
   0%,
   100% {
-    opacity: 0;
+    box-shadow:
+      0 0 15px 4px rgb(255 91 139 / 52%),
+      0 0 32px 9px rgb(101 214 255 / 38%),
+      0 0 48px 14px rgb(244 215 100 / 28%);
   }
   50% {
-    opacity: 0.68;
+    box-shadow:
+      0 0 12px 3.2px rgb(255 91 139 / 41.6%),
+      0 0 25.6px 7.2px rgb(101 214 255 / 30.4%),
+      0 0 38.4px 11.2px rgb(244 215 100 / 22.4%);
   }
 }
 
-@keyframes composer-search-color {
-  to {
-    transform: rotate(360deg);
+@keyframes composer-search-pulse {
+  0%,
+  100% {
+    box-shadow:
+      0 0 6px 1px rgb(255 255 255 / 18%),
+      0 0 16px 3px rgb(255 255 255 / 10%);
+  }
+  50% {
+    box-shadow:
+      0 0 10px 2px rgb(255 255 255 / 42%),
+      0 0 26px 7px rgb(255 255 255 / 24%);
   }
 }
 
@@ -2085,15 +2083,12 @@ textarea:not(:disabled):hover {
   .composer-submit__stop {
     transition-duration: 0.01ms;
   }
-  .composer-submit:not(:disabled):hover,
-  .composer-submit-shell.is-searching::before,
+  .composer-submit:not(.is-searching):not(:disabled):hover,
+  .composer-submit.is-searching:not(:disabled),
   .composer-submit:not(.is-searching):active .composer-submit__gleam,
   .composer-submit.is-stopping .composer-submit__stop,
   .pipeline > span.is-active .pipeline__indicator {
     animation: none;
-  }
-  .composer-submit-shell.is-searching::before {
-    opacity: 0.45;
   }
   .agent-wake-notice__spark {
     animation: none;
@@ -2865,6 +2860,44 @@ textarea:not(:disabled):hover {
   object-fit: contain;
 }
 
+.video-player__captions {
+  position: absolute;
+  z-index: 3;
+  right: max(20px, 5vw);
+  bottom: clamp(116px, 15vh, 190px);
+  left: max(20px, 5vw);
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+  text-align: center;
+  white-space: pre-line;
+}
+
+.video-player__captions span {
+  max-width: min(1100px, 100%);
+  padding: 4px 12px;
+  border-radius: 5px;
+  background: rgb(0 0 0 / 78%);
+  line-height: 1.3;
+  text-shadow: 0 2px 3px #000;
+}
+
+.video-player__audio-notice {
+  margin: 0 0 8px;
+  padding: 8px 11px;
+  border-left: 3px solid #d7a449;
+  background: rgb(15 15 15 / 90%);
+  color: #f3e5ca;
+  font-size: 12px;
+}
+
+.audio-output-picker__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
 .video-player__video::cue {
   background: rgb(0 0 0 / 72%);
   color: #fff;
@@ -3401,6 +3434,11 @@ textarea:not(:disabled):hover {
   }
   .video-player__controls {
     padding-bottom: 12px;
+  }
+  .video-player__captions {
+    right: 12px;
+    bottom: 185px;
+    left: 12px;
   }
   .video-player__control-row {
     gap: 2px;

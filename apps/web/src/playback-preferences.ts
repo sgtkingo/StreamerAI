@@ -10,6 +10,10 @@ export const DEFAULT_PLAYBACK_PREFERENCES: PlaybackPreferences = {
   autoFindSubtitles: false,
   primaryAudioSubtitleLanguage: "off",
   secondaryAudioSubtitleLanguage: "cs",
+  audioOutputDeviceId: "default",
+  subtitleSizePercent: 100,
+  subtitleColor: "#ffffff",
+  subtitleFont: "sans",
 };
 
 const languageAliases: Record<string, string[]> = {
