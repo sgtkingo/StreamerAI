@@ -129,6 +129,69 @@ describe("TitleDetail", () => {
     );
   });
 
+  it("shows a separate forced search control for each series episode", async () => {
+    const sources = ["source-a", "source-b"].map((candidateId, index) => ({
+      id: String(index + 1).repeat(32),
+      providerId: "webshare",
+      candidateId,
+      releaseName: `Sample.Show.S01E01.${index ? "720p" : "1080p"}.mkv`,
+      sizeBytes: 100 + index,
+      format: { ...title.formats[0]!, resolution: index ? "720p" : "1080p" },
+      seasonNumber: 1,
+      episodeNumber: 1,
+      checkedAt: "2026-09-29T20:00:00.000Z",
+    }));
+    const seriesTitle: CatalogTitle = { ...title, sources };
+    const detail: Detail = {
+      title: seriesTitle,
+      related: [],
+      series: {
+        status: "complete",
+        seasons: [
+          {
+            seasonNumber: 1,
+            title: "Season One",
+            episodes: [
+              {
+                seasonNumber: 1,
+                episodeNumber: 1,
+                title: "Pilot",
+                airDate: "2021-01-01",
+                availability: "available",
+              },
+            ],
+          },
+        ],
+      },
+    };
+    const api = {
+      getTitleDetail: vi.fn().mockResolvedValue(detail),
+    } as unknown as StreamerApi;
+    render(
+      <TitleDetail
+        api={api}
+        profileId="default"
+        title={seriesTitle}
+        playbackEnabled
+        onClose={vi.fn()}
+        onOpenRelated={vi.fn()}
+        onPlay={vi.fn().mockResolvedValue(undefined)}
+        onAdded={vi.fn()}
+      />,
+    );
+
+    const dialog = await screen.findByRole("dialog", {
+      name: "Details for Sample Show",
+    });
+    const episode = within(dialog).getByText(/Pilot/).closest("li")!;
+    expect(within(episode).getByRole("button", { name: /play/i })).toBeEnabled();
+    expect(
+      within(episode).getByRole("button", {
+        name: "Search sources for episode 1",
+      }),
+    ).toBeEnabled();
+  });
+
   it("shows movie genres already present in validated metadata", async () => {
     const movie: CatalogTitle = {
       ...title,
@@ -193,6 +256,10 @@ describe("TitleDetail", () => {
       getTitleDetail: vi
         .fn()
         .mockResolvedValue({ title: movie, related: [], series: null }),
+      forceTitleSearch: vi.fn().mockResolvedValue({
+        detail: { title: movie, related: [], series: null },
+        foundSources: 2,
+      }),
       checkPlayback: vi.fn().mockResolvedValue({ ok: true }),
     } as unknown as StreamerApi;
     const onPlay = vi.fn().mockResolvedValue(undefined);
@@ -213,11 +280,14 @@ describe("TitleDetail", () => {
     });
     await user.click(
       within(dialog).getByRole("button", {
-        name: "More sources for this movie",
+        name: "Search again for Sample Movie",
       }),
     );
-    const menu = within(dialog).getByRole("group", { name: "Movie sources" });
-    expect(within(menu).getAllByRole("button")).toHaveLength(2);
+    const menu = within(dialog).getByRole("group", { name: "Search results" });
+    await within(menu).findByRole("button", { name: /Source 2/ });
+    expect(
+      within(menu).getAllByRole("button", { name: /Recommended|Source 2/ }),
+    ).toHaveLength(2);
     await user.click(within(menu).getByRole("button", { name: /Source 2/ }));
     expect(onPlay).toHaveBeenCalledWith(
       movie,

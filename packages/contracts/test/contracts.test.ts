@@ -10,6 +10,7 @@ import {
   IntegrationConnectionResultSchema,
   IntegrationPublicStatusSchema,
   PlaybackPreferencesSchema,
+  subtitleWindowStart,
   SUPPORTED_LOCALES,
   TmdbConnectRequestSchema,
 } from "../src/index.js";
@@ -121,6 +122,13 @@ describe("public contracts", () => {
         subtitleSizePercent: 500,
       }),
     ).toThrow();
+  });
+
+  it("selects a bounded subtitle window for the current playback position", () => {
+    expect(subtitleWindowStart(0)).toBe(0);
+    expect(subtitleWindowStart(62.5)).toBe(60);
+    expect(subtitleWindowStart(155)).toBe(150);
+    expect(subtitleWindowStart(Number.NaN)).toBe(0);
   });
 
   it("requires a verified format before a title can be called available", () => {

@@ -21,6 +21,7 @@ import {
   type PlaybackLanguageAvailability,
   type EpisodeSelection,
   type TitleDetail,
+  type TitleSource,
 } from "@streamer-ai/contracts";
 import {
   ProfileLimitError,
@@ -629,12 +630,130 @@ export class StreamerCore {
             ...title,
             seriesCoverage: coverage,
             availability: coverage.complete ? "available" : "partial",
+            availabilityCheckedAt: this.now().toISOString(),
           });
           this.database.titles.upsert(storageTitle(title));
         }
       }
     }
     return TitleDetailSchema.parse({ title, series, related });
+  }
+
+  async forceTitleSearch(
+    profileId: string,
+    titleId: string,
+  ): Promise<{ detail: TitleDetail; foundSources: number }> {
+    this.requireProfile(profileId);
+    const stored = this.database.titles.get(titleId);
+    if (stored === null) throw new UnknownTitleError(titleId);
+    if (
+      this.contentProvider.mode !== "live" ||
+      this.contentProvider.forceSearchTitle === undefined
+    )
+      throw new PlaybackNotConfiguredError();
+    const { createdAt: _createdAt, updatedAt: _updatedAt, ...data } = stored;
+    const title = this.decorateTitle(
+      profileId,
+      CatalogTitleSchema.parse({
+        ...data,
+        inLibrary: false,
+        matchPercent: null,
+        progressPercent: null,
+      }),
+    );
+    const searched = await this.contentProvider.forceSearchTitle(
+      profileId,
+      title,
+    );
+    const foundSources = searched.sources?.length ?? 0;
+    if (foundSources > 0) this.database.titles.upsert(storageTitle(searched));
+    return {
+      detail: await this.titleDetail(
+        profileId,
+        titleId,
+        title.kind === "series",
+      ),
+      foundSources,
+    };
+  }
+
+  async forceEpisodeSearch(
+    profileId: string,
+    titleId: string,
+    episode: EpisodeSelection,
+  ): Promise<{ detail: TitleDetail; sources: TitleSource[] }> {
+    this.requireProfile(profileId);
+    const stored = this.database.titles.get(titleId);
+    if (stored === null) throw new UnknownTitleError(titleId);
+    if (
+      this.contentProvider.mode !== "live" ||
+      this.contentProvider.forceSearchEpisode === undefined
+    )
+      throw new PlaybackNotConfiguredError();
+    const { createdAt: _createdAt, updatedAt: _updatedAt, ...data } = stored;
+    const title = this.decorateTitle(
+      profileId,
+      CatalogTitleSchema.parse({
+        ...data,
+        inLibrary: false,
+        matchPercent: null,
+        progressPercent: null,
+      }),
+    );
+    if (title.kind !== "series") throw new UnplayableTitleError(titleId);
+    const sources = await this.contentProvider.forceSearchEpisode(
+      profileId,
+      title,
+      episode,
+    );
+    let detail = await this.titleDetail(profileId, titleId);
+    if (sources.length > 0) {
+      const episodes =
+        detail.series?.seasons.flatMap((season) => season.episodes) ?? [];
+      const available = episodes.filter(
+        (item) => item.availability === "available",
+      );
+      if (available.length > 0 && episodes.length > 0) {
+        const complete = available.length === episodes.length;
+        const mergedSources = [...sources, ...(detail.title.sources ?? [])]
+          .filter(
+            (source, index, items) =>
+              items.findIndex((other) => other.id === source.id) === index,
+          )
+          .slice(0, 24);
+        const updated = CatalogTitleSchema.parse({
+          ...detail.title,
+          availability: complete ? "available" : "partial",
+          availabilityProvider: sources[0]!.providerId,
+          availabilityCheckedAt: this.now().toISOString(),
+          availabilityProvenance:
+            detail.title.availabilityProvenance?.providerId ===
+            sources[0]!.providerId
+              ? detail.title.availabilityProvenance
+              : undefined,
+          formats:
+            detail.title.formats.length > 0
+              ? detail.title.formats
+              : [sources[0]!.format],
+          sources: mergedSources,
+          seriesCoverage: {
+            seasonsAvailable: new Set(
+              available.map((item) => item.seasonNumber),
+            ).size,
+            seasonsTotal: detail.series!.seasons.filter(
+              (season) => season.episodes.length > 0,
+            ).length,
+            episodesAvailable: available.length,
+            episodesTotal: episodes.length,
+            complete,
+            nextEpisodeLabel: `S${String(available[0]!.seasonNumber).padStart(2, "0")} E${String(available[0]!.episodeNumber).padStart(2, "0")}`,
+          },
+        });
+        this.database.titles.upsert(storageTitle(updated));
+        detail = await this.titleDetail(profileId, titleId);
+      }
+    }
+    return { detail, sources };
   }
 
   addToLibrary(profileId: string, titleId: string): LibraryResponse {

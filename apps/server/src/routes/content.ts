@@ -374,6 +374,63 @@ export function registerContentRoutes(
     },
   );
 
+  app.post(
+    "/api/v1/profiles/:profileId/titles/:titleId/force-search",
+    { schema: { params: titleParamsSchema } },
+    async (request, reply) => {
+      const { profileId, titleId } = request.params as {
+        profileId: string;
+        titleId: string;
+      };
+      try {
+        return await dependencies.core.forceTitleSearch(profileId, titleId);
+      } catch (error) {
+        return sendDomainError(reply, error);
+      }
+    },
+  );
+
+  app.post(
+    "/api/v1/profiles/:profileId/titles/:titleId/episodes/force-search",
+    {
+      schema: {
+        params: titleParamsSchema,
+        body: {
+          type: "object",
+          required: ["seasonNumber", "episodeNumber"],
+          additionalProperties: false,
+          properties: {
+            seasonNumber: { type: "integer", minimum: 0 },
+            episodeNumber: { type: "integer", minimum: 1 },
+          },
+        },
+      },
+    },
+    async (request, reply) => {
+      const { profileId, titleId } = request.params as {
+        profileId: string;
+        titleId: string;
+      };
+      const episode = EpisodeSelectionSchema.safeParse(request.body);
+      if (!episode.success)
+        return reply.code(400).send({
+          error: {
+            code: "INVALID_REQUEST",
+            message: "Choose a valid episode.",
+          },
+        });
+      try {
+        return await dependencies.core.forceEpisodeSearch(
+          profileId,
+          titleId,
+          episode.data,
+        );
+      } catch (error) {
+        return sendDomainError(reply, error);
+      }
+    },
+  );
+
   app.put(
     "/api/v1/profiles/:profileId/library/:titleId",
     { schema: { params: titleParamsSchema } },

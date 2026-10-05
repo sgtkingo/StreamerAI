@@ -14,6 +14,7 @@ import type {
   ViewerProfile,
   UpdateViewerProfile,
   TitleDetail,
+  TitleSource,
   EpisodeSelection,
 } from "@streamer-ai/contracts";
 import { DEFAULT_PLAYBACK_PREFERENCES } from "../playback-preferences";
@@ -90,6 +91,15 @@ export interface StreamerApi {
     titleId: string,
     retry?: boolean,
   ): Promise<TitleDetail>;
+  forceTitleSearch(
+    profileId: string,
+    titleId: string,
+  ): Promise<{ detail: TitleDetail; foundSources: number }>;
+  forceEpisodeSearch(
+    profileId: string,
+    titleId: string,
+    episode: EpisodeSelection,
+  ): Promise<{ detail: TitleDetail; sources: TitleSource[] }>;
   discover(
     request: DiscoveryRequest,
     signal?: AbortSignal,
@@ -442,6 +452,16 @@ export const apiClient: StreamerApi = {
   getTitleDetail: (profileId, titleId, retry = false) =>
     request<TitleDetail>(
       `/profiles/${encodeURIComponent(profileId)}/titles/${encodeURIComponent(titleId)}${retry ? "?retry=true" : ""}`,
+    ),
+  forceTitleSearch: (profileId, titleId) =>
+    request<{ detail: TitleDetail; foundSources: number }>(
+      `/profiles/${encodeURIComponent(profileId)}/titles/${encodeURIComponent(titleId)}/force-search`,
+      { method: "POST" },
+    ),
+  forceEpisodeSearch: (profileId, titleId, episode) =>
+    request<{ detail: TitleDetail; sources: TitleSource[] }>(
+      `/profiles/${encodeURIComponent(profileId)}/titles/${encodeURIComponent(titleId)}/episodes/force-search`,
+      { method: "POST", body: JSON.stringify(episode) },
     ),
   discover: (payload, signal) =>
     request<DiscoveryResponse>("/discovery/sessions", {

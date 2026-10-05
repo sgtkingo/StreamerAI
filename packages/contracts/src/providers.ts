@@ -254,6 +254,17 @@ export const PlaybackSubtitleTrackSchema = z
   .strict();
 export type PlaybackSubtitleTrack = z.infer<typeof PlaybackSubtitleTrackSchema>;
 
+/** Embedded subtitles are extracted near playback, never from the entire film. */
+export const SUBTITLE_WINDOW_SECONDS = 10;
+export const SUBTITLE_WINDOW_OVERLAP_SECONDS = 2;
+
+export function subtitleWindowStart(seconds: number): number {
+  const safeSeconds = Number.isFinite(seconds) ? Math.max(0, seconds) : 0;
+  return (
+    Math.floor(safeSeconds / SUBTITLE_WINDOW_SECONDS) * SUBTITLE_WINDOW_SECONDS
+  );
+}
+
 export const PlaybackMediaInfoSchema = z
   .object({
     durationSeconds: z.number().positive().max(86_400).nullable(),

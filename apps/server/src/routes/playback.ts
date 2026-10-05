@@ -1,4 +1,8 @@
 import type { FastifyInstance } from "fastify";
+import {
+  SUBTITLE_WINDOW_OVERLAP_SECONDS,
+  subtitleWindowStart,
+} from "@streamer-ai/contracts";
 import { PlaybackMediaError } from "../services/playback-media-engine.js";
 import type {
   PlaybackMediaEngine,
@@ -384,6 +388,13 @@ export function registerPlaybackRoutes(
             streamIndex: { type: "string", pattern: "^[0-9]{1,3}$" },
           },
         },
+        querystring: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            at: { type: "string", pattern: "^[0-9]{1,5}$" },
+          },
+        },
       },
     },
     async (request, reply) => {
@@ -391,6 +402,10 @@ export function registerPlaybackRoutes(
         grantId: string;
         streamIndex: string;
       };
+      const { at = "0" } = request.query as { at?: string };
+      const requestedAt = Number(at);
+      if (requestedAt > 86_400) return reply.code(400).send(errorResponse);
+      const windowStart = subtitleWindowStart(requestedAt);
       const ticket = ticketStore.get(grantId);
       if (!ticket) return reply.code(404).send(expiredResponse);
       let phase = "source";
@@ -402,17 +417,21 @@ export function registerPlaybackRoutes(
         if (!info.subtitleTracks.some((track) => track.streamIndex === index)) {
           return reply.code(404).send(errorResponse);
         }
-        const key = `${grantId}:${index}`;
+        const key = `${grantId}:${index}:${windowStart}`;
         let body = subtitles.get(key);
         if (!body) {
           phase = "subtitle";
-          body = await mediaEngine.subtitle(sourceUrl, index);
-          if (subtitles.size >= 4)
+          body = await mediaEngine.subtitle(sourceUrl, index, windowStart);
+          if (subtitles.size >= 12)
             subtitles.delete(subtitles.keys().next().value!);
           subtitles.set(key, body);
         }
         return reply
           .header("content-type", "text/vtt; charset=utf-8")
+          .header(
+            "x-streamer-subtitle-offset",
+            String(Math.max(0, windowStart - SUBTITLE_WINDOW_OVERLAP_SECONDS)),
+          )
           .header("cache-control", "no-store, private")
           .send(body);
       } catch (error) {

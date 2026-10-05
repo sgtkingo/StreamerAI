@@ -11,6 +11,7 @@ import {
   type PlaybackLanguageAvailability,
   type SeriesDetail,
   type EpisodeSelection,
+  type TitleSource,
 } from "@streamer-ai/contracts";
 import { randomUUID } from "node:crypto";
 
@@ -60,6 +61,13 @@ export interface StreamerContentProvider {
     title: CatalogTitle,
     retry?: boolean,
   ): Promise<SeriesDetail>;
+  /** Explicit title-wide media recheck; automatic episode discovery remains independent. */
+  forceSearchTitle?(profileId: string, title: CatalogTitle): Promise<CatalogTitle>;
+  forceSearchEpisode?(
+    profileId: string,
+    title: CatalogTitle,
+    episode: EpisodeSelection,
+  ): Promise<TitleSource[]>;
 }
 
 export interface DiscoveryConversationMessage {

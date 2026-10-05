@@ -630,7 +630,7 @@ describe("LiveContentCoordinator", () => {
       ...preview,
       id: "sai:tmdb:series:42",
       title: "Sample Show",
-      originalTitle: "Sample Show",
+      originalTitle: "Original Sample Show",
       year: 2021,
     };
     const first = {
@@ -657,7 +657,9 @@ describe("LiveContentCoordinator", () => {
         .fn()
         .mockImplementation(async (request) =>
           request.episodeNumber === 1
-            ? [first]
+            ? request.originalTitle === null
+              ? [first]
+              : []
             : request.episodeNumber === 2
               ? secondSearch
               : [],
@@ -722,6 +724,14 @@ describe("LiveContentCoordinator", () => {
       expect(detail.seasons[0]?.episodes[0]?.availability).toBe("available");
       expect(detail.seasons[0]?.episodes[1]?.availability).toBe("searching");
     });
+    expect(media.search).toHaveBeenCalledWith(
+      expect.objectContaining({
+        episodeNumber: 1,
+        originalTitle: null,
+        limit: 50,
+      }),
+      expect.anything(),
+    );
     await coordinator.preparePlayback("default", title, {
       seasonNumber: 1,
       episodeNumber: 1,

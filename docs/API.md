@@ -121,7 +121,7 @@ afterward.
 | `GET` | `/playback/grants/:grantId/media?audio=2&start=31.500` | Stream browser-compatible fragmented MP4 with selected audio and a start offset. First request records playback once. |
 | `POST` | `/playback/grants/:grantId/progress` | Save the progress percentage, position and duration for the selected film or episode. Requires a started ticket, except a zero-percent reset before playback. |
 | `GET` | `/playback/grants/:grantId/thumbnail?at=30` | Generate a small JPEG preview near the requested second. |
-| `GET` | `/playback/grants/:grantId/subtitles/:streamIndex` | Convert an embedded text subtitle track to WebVTT. |
+| `GET` | `/playback/grants/:grantId/subtitles/:streamIndex?at=<seconds>` | Convert a bounded subtitle window around the requested playback position to WebVTT. The `X-Streamer-Subtitle-Offset` response header gives the number of seconds to add to each segment-relative cue time. |
 | `GET` | `/playback/grants/:grantId` | Legacy direct redirect, retained for older clients. |
 | `DELETE` | `/playback/grants/:grantId` | Stop/revoke the active ticket. |
 

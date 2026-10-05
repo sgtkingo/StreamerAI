@@ -118,6 +118,21 @@ describe("in-app media gateway", () => {
     });
     expect(subtitle.statusCode).toBe(200);
     expect(subtitle.body).toContain("WEBVTT");
+    expect(media.subtitle).toHaveBeenCalledWith(directUrl, 3, 0);
+
+    const laterSubtitle = await app.inject({
+      method: "GET",
+      url: "/api/v1/playback/grants/media-grant/subtitles/3?at=155",
+    });
+    expect(laterSubtitle.statusCode).toBe(200);
+    expect(media.subtitle).toHaveBeenCalledWith(directUrl, 3, 150);
+    expect(laterSubtitle.headers["x-streamer-subtitle-offset"]).toBe("148");
+
+    const invalidSubtitleTime = await app.inject({
+      method: "GET",
+      url: "/api/v1/playback/grants/media-grant/subtitles/3?at=99999",
+    });
+    expect(invalidSubtitleTime.statusCode).toBe(400);
 
     current = new Date("2026-10-02T12:02:00.000Z");
     expect(tickets.get("media-grant")).not.toBeNull();

@@ -114,6 +114,38 @@ afterEach(() => {
 });
 
 describe("VideoPlayer output and episode flow", () => {
+  it("accepts a valid subtitle window with no spoken lines", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: true, text: async () => "WEBVTT\n\n" }),
+    );
+    render(
+      <VideoPlayer
+        api={api()}
+        profileId="default"
+        title={baseTitle}
+        grant={grant}
+        preferences={{
+          ...DEFAULT_PLAYBACK_PREFERENCES,
+          autoFindSubtitles: true,
+        }}
+        onPlayEpisode={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(fetch).toHaveBeenCalledWith(
+        `${grant.url}/subtitles/3?at=0`,
+        expect.objectContaining({ credentials: "same-origin" }),
+      ),
+    );
+    await waitFor(() =>
+      expect(screen.queryByText(/Loading subtitles/i)).not.toBeInTheDocument(),
+    );
+    expect(screen.queryByText(/could not be loaded/i)).not.toBeInTheDocument();
+  });
+
   it("routes audio to the saved device and shows styled subtitles after seeking", async () => {
     const setSinkId = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(HTMLMediaElement.prototype, "setSinkId", {
@@ -122,11 +154,18 @@ describe("VideoPlayer output and episode flow", () => {
     });
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue({
-        ok: true,
-        text: async () =>
-          "WEBVTT\n\n00:01:02.000 --> 00:01:04.000\nHello, viewer\n",
-      }),
+      vi.fn().mockImplementation((url: string) =>
+        Promise.resolve({
+          ok: true,
+          headers: {
+            get: () => (url.includes("at=60") ? "58" : "0"),
+          },
+          text: async () =>
+            url.includes("at=60")
+              ? "WEBVTT\n\n00:00:04.000 --> 00:00:06.000\nHello, viewer\n"
+              : "WEBVTT\n\n",
+        }),
+      ),
     );
     const preferences: PlaybackPreferences = {
       ...DEFAULT_PLAYBACK_PREFERENCES,
@@ -151,19 +190,72 @@ describe("VideoPlayer output and episode flow", () => {
     await waitFor(() => expect(setSinkId).toHaveBeenCalledWith("speaker-1"));
     await waitFor(() =>
       expect(fetch).toHaveBeenCalledWith(
-        `${grant.url}/subtitles/3`,
+        `${grant.url}/subtitles/3?at=0`,
         expect.objectContaining({ credentials: "same-origin" }),
       ),
     );
     const video = document.querySelector("video")!;
     video.currentTime = 62.5;
     fireEvent.timeUpdate(video);
+    await waitFor(() =>
+      expect(fetch).toHaveBeenCalledWith(
+        `${grant.url}/subtitles/3?at=60`,
+        expect.objectContaining({ credentials: "same-origin" }),
+      ),
+    );
     const caption = await screen.findByText("Hello, viewer");
     expect(caption.parentElement).toHaveStyle({ color: "#ffff00" });
     expect(caption.parentElement).toHaveStyle({
       fontFamily: "Consolas, monospace",
     });
     expect(caption.parentElement?.style.fontSize).toContain("45px");
+  });
+
+  it("stops waiting and explains a timed-out embedded subtitle request", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation(
+        (_url: string, options: RequestInit) =>
+          new Promise((_resolve, reject) => {
+            options.signal?.addEventListener("abort", () =>
+              reject(new DOMException("Aborted", "AbortError")),
+            );
+          }),
+      ),
+    );
+    render(
+      <VideoPlayer
+        api={api()}
+        profileId="default"
+        title={baseTitle}
+        grant={grant}
+        preferences={{
+          ...DEFAULT_PLAYBACK_PREFERENCES,
+          autoFindSubtitles: true,
+        }}
+        onPlayEpisode={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(screen.getByText("Loading subtitles…")).toBeInTheDocument();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5_000);
+    });
+    expect(
+      screen.getByText("Preparing subtitles for this part of the video…"),
+    ).toBeInTheDocument();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(23_000);
+    });
+    expect(screen.queryByText("Loading subtitles…")).not.toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Subtitles took too long to prepare",
+    );
   });
 
   it("refreshes a series and starts its newly available next episode after five seconds", async () => {

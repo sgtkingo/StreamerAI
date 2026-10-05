@@ -2,6 +2,8 @@ import { spawn } from "node:child_process";
 import type { Readable } from "node:stream";
 import {
   PlaybackMediaInfoSchema,
+  SUBTITLE_WINDOW_OVERLAP_SECONDS,
+  SUBTITLE_WINDOW_SECONDS,
   type PlaybackMediaInfo,
 } from "@streamer-ai/contracts";
 
@@ -46,7 +48,11 @@ export interface PlaybackMediaEngine {
     startSeconds: number,
   ): PlaybackMediaStream;
   thumbnail(sourceUrl: string, atSeconds: number): Promise<Buffer>;
-  subtitle(sourceUrl: string, streamIndex: number): Promise<Buffer>;
+  subtitle(
+    sourceUrl: string,
+    streamIndex: number,
+    windowStart: number,
+  ): Promise<Buffer>;
 }
 
 interface ProbeStream {
@@ -320,7 +326,15 @@ export class FfmpegPlaybackMediaEngine implements PlaybackMediaEngine {
     );
   }
 
-  subtitle(sourceUrl: string, streamIndex: number): Promise<Buffer> {
+  subtitle(
+    sourceUrl: string,
+    streamIndex: number,
+    windowStart: number,
+  ): Promise<Buffer> {
+    const seekStart = Math.max(
+      0,
+      windowStart - SUBTITLE_WINDOW_OVERLAP_SECONDS,
+    );
     return runBuffered(
       this.ffmpeg,
       [
@@ -328,6 +342,12 @@ export class FfmpegPlaybackMediaEngine implements PlaybackMediaEngine {
         "-loglevel",
         "error",
         "-nostdin",
+        "-ss",
+        seekStart.toFixed(3),
+        // Subtitle-only extraction still reads the interleaved remote media.
+        // Keep each seek short, and let FFmpeg emit segment-relative cues.
+        "-t",
+        String(SUBTITLE_WINDOW_SECONDS + 2 * SUBTITLE_WINDOW_OVERLAP_SECONDS),
         "-i",
         sourceUrl,
         "-map",
@@ -338,8 +358,8 @@ export class FfmpegPlaybackMediaEngine implements PlaybackMediaEngine {
         "webvtt",
         "pipe:1",
       ],
-      8 * 1024 * 1024,
-      120_000,
+      1024 * 1024,
+      24_000,
     );
   }
 }

@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type {
   CatalogTitle,
   EpisodeSelection,
+  TitleSource,
   TitleDetail as Detail,
 } from "@streamer-ai/contracts";
 import type { StreamerApi } from "../api/client";
@@ -56,6 +57,17 @@ export function TitleDetail({
   const [playing, setPlaying] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [openSourceFor, setOpenSourceFor] = useState<string | null>(null);
+  const [forceSearch, setForceSearch] = useState<
+    { status: "searching" } | { status: "done"; message: string } | null
+  >(null);
+  const [episodeSearches, setEpisodeSearches] = useState<
+    Record<
+      string,
+      | { status: "searching" }
+      | { status: "done"; sources: TitleSource[] }
+      | { status: "error"; message: string }
+    >
+  >({});
   const openSourceForRef = useRef(openSourceFor);
   openSourceForRef.current = openSourceFor;
 
@@ -77,6 +89,9 @@ export function TitleDetail({
     setError("");
     setSelectedSeason(null);
     setMovieStatus("checking");
+    setOpenSourceFor(null);
+    setForceSearch(null);
+    setEpisodeSearches({});
     const load = async () => {
       try {
         const result = await api.getTitleDetail(profileId, title.id);
@@ -92,18 +107,22 @@ export function TitleDetail({
   }, [api, profileId, title.id]);
 
   useEffect(() => {
-    if (detail?.series?.status !== "searching") return;
+    const status = detail?.series?.status;
+    if (!status || status === "complete") return;
     let active = true;
-    const timer = window.setInterval(() => {
-      void api
-        .getTitleDetail(profileId, title.id)
-        .then((result) => {
-          if (active) setDetail(result);
-        })
-        .catch(() => {
-          if (active) setError("Episode search is temporarily unavailable.");
-        });
-    }, 2500);
+    const timer = window.setInterval(
+      () => {
+        void api
+          .getTitleDetail(profileId, title.id)
+          .then((result) => {
+            if (active) setDetail(result);
+          })
+          .catch(() => {
+            if (active) setError("Episode search is temporarily unavailable.");
+          });
+      },
+      status === "searching" ? 2500 : 60_000,
+    );
     return () => {
       active = false;
       window.clearInterval(timer);
@@ -249,6 +268,71 @@ export function TitleDetail({
       setAdding(false);
     }
   };
+  const searchAgain = async () => {
+    if (forceSearch?.status === "searching") return;
+    if (openSourceFor === "force") {
+      setOpenSourceFor(null);
+      return;
+    }
+    setOpenSourceFor("force");
+    setForceSearch({ status: "searching" });
+    try {
+      const result = await api.forceTitleSearch(profileId, current.id);
+      setDetail(result.detail);
+      setForceSearch({
+        status: "done",
+        message:
+          result.foundSources > 0
+            ? `Found ${result.foundSources} playable ${result.foundSources === 1 ? "source" : "sources"}.`
+            : "No new playable sources found. You can search again later.",
+      });
+      if (current.kind === "movie") {
+        setMovieStatus("checking");
+        try {
+          await api.checkPlayback(profileId, current.id);
+          setMovieStatus("ready");
+        } catch {
+          setMovieStatus("unavailable");
+        }
+      }
+    } catch (searchError) {
+      const message = safeErrorMessage(searchError);
+      setForceSearch({ status: "done", message });
+      setError(message);
+    }
+  };
+  const searchEpisode = async (episode: EpisodeSelection) => {
+    const key = `${episode.seasonNumber}:${episode.episodeNumber}`;
+    if (episodeSearches[key]?.status === "searching") return;
+    if (openSourceFor === key) {
+      setOpenSourceFor(null);
+      return;
+    }
+    setOpenSourceFor(key);
+    setEpisodeSearches((searches) => ({
+      ...searches,
+      [key]: { status: "searching" },
+    }));
+    try {
+      const result = await api.forceEpisodeSearch(
+        profileId,
+        current.id,
+        episode,
+      );
+      setDetail(result.detail);
+      setEpisodeSearches((searches) => ({
+        ...searches,
+        [key]: { status: "done", sources: result.sources },
+      }));
+    } catch (searchError) {
+      const message = safeErrorMessage(searchError);
+      setEpisodeSearches((searches) => ({
+        ...searches,
+        [key]: { status: "error", message },
+      }));
+      setError(message);
+    }
+  };
 
   if (suspended) return null;
 
@@ -315,66 +399,82 @@ export function TitleDetail({
                 disabled={movieStatus !== "ready" || playing !== null}
                 onClick={() => void play()}
               >
-                {movieStatus === "ready"
-                  ? playing === "movie"
-                    ? "Starting…"
-                    : (
-                        <PlayActionContent
-                          label={
-                            current.progressPercent !== null &&
-                            current.progressPercent >= 2 &&
-                            current.progressPercent < 95
-                              ? "Continue"
-                              : "Play"
-                          }
-                        />
-                      )
-                  : movieStatus === "checking"
-                    ? "Checking"
-                    : "Currently unavailable"}
+                {movieStatus === "ready" ? (
+                  playing === "movie" ? (
+                    "Starting…"
+                  ) : (
+                    <PlayActionContent
+                      label={
+                        current.progressPercent !== null &&
+                        current.progressPercent >= 2 &&
+                        current.progressPercent < 95
+                          ? "Continue"
+                          : "Play"
+                      }
+                    />
+                  )
+                ) : movieStatus === "checking" ? (
+                  "Checking"
+                ) : (
+                  "Currently unavailable"
+                )}
               </button>
             )}
-            {current.kind === "movie" &&
-              playbackEnabled &&
-              sourcesFor().length > 1 && (
-                <button
-                  className="button button--secondary title-detail__source-trigger"
-                  type="button"
-                  aria-label="More sources for this movie"
-                  aria-expanded={openSourceFor === "movie"}
-                  onClick={() =>
-                    setOpenSourceFor(openSourceFor === "movie" ? null : "movie")
-                  }
-                >
-                  <span aria-hidden="true">⋮</span>
-                </button>
-              )}
-            {openSourceFor === "movie" && (
+            {current.kind === "movie" && (
+              <button
+                className={`title-detail__force-search${forceSearch?.status === "searching" ? " is-searching" : ""}`}
+                type="button"
+                aria-label={`Search again for ${current.title}`}
+                aria-expanded={openSourceFor === "force"}
+                aria-busy={forceSearch?.status === "searching"}
+                title="Force a new search for playable sources"
+                disabled={
+                  !playbackEnabled || forceSearch?.status === "searching"
+                }
+                onClick={() => void searchAgain()}
+              >
+                <span aria-hidden="true">⋮</span>
+              </button>
+            )}
+            {current.kind === "movie" && openSourceFor === "force" && (
               <div
                 className="title-detail__source-menu"
                 role="group"
-                aria-label="Movie sources"
+                aria-label="Search results"
               >
-                <strong>Choose a source</strong>
-                <small>
-                  Each file has its own audio, subtitles and quality.
+                <button
+                  className="title-detail__source-menu-dismiss"
+                  type="button"
+                  aria-label="Close search results"
+                  onClick={() => setOpenSourceFor(null)}
+                >
+                  ×
+                </button>
+                <strong>Search for playable sources</strong>
+                <small role="status">
+                  {forceSearch?.status === "searching"
+                    ? "Checking this title again…"
+                    : forceSearch?.message}
                 </small>
-                {sourcesFor().map((source, index) => (
-                  <button
-                    key={source.id}
-                    type="button"
-                    title={source.releaseName}
-                    onClick={() => {
-                      setOpenSourceFor(null);
-                      void play(undefined, undefined, source.id);
-                    }}
-                  >
-                    <span>
-                      {index === 0 ? "Recommended" : `Source ${index + 1}`}
-                    </span>
-                    <small>{sourceLabel(source)}</small>
-                  </button>
-                ))}
+                {current.kind === "movie" &&
+                  forceSearch?.status === "done" &&
+                  sourcesFor().length > 1 &&
+                  sourcesFor().map((source, index) => (
+                    <button
+                      key={source.id}
+                      type="button"
+                      title={source.releaseName}
+                      onClick={() => {
+                        setOpenSourceFor(null);
+                        void play(undefined, undefined, source.id);
+                      }}
+                    >
+                      <span>
+                        {index === 0 ? "Recommended" : `Source ${index + 1}`}
+                      </span>
+                      <small>{sourceLabel(source)}</small>
+                    </button>
+                  ))}
               </div>
             )}
             {!current.inLibrary && (
@@ -448,123 +548,133 @@ export function TitleDetail({
                   ))}
                 </div>
                 <ol className="title-detail__episodes">
-                  {shownSeason?.episodes.map((episode) => (
-                    <li
-                      key={episode.episodeNumber}
-                      className={`title-detail__episode title-detail__episode--${episode.availability}`}
-                    >
-                      <div>
-                        <strong>
-                          {episode.episodeNumber}. {episode.title}
-                        </strong>
-                        {episode.airDate && <small>{episode.airDate}</small>}
-                      </div>
-                      <span>
-                        {episode.availability === "searching"
-                          ? "• searching..."
-                          : episode.availability === "available"
-                            ? "Ready"
-                            : "Unavailable"}
-                      </span>
-                      {episode.availability === "available" &&
-                        playbackEnabled && (
-                          <button
-                            className={`button button--primary button--compact${playing === `${episode.seasonNumber}:${episode.episodeNumber}` ? "" : " button--play-action"}`}
-                            type="button"
-                            data-episode={`${episode.seasonNumber}:${episode.episodeNumber}`}
-                            disabled={playing !== null}
-                            onClick={() =>
-                              void play(
-                                {
-                                  seasonNumber: episode.seasonNumber,
-                                  episodeNumber: episode.episodeNumber,
-                                },
-                                episode.title,
-                              )
-                            }
-                          >
-                            {playing ===
-                            `${episode.seasonNumber}:${episode.episodeNumber}`
-                              ? "Starting…"
-                              : current.progressPercent !== null &&
-                                  current.progressPercent >= 2 &&
-                                  current.resumeEpisode?.seasonNumber ===
-                                    episode.seasonNumber &&
-                                  current.resumeEpisode?.episodeNumber ===
-                                    episode.episodeNumber
-                                ? <PlayActionContent label="Continue" />
-                                : <PlayActionContent label="Play" />}
-                          </button>
-                        )}
-                      {episode.availability === "available" &&
-                        playbackEnabled &&
-                        sourcesFor({
-                          seasonNumber: episode.seasonNumber,
-                          episodeNumber: episode.episodeNumber,
-                        }).length > 1 && (
-                          <button
-                            className="button button--secondary button--compact title-detail__source-trigger"
-                            type="button"
-                            aria-label={`More sources for episode ${episode.episodeNumber}`}
-                            aria-expanded={
-                              openSourceFor ===
-                              `${episode.seasonNumber}:${episode.episodeNumber}`
-                            }
-                            onClick={() =>
-                              setOpenSourceFor(
-                                openSourceFor ===
-                                  `${episode.seasonNumber}:${episode.episodeNumber}`
-                                  ? null
-                                  : `${episode.seasonNumber}:${episode.episodeNumber}`,
-                              )
-                            }
-                          >
-                            <span aria-hidden="true">⋮</span>
-                          </button>
-                        )}
-                      {openSourceFor ===
-                        `${episode.seasonNumber}:${episode.episodeNumber}` && (
-                        <div
-                          className="title-detail__source-menu"
-                          role="group"
-                          aria-label={`Sources for episode ${episode.episodeNumber}`}
-                        >
-                          <strong>Choose a source</strong>
-                          <small>
-                            Each file has its own audio, subtitles and quality.
-                          </small>
-                          {sourcesFor({
-                            seasonNumber: episode.seasonNumber,
-                            episodeNumber: episode.episodeNumber,
-                          }).map((source, index) => (
+                  {shownSeason?.episodes.map((episode) => {
+                    const selection = {
+                      seasonNumber: episode.seasonNumber,
+                      episodeNumber: episode.episodeNumber,
+                    };
+                    const key = `${episode.seasonNumber}:${episode.episodeNumber}`;
+                    const search = episodeSearches[key];
+                    return (
+                      <li
+                        key={episode.episodeNumber}
+                        className={`title-detail__episode title-detail__episode--${episode.availability}`}
+                      >
+                        <div>
+                          <strong>
+                            {episode.episodeNumber}. {episode.title}
+                          </strong>
+                          {episode.airDate && <small>{episode.airDate}</small>}
+                        </div>
+                        <span>
+                          {episode.availability === "searching"
+                            ? "• searching..."
+                            : episode.availability === "available"
+                              ? "Ready"
+                              : "Unavailable"}
+                        </span>
+                        {episode.availability === "available" &&
+                          playbackEnabled && (
                             <button
-                              key={source.id}
+                              className={`button button--primary button--compact${playing === `${episode.seasonNumber}:${episode.episodeNumber}` ? "" : " button--play-action"}`}
                               type="button"
-                              title={source.releaseName}
-                              onClick={() => {
-                                setOpenSourceFor(null);
+                              data-episode={`${episode.seasonNumber}:${episode.episodeNumber}`}
+                              disabled={playing !== null}
+                              onClick={() =>
                                 void play(
                                   {
                                     seasonNumber: episode.seasonNumber,
                                     episodeNumber: episode.episodeNumber,
                                   },
                                   episode.title,
-                                  source.id,
-                                );
-                              }}
+                                )
+                              }
                             >
-                              <span>
-                                {index === 0
-                                  ? "Recommended"
-                                  : `Source ${index + 1}`}
-                              </span>
-                              <small>{sourceLabel(source)}</small>
+                              {playing ===
+                              `${episode.seasonNumber}:${episode.episodeNumber}` ? (
+                                "Starting…"
+                              ) : current.progressPercent !== null &&
+                                current.progressPercent >= 2 &&
+                                current.resumeEpisode?.seasonNumber ===
+                                  episode.seasonNumber &&
+                                current.resumeEpisode?.episodeNumber ===
+                                  episode.episodeNumber ? (
+                                <PlayActionContent label="Continue" />
+                              ) : (
+                                <PlayActionContent label="Play" />
+                              )}
                             </button>
-                          ))}
-                        </div>
-                      )}
-                    </li>
-                  ))}
+                          )}
+                        <button
+                          className={`title-detail__force-search title-detail__episode-search${search?.status === "searching" ? " is-searching" : ""}`}
+                          type="button"
+                          aria-label={`Search sources for episode ${episode.episodeNumber}`}
+                          aria-expanded={openSourceFor === key}
+                          aria-busy={search?.status === "searching"}
+                          title="Force a new search for this episode"
+                          disabled={
+                            !playbackEnabled || search?.status === "searching"
+                          }
+                          onClick={() => void searchEpisode(selection)}
+                        >
+                          <span aria-hidden="true">⋮</span>
+                        </button>
+                        {openSourceFor === key && (
+                          <div
+                            className="title-detail__source-menu"
+                            role="group"
+                            aria-label={`Search results for episode ${episode.episodeNumber}`}
+                          >
+                            <button
+                              className="title-detail__source-menu-dismiss"
+                              type="button"
+                              aria-label="Close search results"
+                              onClick={() => setOpenSourceFor(null)}
+                            >
+                              ×
+                            </button>
+                            <strong>
+                              Episode {episode.episodeNumber} sources
+                            </strong>
+                            <small role="status">
+                              {search?.status === "searching"
+                                ? "Checking this episode…"
+                                : search?.status === "error"
+                                  ? search.message
+                                  : search?.status === "done"
+                                    ? search.sources.length > 0
+                                      ? "Choose a playable source."
+                                      : "No playable sources found for this episode."
+                                    : null}
+                            </small>
+                            {search?.status === "done" &&
+                              search.sources.map((source, index) => (
+                                <button
+                                  key={source.id}
+                                  type="button"
+                                  title={source.releaseName}
+                                  onClick={() => {
+                                    setOpenSourceFor(null);
+                                    void play(
+                                      selection,
+                                      episode.title,
+                                      source.id,
+                                    );
+                                  }}
+                                >
+                                  <span>
+                                    {index === 0
+                                      ? "Recommended"
+                                      : `Source ${index + 1}`}
+                                  </span>
+                                  <small>{sourceLabel(source)}</small>
+                                </button>
+                              ))}
+                          </div>
+                        )}
+                      </li>
+                    );
+                  })}
                 </ol>
               </>
             )}

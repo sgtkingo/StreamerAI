@@ -7,6 +7,7 @@ import type {
   EpisodeSelection,
   SeriesEpisodeDetail,
 } from "@streamer-ai/contracts";
+import { subtitleWindowStart } from "@streamer-ai/contracts";
 import type { StreamerApi } from "../api/client";
 import { safeErrorMessage } from "../api/client";
 import { applyAudioOutput } from "../audio-output";
@@ -106,6 +107,7 @@ export function VideoPlayer({
   const [subtitleError, setSubtitleError] = useState("");
   const [subtitleCues, setSubtitleCues] = useState<SubtitleCue[]>([]);
   const [subtitleLoading, setSubtitleLoading] = useState(false);
+  const [subtitleSlow, setSubtitleSlow] = useState(false);
   const [audioOutputError, setAudioOutputError] = useState("");
   const [playbackError, setPlaybackError] = useState("");
   const [selectedAudio, setSelectedAudio] = useState<number | null>(null);
@@ -477,7 +479,7 @@ export function VideoPlayer({
   const subtitleUrl =
     selectedLocal?.url ??
     (selectedEmbedded
-      ? `${grant.url}/subtitles/${selectedEmbedded.streamIndex}`
+      ? `${grant.url}/subtitles/${selectedEmbedded.streamIndex}?at=${subtitleWindowStart(position)}`
       : null);
   const captionText = subtitleTextAt(subtitleCues, position);
 
@@ -507,37 +509,68 @@ export function VideoPlayer({
     };
   }, [info, preferences.audioOutputDeviceId, selectedAudio, sourceVersion]);
 
+  useEffect(() => setSubtitleCues([]), [selectedSubtitle]);
+
   useEffect(() => {
-    setSubtitleCues([]);
     setSubtitleError("");
     setSubtitleLoading(subtitleUrl !== null);
+    setSubtitleSlow(false);
     if (!subtitleUrl) return;
+    let active = true;
     const controller = new AbortController();
+    const slowTimer = window.setTimeout(() => {
+      if (active) setSubtitleSlow(true);
+    }, 5_000);
+    const timeout = window.setTimeout(() => {
+      controller.abort();
+      if (!active) return;
+      setSubtitleLoading(false);
+      setSubtitleSlow(false);
+      setSubtitleError(
+        "Subtitles took too long to prepare. Try the track again or load a local file.",
+      );
+    }, 28_000);
     void fetch(subtitleUrl, {
       credentials: "same-origin",
       signal: controller.signal,
     })
       .then(async (response) => {
         if (!response.ok) throw new Error("Subtitle download failed.");
-        const cues = parseWebVtt(await response.text());
-        if (cues.length === 0)
-          throw new Error("No readable subtitle cues found.");
-        return cues;
+        const offset = selectedEmbedded
+          ? Number(response.headers?.get("x-streamer-subtitle-offset") ?? 0)
+          : 0;
+        const safeOffset = Number.isFinite(offset) && offset >= 0 ? offset : 0;
+        return parseWebVtt(await response.text()).map((cue) => ({
+          ...cue,
+          start: cue.start + safeOffset,
+          end: cue.end + safeOffset,
+        }));
       })
       .then((cues) => {
-        if (controller.signal.aborted) return;
+        if (!active || controller.signal.aborted) return;
         setSubtitleCues(cues);
         setSubtitleLoading(false);
+        setSubtitleSlow(false);
       })
       .catch(() => {
-        if (controller.signal.aborted) return;
+        if (!active || controller.signal.aborted) return;
         setSubtitleLoading(false);
+        setSubtitleSlow(false);
         setSubtitleError(
           "These subtitles could not be loaded. Choose another track or a local file.",
         );
+      })
+      .finally(() => {
+        window.clearTimeout(slowTimer);
+        window.clearTimeout(timeout);
       });
-    return () => controller.abort();
-  }, [subtitleUrl]);
+    return () => {
+      active = false;
+      window.clearTimeout(slowTimer);
+      window.clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [selectedEmbedded, subtitleUrl]);
 
   const restartAt = (seconds: number, audio = selectedAudio) => {
     const at = Math.min(Math.max(0, seconds), Math.max(0, duration - 0.2));
@@ -931,7 +964,9 @@ export function VideoPlayer({
             )}
             {subtitleLoading && (
               <p className="video-player__audio-notice" role="status">
-                Loading subtitles…
+                {subtitleSlow
+                  ? "Preparing subtitles for this part of the video…"
+                  : "Loading subtitles…"}
               </p>
             )}
             {duration > 0 && (

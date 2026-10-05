@@ -17,14 +17,30 @@ browser cannot select devices or the saved device has disappeared, playback
 falls back to the system default and shows a notice. Device IDs may differ
 between browsers and machines; the setting remains per profile.
 
-Settings → 02 / Audio enumerates available output devices, permits a supported
-browser permission prompt and saves the selected ID. If no audio track is
+Settings → 02 / Audio enumerates outputs already exposed to the page. Where
+supported, the browser's native speaker picker grants access to a selected
+output. Opening the output selector performs discovery. Without a native
+speaker picker, that action may ask for temporary microphone permission,
+enumerates devices, and immediately stops the microphone stream; the browser
+may still expose only the system default. The small adjacent refresh button
+repeats discovery. “Test audio output” plays a soft two-note cue through the
+currently selected sink using the same routing API as video. The selected
+output ID is saved per profile. If no audio track is
 present in the manifest, the player advises choosing another source. If
 autoplay is refused, the player asks for a manual Play click.
 
 ## Subtitles
 
-Embedded text subtitles are converted server-side to WebVTT. A user may also
+Embedded text subtitles are converted server-side to WebVTT in short,
+overlapping windows around the current playback position. Seeking requests a
+new window instead of converting the entire film. FFmpeg limits input reading
+to a ten-second window with two seconds of overlap; its segment-relative cue
+times are shifted to absolute title time in the player using the response's
+`X-Streamer-Subtitle-Offset` header.
+A valid window with no cues (for example, a silent intro) is not an error; the
+player simply renders nothing until a later window contains dialogue. Each
+request has a bounded processing time, and the player reports an error if
+conversion actually fails. A user may also
 load a local SRT, VTT, ASS or SSA file in the player. The client parses the
 selected WebVTT text and renders cues in its own overlay above the controls.
 It compares cue times to the absolute title position, including the `start`
