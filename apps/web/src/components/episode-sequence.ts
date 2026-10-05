@@ -1,4 +1,7 @@
-import type { EpisodeSelection, SeriesEpisodeDetail } from "@streamer-ai/contracts";
+import type {
+  EpisodeSelection,
+  SeriesEpisodeDetail,
+} from "@streamer-ai/contracts";
 
 function order(episode: EpisodeSelection): number {
   return episode.seasonNumber * 10_000 + episode.episodeNumber;

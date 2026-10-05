@@ -1,5 +1,10 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import type {
   CatalogTitle,
   PlaybackGrant,
@@ -28,14 +33,16 @@ const baseTitle: CatalogTitle = {
   availability: "available",
   availabilityProvider: "webshare",
   availabilityCheckedAt: "2026-10-04T08:00:00.000Z",
-  formats: [{
-    label: "1080p",
-    container: "mkv",
-    resolution: "1080p",
-    videoCodec: "H.264",
-    audioLanguages: ["en"],
-    subtitleLanguages: ["cs"],
-  }],
+  formats: [
+    {
+      label: "1080p",
+      container: "mkv",
+      resolution: "1080p",
+      videoCodec: "H.264",
+      audioLanguages: ["en"],
+      subtitleLanguages: ["cs"],
+    },
+  ],
   seriesCoverage: null,
   metadataProvider: "tmdb",
   metadataValidatedAt: "2026-10-04T08:00:00.000Z",
@@ -58,20 +65,24 @@ const manifest: PlaybackMediaInfo = {
   durationSeconds: 120,
   videoCodec: "h264",
   videoPixelFormat: "yuv420p",
-  audioTracks: [{
-    streamIndex: 2,
-    codec: "eac3",
-    channels: 6,
-    channelLayout: "5.1(side)",
-    language: "en",
-    title: "English 5.1",
-  }],
-  subtitleTracks: [{
-    streamIndex: 3,
-    codec: "subrip",
-    language: "cs",
-    title: "Czech",
-  }],
+  audioTracks: [
+    {
+      streamIndex: 2,
+      codec: "eac3",
+      channels: 6,
+      channelLayout: "5.1(side)",
+      language: "en",
+      title: "English 5.1",
+    },
+  ],
+  subtitleTracks: [
+    {
+      streamIndex: 3,
+      codec: "subrip",
+      language: "cs",
+      title: "Czech",
+    },
+  ],
 };
 
 function api(overrides: Partial<StreamerApi> = {}): StreamerApi {
@@ -90,7 +101,9 @@ function api(overrides: Partial<StreamerApi> = {}): StreamerApi {
 
 beforeEach(() => {
   vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
-  vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => undefined);
+  vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(
+    () => undefined,
+  );
 });
 
 afterEach(() => {
@@ -107,10 +120,14 @@ describe("VideoPlayer output and episode flow", () => {
       configurable: true,
       value: setSinkId,
     });
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
-      ok: true,
-      text: async () => "WEBVTT\n\n00:01:02.000 --> 00:01:04.000\nHello, viewer\n",
-    }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        text: async () =>
+          "WEBVTT\n\n00:01:02.000 --> 00:01:04.000\nHello, viewer\n",
+      }),
+    );
     const preferences: PlaybackPreferences = {
       ...DEFAULT_PLAYBACK_PREFERENCES,
       autoFindSubtitles: true,
@@ -143,7 +160,9 @@ describe("VideoPlayer output and episode flow", () => {
     fireEvent.timeUpdate(video);
     const caption = await screen.findByText("Hello, viewer");
     expect(caption.parentElement).toHaveStyle({ color: "#ffff00" });
-    expect(caption.parentElement).toHaveStyle({ fontFamily: "Consolas, monospace" });
+    expect(caption.parentElement).toHaveStyle({
+      fontFamily: "Consolas, monospace",
+    });
     expect(caption.parentElement?.style.fontSize).toContain("45px");
   });
 
@@ -174,9 +193,26 @@ describe("VideoPlayer output and episode flow", () => {
       },
       availability: "partial",
     };
-    const getTitleDetail = vi.fn()
-      .mockResolvedValueOnce({ title: seriesTitle, series: { status: "searching", seasons: [{ seasonNumber: 1, title: null, episodes: [first] }] }, related: [] })
-      .mockResolvedValueOnce({ title: seriesTitle, series: { status: "partial", seasons: [{ seasonNumber: 1, title: null, episodes: [first, second] }] }, related: [] });
+    const getTitleDetail = vi
+      .fn()
+      .mockResolvedValueOnce({
+        title: seriesTitle,
+        series: {
+          status: "searching",
+          seasons: [{ seasonNumber: 1, title: null, episodes: [first] }],
+        },
+        related: [],
+      })
+      .mockResolvedValueOnce({
+        title: seriesTitle,
+        series: {
+          status: "partial",
+          seasons: [
+            { seasonNumber: 1, title: null, episodes: [first, second] },
+          ],
+        },
+        related: [],
+      });
     const onPlayEpisode = vi.fn().mockResolvedValue(undefined);
     render(
       <VideoPlayer

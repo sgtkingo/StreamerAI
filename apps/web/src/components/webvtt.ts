@@ -47,7 +47,10 @@ export function parseWebVtt(raw: string): SubtitleCue[] {
   return cues.sort((a, b) => a.start - b.start);
 }
 
-export function subtitleTextAt(cues: readonly SubtitleCue[], seconds: number): string {
+export function subtitleTextAt(
+  cues: readonly SubtitleCue[],
+  seconds: number,
+): string {
   return cues
     .filter((cue) => cue.start <= seconds && seconds < cue.end)
     .map((cue) => cue.text)

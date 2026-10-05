@@ -520,7 +520,8 @@ export function VideoPlayer({
       .then(async (response) => {
         if (!response.ok) throw new Error("Subtitle download failed.");
         const cues = parseWebVtt(await response.text());
-        if (cues.length === 0) throw new Error("No readable subtitle cues found.");
+        if (cues.length === 0)
+          throw new Error("No readable subtitle cues found.");
         return cues;
       })
       .then((cues) => {
@@ -699,7 +700,9 @@ export function VideoPlayer({
                   .getTitleDetail(profileId, title.id)
                   .then((detail) => {
                     const refreshed = playableEpisodes(
-                      detail.series?.seasons.flatMap((season) => season.episodes) ?? [],
+                      detail.series?.seasons.flatMap(
+                        (season) => season.episodes,
+                      ) ?? [],
                     );
                     setAvailableEpisodes(refreshed);
                     if (
@@ -737,7 +740,7 @@ export function VideoPlayer({
                   : preferences.subtitleFont === "mono"
                     ? "Consolas, monospace"
                     : "Arial, sans-serif",
-              fontSize: `clamp(${Math.round(16 * preferences.subtitleSizePercent / 100)}px, ${2.4 * preferences.subtitleSizePercent / 100}vw, ${Math.round(30 * preferences.subtitleSizePercent / 100)}px)`,
+              fontSize: `clamp(${Math.round((16 * preferences.subtitleSizePercent) / 100)}px, ${(2.4 * preferences.subtitleSizePercent) / 100}vw, ${Math.round((30 * preferences.subtitleSizePercent) / 100)}px)`,
             }}
           >
             <span>{captionText}</span>

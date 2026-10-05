@@ -146,6 +146,11 @@ position. The server refreshes the private provider link for later media
 requests, so an expired direct link does not break a seek. Local subtitle files
 are converted to WebVTT in browser memory.
 Only text-based embedded subtitles can be extracted; bitmap tracks are omitted.
+The player renders parsed WebVTT cues against the absolute playback position,
+including resume/seek offsets. Profile playback preferences include an output
+device ID and subtitle size, color and font. Multichannel source audio is
+downmixed to stereo in the browser stream for compatibility; selecting a
+different output device depends on `setSinkId` support and permission.
 
 `check` reports current playback readiness and optional track languages, not
 a replacement catalog title. The client may use a successful check to

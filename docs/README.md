@@ -10,6 +10,7 @@ and approved future decisions remain authoritative in [`../instructions`](../ins
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) - boundaries, data flow and invariants.
 - [`API.md`](API.md) - currently implemented HTTP endpoints.
 - [`TITLE_DETAILS.md`](TITLE_DETAILS.md) - film details, progressive episode discovery, and exact-episode playback.
+- [`PLAYER.md`](PLAYER.md) - audio outputs, subtitles, seek timing and series autoplay.
 - [`INTEGRATIONS.md`](INTEGRATIONS.md) - how to add metadata, media, subtitle,
   search, agent and sync providers.
 - [`VALIDATION.md`](VALIDATION.md) - second-sight findings, verified invariants

@@ -48,10 +48,14 @@ DONE: Seriály by měli mít po kliknuí detail a rozdělení do sérií a episo
 
 - Každý profil by měl mít oddělené data, i v rámci onboardingu
 
-- Přehrávač nezobrazuje titulky, pro titulky přuprav napoj také nastavení v rámci 03 / Subtitles (velikost, barva, font). U přehrávače neslyším zvuk, dodělej funční Audio output v 02 / Audio a napoj ho na přehrávač.  Seriály by na konci měli automaticky začít odpočítávat přehrání dalšího dílu (5 sekund?), 
+- DONE: Přehrávač nezobrazuje titulky, pro titulky přuprav napoj také nastavení v rámci 03 / Subtitles (velikost, barva, font). U přehrávače neslyším zvuk, dodělej funční Audio output v 02 / Audio a napoj ho na přehrávač.  Seriály by na konci měli automaticky začít odpočítávat přehrání dalšího dílu (5 sekund?), 
 
-- Tlačítko Find při přejetí (hover) nemění barvy a mění skokově intenzitu záře místo toho aby ji měnilo pomalu, jakoby tepalo. 
+- DONE: Tlačítko Find při přejetí (hover) nemění barvy a mění skokově intenzitu záře místo toho aby ji měnilo pomalu, jakoby tepalo. Problém bude asi příliš mnoho animací a jejich překrývání se stop - Stop ted září a sálá duhově, místo jen bílou barvou (při přejetí hover by navíc mělo jen zářit bíle). Je třeba se podívat na starší commit kde vše fungovalo. 
 
 - Je třeba připravit integrace na více zdrojů obsahu - zavést kontratky atd. 
 
-- UI: Problém bude asi příliš mnoho animací a jejich překrývání se stop - Stop ted září a sálá duhově, místo jen bílou barvou (při přejetí hover by navíc mělo jen zářit bíle). Je třeba se podívat na starší commit kde vše fungovalo. 
+- U serálů budeme potřebovat multivariatní vyhledávání, např hledat díle sérii ne jen podle S01E01, 1 + název ale i jen 1. Problém může být že řeba S01E05 bude v databázi jako díl 15. 
+
+- Subtitles vyvolávájí Loading subtitles - to není UI přívětívé a navíc se titulky nenačtou v některých případech
+
+- Dláždice při Checking se skokově zvětšuje a zmenšuje, asi to bude periodických updatem

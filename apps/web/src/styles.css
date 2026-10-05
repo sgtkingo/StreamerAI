@@ -2508,6 +2508,11 @@ textarea:not(:disabled):hover {
   cursor: auto;
 }
 
+/* Checking cards keep a stable layer as their hover scale animates. */
+.result-group--unknown .title-card {
+  transform: scale(1);
+}
+
 @media (hover: hover) and (pointer: fine) {
   .title-card:hover,
   .title-card:focus-within {
@@ -2564,6 +2569,11 @@ textarea:not(:disabled):hover {
   inset: 12px -9px -12px 9px;
   z-index: -2;
   opacity: 0.55;
+}
+
+.result-group--unknown .title-card--series::before,
+.result-group--unknown .title-card--series::after {
+  content: none;
 }
 
 .title-card__art {

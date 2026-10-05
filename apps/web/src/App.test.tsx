@@ -1,4 +1,11 @@
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { StrictMode } from "react";
 import { describe, expect, it, vi } from "vitest";
@@ -339,6 +346,11 @@ describe("profile navigation", () => {
       "de",
     );
     await user.click(screen.getByLabelText("Automatically find subtitles"));
+    await user.selectOptions(screen.getByLabelText("Subtitle size"), "150");
+    await user.selectOptions(screen.getByLabelText("Subtitle font"), "mono");
+    fireEvent.change(screen.getByLabelText("Subtitle color"), {
+      target: { value: "#ffcc00" },
+    });
     await user.click(screen.getByRole("button", { name: "Save settings" }));
     await waitFor(() =>
       expect(api.updateProfile).toHaveBeenCalledWith(
@@ -347,6 +359,9 @@ describe("profile navigation", () => {
           playback: expect.objectContaining({
             secondaryAudioLanguage: "de",
             autoFindSubtitles: true,
+            subtitleSizePercent: 150,
+            subtitleFont: "mono",
+            subtitleColor: "#ffcc00",
           }),
         }),
       ),

@@ -9,6 +9,7 @@ import {
   INTEGRATION_DESCRIPTORS,
   IntegrationConnectionResultSchema,
   IntegrationPublicStatusSchema,
+  PlaybackPreferencesSchema,
   SUPPORTED_LOCALES,
   TmdbConnectRequestSchema,
 } from "../src/index.js";
@@ -102,6 +103,24 @@ describe("public contracts", () => {
       },
       localAiEnabled: true,
     });
+  });
+
+  it("upgrades stored playback preferences with output and subtitle styling defaults", () => {
+    expect(
+      PlaybackPreferencesSchema.parse({
+        primaryAudioLanguage: "cs",
+        secondaryAudioLanguage: "en",
+        autoFindSubtitles: false,
+        primaryAudioSubtitleLanguage: "off",
+        secondaryAudioSubtitleLanguage: "cs",
+      }),
+    ).toEqual(DEFAULT_PLAYBACK_PREFERENCES);
+    expect(() =>
+      PlaybackPreferencesSchema.parse({
+        ...DEFAULT_PLAYBACK_PREFERENCES,
+        subtitleSizePercent: 500,
+      }),
+    ).toThrow();
   });
 
   it("requires a verified format before a title can be called available", () => {

@@ -214,8 +214,11 @@ export class FfmpegPlaybackMediaEngine implements PlaybackMediaEngine {
         `0:${audioTrack.streamIndex}`,
         "-c:a",
         "aac",
+        // Browser/device decoders vary on multichannel AAC. Decode every
+        // source layout, but downmix 2.1/5.1/7.1 tracks to audible stereo.
+        ...(audioTrack.channels > 2 ? ["-ac", "2"] : []),
         "-b:a",
-        `${Math.max(192, Math.min(audioTrack.channels * 96, 768))}k`,
+        `${audioTrack.channels > 2 ? 192 : Math.max(128, audioTrack.channels * 96)}k`,
       );
     } else {
       args.push("-an");

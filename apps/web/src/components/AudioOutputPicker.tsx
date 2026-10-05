@@ -19,7 +19,9 @@ export function AudioOutputPicker({ value, onChange }: AudioOutputPickerProps) {
     typeof navigator !== "undefined" &&
     typeof (
       navigator.mediaDevices as
-        | (MediaDevices & { selectAudioOutput?: () => Promise<MediaDeviceInfo> })
+        | (MediaDevices & {
+            selectAudioOutput?: () => Promise<MediaDeviceInfo>;
+          })
         | undefined
     )?.selectAudioOutput === "function";
 
@@ -29,7 +31,9 @@ export function AudioOutputPicker({ value, onChange }: AudioOutputPickerProps) {
       setDevices(await listAudioOutputs());
       setStatus("");
     } catch {
-      setStatus("Audio outputs could not be listed. Check browser permissions.");
+      setStatus(
+        "Audio outputs could not be listed. Check browser permissions.",
+      );
     }
   }, [supported]);
 
@@ -41,8 +45,7 @@ export function AudioOutputPicker({ value, onChange }: AudioOutputPickerProps) {
   }, [refresh]);
 
   const selectedMissing =
-    value !== "default" &&
-    !devices.some((device) => device.deviceId === value);
+    value !== "default" && !devices.some((device) => device.deviceId === value);
 
   return (
     <div className="audio-output-picker">
@@ -62,13 +65,19 @@ export function AudioOutputPicker({ value, onChange }: AudioOutputPickerProps) {
               </option>
             ))}
           {selectedMissing && (
-            <option value={value}>Saved output (not currently available)</option>
+            <option value={value}>
+              Saved output (not currently available)
+            </option>
           )}
         </select>
       </label>
       <div className="audio-output-picker__actions">
         {supported && (
-          <button className="button button--secondary" type="button" onClick={() => void refresh()}>
+          <button
+            className="button button--secondary"
+            type="button"
+            onClick={() => void refresh()}
+          >
             Refresh outputs
           </button>
         )}
@@ -81,13 +90,17 @@ export function AudioOutputPicker({ value, onChange }: AudioOutputPickerProps) {
                 .then((device) => {
                   if (!device) return;
                   setDevices((current) => [
-                    ...current.filter((item) => item.deviceId !== device.deviceId),
+                    ...current.filter(
+                      (item) => item.deviceId !== device.deviceId,
+                    ),
                     device,
                   ]);
                   onChange(device.deviceId);
                   setStatus("");
                 })
-                .catch(() => setStatus("Audio output selection was cancelled or denied."));
+                .catch(() =>
+                  setStatus("Audio output selection was cancelled or denied."),
+                );
             }}
           >
             Choose output device
@@ -96,15 +109,21 @@ export function AudioOutputPicker({ value, onChange }: AudioOutputPickerProps) {
       </div>
       {!supported && (
         <p className="settings-note">
-          This browser cannot select an output device. Audio uses the system default.
+          This browser cannot select an output device. Audio uses the system
+          default.
         </p>
       )}
       {supported && devices.length === 0 && (
         <p className="settings-note">
-          No separate outputs are visible yet. Use the system default or grant device access.
+          No separate outputs are visible yet. Use the system default or grant
+          device access.
         </p>
       )}
-      {status && <p className="settings-note" role="status">{status}</p>}
+      {status && (
+        <p className="settings-note" role="status">
+          {status}
+        </p>
+      )}
     </div>
   );
 }
