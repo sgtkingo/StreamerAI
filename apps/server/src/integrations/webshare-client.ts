@@ -35,6 +35,13 @@ export interface WebshareFileInfo {
   copyrighted: boolean;
 }
 
+export interface WebshareSimilarSubtitleItem {
+  ident: string;
+  name: string;
+  type: string | null;
+  size: number | null;
+}
+
 export class WebshareResponseError extends ProviderRequestError {
   constructor(
     kind: "unauthorized" | "upstream" | "invalid-response",
@@ -78,6 +85,17 @@ function safeBaseUrl(value: string): string {
 
 function decodeXml(value: string): string {
   return value
+    .replace(
+      /&#(?:x([0-9a-f]{1,6})|([0-9]{1,7}));/gi,
+      (entity, hex, decimal) => {
+        const codePoint = Number.parseInt(hex ?? decimal, hex ? 16 : 10);
+        return codePoint > 0 &&
+          codePoint <= 0x10ffff &&
+          !(codePoint >= 0xd800 && codePoint <= 0xdfff)
+          ? String.fromCodePoint(codePoint)
+          : entity;
+      },
+    )
     .replaceAll("&lt;", "<")
     .replaceAll("&gt;", ">")
     .replaceAll("&quot;", '"')
@@ -89,12 +107,17 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function tag(xml: string, name: string): string | null {
+function rawTag(xml: string, name: string): string | null {
   const safeName = escapeRegExp(name);
   const match = new RegExp(`<${safeName}>([\\s\\S]*?)</${safeName}>`, "i").exec(
     xml,
   );
-  return match?.[1] === undefined ? null : decodeXml(match[1].trim());
+  return match?.[1] ?? null;
+}
+
+function tag(xml: string, name: string): string | null {
+  const raw = rawTag(xml, name);
+  return raw === null ? null : decodeXml(raw.trim());
 }
 
 function blocks(xml: string, name: string): string[] {
@@ -118,6 +141,30 @@ function booleanFlag(value: string | null): boolean {
   return value === "1";
 }
 
+function safeDirectLink(link: string): string {
+  let url: URL;
+  try {
+    url = new URL(link);
+  } catch {
+    throw new WebshareResponseError("invalid-response", false, null);
+  }
+  const allowedHost =
+    url.hostname === "webshare.cz" ||
+    url.hostname.endsWith(".webshare.cz") ||
+    url.hostname === "dl.wsfiles.cz" ||
+    url.hostname.endsWith(".dl.wsfiles.cz");
+  if (
+    url.protocol !== "https:" ||
+    !allowedHost ||
+    url.port !== "" ||
+    url.username !== "" ||
+    url.password !== ""
+  ) {
+    throw new WebshareResponseError("invalid-response", false, null);
+  }
+  return url.toString();
+}
+
 function assertOk(xml: string): void {
   const status = tag(xml, "status");
   if (status === "OK") return;
@@ -132,6 +179,36 @@ function assertOk(xml: string): void {
     !denied,
     code,
   );
+}
+
+async function boundedXml(response: ProviderFetchResponse): Promise<string> {
+  const stream = response.body as ReadableStream<Uint8Array> | null | undefined;
+  if (stream && typeof stream.getReader === "function") {
+    const reader = stream.getReader();
+    const chunks: Buffer[] = [];
+    let bytes = 0;
+    try {
+      while (true) {
+        const part = await reader.read();
+        if (part.done) break;
+        bytes += part.value.byteLength;
+        if (bytes > MAX_XML_BYTES) {
+          await reader.cancel();
+          throw new WebshareResponseError("invalid-response", true, null);
+        }
+        chunks.push(Buffer.from(part.value));
+      }
+    } finally {
+      reader.releaseLock();
+    }
+    return Buffer.concat(chunks, bytes).toString("utf8");
+  }
+  // Small test transports may expose only text(); production fetch streams.
+  const xml = await response.text();
+  if (Buffer.byteLength(xml, "utf8") > MAX_XML_BYTES) {
+    throw new WebshareResponseError("invalid-response", true, null);
+  }
+  return xml;
 }
 
 /**
@@ -267,7 +344,15 @@ export class WebshareClient {
       signal,
     );
     const name = tag(xml, "name");
-    if (name === null) {
+    const available = tag(xml, "available");
+    const password = tag(xml, "password");
+    const copyrighted = tag(xml, "copyrighted");
+    if (
+      name === null ||
+      !["0", "1"].includes(available ?? "") ||
+      !["0", "1"].includes(password ?? "") ||
+      !["0", "1"].includes(copyrighted ?? "")
+    ) {
       throw new WebshareResponseError("invalid-response", true, null);
     }
     return {
@@ -275,10 +360,145 @@ export class WebshareClient {
       name,
       type: tag(xml, "type"),
       size: integer(tag(xml, "size")),
-      downloadable: booleanFlag(tag(xml, "available")),
-      passwordProtected: booleanFlag(tag(xml, "password")),
-      copyrighted: booleanFlag(tag(xml, "copyrighted")),
+      downloadable: booleanFlag(available),
+      passwordProtected: booleanFlag(password),
+      copyrighted: booleanFlag(copyrighted),
     };
+  }
+
+  /** Webshare returns a dedicated subtitles group for a similar-files query. */
+  async similarSubtitles(
+    mediaFilename: string,
+    signal?: AbortSignal,
+  ): Promise<WebshareSimilarSubtitleItem[]> {
+    if (
+      mediaFilename.length < 1 ||
+      mediaFilename.length > 255 ||
+      [...mediaFilename].some((character) => character.charCodeAt(0) < 32)
+    ) {
+      throw new TypeError("Webshare media filename is invalid.");
+    }
+    const xml = await this.post(
+      "similar_files",
+      { what: mediaFilename, limit: "100", offset: "0" },
+      false,
+      true,
+      signal,
+    );
+    // Keep nested XML escaped until individual file fields are read.
+    const subtitleGroup = rawTag(xml, "subtitles");
+    if (subtitleGroup === null) return [];
+    return blocks(subtitleGroup, "file")
+      .slice(0, 100)
+      .flatMap((file) => {
+        const ident = tag(file, "ident");
+        const name = tag(file, "name");
+        if (ident === null || name === null) return [];
+        return [
+          {
+            ident,
+            name,
+            type: tag(file, "type"),
+            size: integer(tag(file, "size")),
+          },
+        ];
+      });
+  }
+
+  async createDownloadLink(
+    ident: string,
+    signal?: AbortSignal,
+  ): Promise<string> {
+    const xml = await this.post(
+      "file_link",
+      { ident, download_type: "file_download", force_https: "1" },
+      true,
+      true,
+      signal,
+    );
+    const link = tag(xml, "link");
+    if (link === null) {
+      throw new WebshareResponseError("invalid-response", true, null);
+    }
+    return safeDirectLink(link);
+  }
+
+  /** Downloads a direct file link with a hard streaming limit and no redirects. */
+  async downloadFile(
+    ident: string,
+    maxBytes: number,
+    signal?: AbortSignal,
+  ): Promise<Buffer> {
+    if (
+      !Number.isSafeInteger(maxBytes) ||
+      maxBytes < 1 ||
+      maxBytes > 8 * 1024 * 1024
+    ) {
+      throw new TypeError("Webshare download limit is invalid.");
+    }
+    const url = await this.createDownloadLink(ident, signal);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30_000);
+    const requestSignal = signal
+      ? AbortSignal.any([controller.signal, signal])
+      : controller.signal;
+    try {
+      requestSignal.throwIfAborted();
+      const response = await this.#fetch(url, {
+        method: "GET",
+        headers: { accept: "text/plain, application/octet-stream" },
+        signal: requestSignal,
+        redirect: "manual",
+      });
+      if (response.status !== 200) {
+        await response.body?.cancel();
+        throw providerFailureForStatus("webshare", response.status);
+      }
+      const contentLength = Number(
+        (
+          response as typeof response & {
+            headers?: { get(name: string): string | null };
+          }
+        ).headers?.get("content-length"),
+      );
+      if (contentLength > maxBytes) {
+        await response.body?.cancel();
+        throw new WebshareResponseError("invalid-response", false, null);
+      }
+      const stream = response.body as
+        ReadableStream<Uint8Array> | null | undefined;
+      if (!stream || typeof stream.getReader !== "function") {
+        await response.body?.cancel();
+        throw new WebshareResponseError("invalid-response", true, null);
+      }
+      const reader = stream.getReader();
+      const chunks: Buffer[] = [];
+      let bytes = 0;
+      try {
+        while (true) {
+          const part = await reader.read();
+          if (part.done) break;
+          bytes += part.value.byteLength;
+          if (bytes > maxBytes) {
+            await reader.cancel();
+            throw new WebshareResponseError("invalid-response", false, null);
+          }
+          chunks.push(Buffer.from(part.value));
+        }
+      } finally {
+        reader.releaseLock();
+      }
+      return Buffer.concat(chunks, bytes);
+    } catch (error) {
+      if (signal?.aborted) signal.throwIfAborted();
+      if (error instanceof ProviderRequestError) throw error;
+      if (controller.signal.aborted || isAbortFailure(error)) {
+        throw new ProviderRequestError("webshare", "timeout", true);
+      }
+      throw new ProviderRequestError("webshare", "network", true);
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 
   async createVideoLink(ident: string): Promise<string> {
@@ -291,22 +511,9 @@ export class WebshareClient {
     if (link === null) {
       throw new WebshareResponseError("invalid-response", true, null);
     }
-    const url = new URL(link);
-    const allowedHost =
-      url.hostname === "webshare.cz" ||
-      url.hostname.endsWith(".webshare.cz") ||
-      url.hostname === "dl.wsfiles.cz" ||
-      url.hostname.endsWith(".dl.wsfiles.cz");
-    if (
-      url.protocol !== "https:" ||
-      !allowedHost ||
-      url.username !== "" ||
-      url.password !== ""
-    ) {
-      throw new WebshareResponseError("invalid-response", false, null);
-    }
-    await this.probeVideoLink(url.toString());
-    return url.toString();
+    const url = safeDirectLink(link);
+    await this.probeVideoLink(url);
+    return url;
   }
 
   private async probeVideoLink(url: string): Promise<void> {
@@ -320,7 +527,16 @@ export class WebshareClient {
         redirect: "manual",
       });
       await response.body?.cancel();
-      if (response.status !== 206) {
+      const contentRange = response.headers?.get("content-range");
+      const range = /^bytes 0-0\/(\d+)$/.exec(contentRange ?? "");
+      if (
+        response.status !== 206 ||
+        range === null ||
+        !Number.isSafeInteger(Number(range[1])) ||
+        Number(range[1]) < 1 ||
+        (response.headers?.get("content-length") != null &&
+          response.headers.get("content-length") !== "1")
+      ) {
         throw new ProviderRequestError("webshare", "invalid-response", true);
       }
     } catch (error) {
@@ -369,10 +585,7 @@ export class WebshareClient {
       if (!response.ok) {
         throw providerFailureForStatus("webshare", response.status);
       }
-      const xml = await response.text();
-      if (Buffer.byteLength(xml, "utf8") > MAX_XML_BYTES) {
-        throw new WebshareResponseError("invalid-response", true, null);
-      }
+      const xml = await boundedXml(response);
       assertOk(xml);
       return xml;
     } catch (error) {

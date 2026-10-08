@@ -4,10 +4,10 @@ import type {
   PlaybackGrant,
   PlaybackMediaInfo,
   PlaybackPreferences,
+  SubtitleWindow,
   EpisodeSelection,
   SeriesEpisodeDetail,
 } from "@streamer-ai/contracts";
-import { subtitleWindowStart } from "@streamer-ai/contracts";
 import type { StreamerApi } from "../api/client";
 import { safeErrorMessage } from "../api/client";
 import { applyAudioOutput } from "../audio-output";
@@ -18,6 +18,12 @@ import {
 import { Brand } from "./Brand";
 import { adjacentEpisode, playableEpisodes } from "./episode-sequence";
 import { subtitleFileToVtt } from "./subtitle-file";
+import {
+  canonicalSubtitleWindowStart,
+  nearbySubtitleCues,
+  parseSubtitleWindow,
+  SUBTITLE_WINDOW_MS,
+} from "./subtitle-windows";
 import { parseWebVtt, subtitleTextAt, type SubtitleCue } from "./webvtt";
 
 interface LocalSubtitle {
@@ -38,8 +44,11 @@ interface VideoPlayerProps {
     episode: EpisodeSelection,
     episodeTitle: string,
   ) => Promise<void>;
+  onClosing?: () => void;
   onClose: () => void;
 }
+
+const CLOSE_TRANSITION_MS = 280;
 
 function formatTime(seconds: number): string {
   if (!Number.isFinite(seconds)) return "0:00";
@@ -83,6 +92,7 @@ export function VideoPlayer({
   episodeTitle,
   preferences,
   onPlayEpisode,
+  onClosing,
   onClose,
 }: VideoPlayerProps) {
   const rootRef = useRef<HTMLDivElement>(null);
@@ -101,22 +111,34 @@ export function VideoPlayer({
   const closingRef = useRef(false);
   const cleanupTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pauseBurstTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const controlsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const canAutoHideRef = useRef(false);
   const skipNextEpisodeRef = useRef(false);
+  const subtitleWindowsRef = useRef(new Map<number, SubtitleWindow>());
+  const subtitleRequestsRef = useRef(new Map<number, AbortController>());
+  const subtitleGenerationRef = useRef(0);
+  const subtitleTrackUrlRef = useRef<string | null>(null);
+  const subtitleWindowStartRef = useRef(0);
   const [info, setInfo] = useState<PlaybackMediaInfo | null>(null);
   const [loadingError, setLoadingError] = useState("");
   const [subtitleError, setSubtitleError] = useState("");
   const [subtitleCues, setSubtitleCues] = useState<SubtitleCue[]>([]);
   const [subtitleLoading, setSubtitleLoading] = useState(false);
-  const [subtitleSlow, setSubtitleSlow] = useState(false);
   const [audioOutputError, setAudioOutputError] = useState("");
   const [playbackError, setPlaybackError] = useState("");
+  const [retryingPlayback, setRetryingPlayback] = useState(false);
   const [selectedAudio, setSelectedAudio] = useState<number | null>(null);
   const [selectedSubtitle, setSelectedSubtitle] = useState("off");
   const [localSubtitles, setLocalSubtitles] = useState<LocalSubtitle[]>([]);
   const [menu, setMenu] = useState<"audio" | "subtitles" | null>(null);
   const [sourceStart, setSourceStart] = useState(0);
   const [sourceVersion, setSourceVersion] = useState(0);
+  const [forceSourceRefresh, setForceSourceRefresh] = useState(false);
   const [position, setPosition] = useState(0);
+  const [captionPosition, setCaptionPosition] = useState(0);
+  const [subtitleSeekVersion, setSubtitleSeekVersion] = useState(0);
   const [scrubPosition, setScrubPosition] = useState<number | null>(null);
   const [preview, setPreview] = useState<{
     time: number;
@@ -125,6 +147,9 @@ export function VideoPlayer({
   const [thumbnailAt, setThumbnailAt] = useState(0);
   const [thumbnailFailed, setThumbnailFailed] = useState(false);
   const [playing, setPlaying] = useState(false);
+  const [closing, setClosing] = useState(false);
+  const [mediaLoading, setMediaLoading] = useState(false);
+  const [controlsIdle, setControlsIdle] = useState(false);
   const [hasEnded, setHasEnded] = useState(false);
   const [showPauseBurst, setShowPauseBurst] = useState(false);
   const [needsClick, setNeedsClick] = useState(false);
@@ -145,6 +170,46 @@ export function VideoPlayer({
   const [findingNextEpisode, setFindingNextEpisode] = useState(false);
   const [episodeSwitching, setEpisodeSwitching] = useState(false);
   const [episodeError, setEpisodeError] = useState("");
+
+  const applyManifest = useCallback(
+    (manifest: PlaybackMediaInfo) => {
+      const sameResumeEpisode =
+        title.kind !== "series" ||
+        (episode !== undefined &&
+          title.resumeEpisode?.seasonNumber === episode.seasonNumber &&
+          title.resumeEpisode?.episodeNumber === episode.episodeNumber);
+      const savedPercent = sameResumeEpisode ? (title.progressPercent ?? 0) : 0;
+      const resumeAt = sameResumeEpisode
+        ? (title.resumePositionSeconds ??
+          (title.kind === "movie" && manifest.durationSeconds !== null
+            ? (manifest.durationSeconds * savedPercent) / 100
+            : 0))
+        : 0;
+      const canResume = savedPercent >= 2 && savedPercent < 95 && resumeAt > 0;
+      const audio = preferredAudioTrack(manifest, preferences);
+      setInfo(manifest);
+      setSelectedAudio(audio?.streamIndex ?? null);
+      setSelectedSubtitle(
+        preferredEmbeddedSubtitle(manifest, preferences, audio),
+      );
+      setSourceStart(resumeAt);
+      setPosition(resumeAt);
+      setCaptionPosition(resumeAt);
+      positionSecondsRef.current = resumeAt;
+      durationSecondsRef.current = manifest.durationSeconds ?? 0;
+      progressRef.current = resumeAt > 0 ? savedPercent : 0;
+      setResumePrompt(canResume);
+      setResumeChosen(!canResume);
+    },
+    [
+      episode,
+      preferences,
+      title.kind,
+      title.progressPercent,
+      title.resumeEpisode,
+      title.resumePositionSeconds,
+    ],
+  );
 
   useEffect(() => {
     if (title.kind !== "series") return;
@@ -214,35 +279,7 @@ export function VideoPlayer({
       .getPlaybackManifest(grant.grantId)
       .then((manifest) => {
         if (!active) return;
-        const sameResumeEpisode =
-          title.kind !== "series" ||
-          (episode !== undefined &&
-            title.resumeEpisode?.seasonNumber === episode.seasonNumber &&
-            title.resumeEpisode?.episodeNumber === episode.episodeNumber);
-        const savedPercent = sameResumeEpisode
-          ? (title.progressPercent ?? 0)
-          : 0;
-        const resumeAt = sameResumeEpisode
-          ? (title.resumePositionSeconds ??
-            (title.kind === "movie" && manifest.durationSeconds !== null
-              ? (manifest.durationSeconds * savedPercent) / 100
-              : 0))
-          : 0;
-        const canResume =
-          savedPercent >= 2 && savedPercent < 95 && resumeAt > 0;
-        const audio = preferredAudioTrack(manifest, preferences);
-        setInfo(manifest);
-        setSelectedAudio(audio?.streamIndex ?? null);
-        setSelectedSubtitle(
-          preferredEmbeddedSubtitle(manifest, preferences, audio),
-        );
-        setSourceStart(resumeAt);
-        setPosition(resumeAt);
-        positionSecondsRef.current = resumeAt;
-        durationSecondsRef.current = manifest.durationSeconds ?? 0;
-        progressRef.current = resumeAt > 0 ? savedPercent : 0;
-        setResumePrompt(canResume);
-        setResumeChosen(!canResume);
+        applyManifest(manifest);
       })
       .catch((error: unknown) => {
         if (active) setLoadingError(safeErrorMessage(error));
@@ -253,31 +290,23 @@ export function VideoPlayer({
       cleanupTimerRef.current = setTimeout(() => {
         cleanupTimerRef.current = null;
         if (closingRef.current) return;
-        const save = startedRef.current
-          ? api.savePlaybackProgress(
-              grant.grantId,
-              progressRef.current,
-              positionSecondsRef.current,
-              durationSecondsRef.current,
-            )
-          : Promise.resolve();
-        void save
+        void Promise.resolve()
+          .then(() =>
+            startedRef.current
+              ? api.savePlaybackProgress(
+                  grant.grantId,
+                  progressRef.current,
+                  positionSecondsRef.current,
+                  durationSecondsRef.current,
+                )
+              : undefined,
+          )
           .catch(() => undefined)
-          .finally(() =>
-            api.closePlayback(grant.grantId).catch(() => undefined),
-          );
+          .then(() => api.closePlayback(grant.grantId))
+          .catch(() => undefined);
       }, 0);
     };
-  }, [
-    api,
-    grant.grantId,
-    preferences,
-    title.progressPercent,
-    title.resumePositionSeconds,
-    title.kind,
-    title.resumeEpisode,
-    episode,
-  ]);
+  }, [api, grant.grantId, applyManifest]);
 
   useEffect(() => {
     if (!resumePrompt || resumeChosen || resumeCountdown <= 0) return;
@@ -326,6 +355,8 @@ export function VideoPlayer({
     () => () => {
       if (pauseBurstTimerRef.current !== null)
         clearTimeout(pauseBurstTimerRef.current);
+      if (retryTimerRef.current !== null) clearTimeout(retryTimerRef.current);
+      if (closeTimerRef.current !== null) clearTimeout(closeTimerRef.current);
     },
     [],
   );
@@ -354,7 +385,7 @@ export function VideoPlayer({
 
   const togglePlayback = () => {
     const video = videoRef.current;
-    if (!video) return;
+    if (!video || mediaLoading || closingRef.current) return;
     if (video.paused) {
       void video
         .play()
@@ -368,21 +399,94 @@ export function VideoPlayer({
     }
   };
 
+  const revealControls = useCallback(() => {
+    setControlsIdle(false);
+    if (controlsTimerRef.current !== null)
+      clearTimeout(controlsTimerRef.current);
+    controlsTimerRef.current = canAutoHideRef.current
+      ? setTimeout(() => {
+          controlsTimerRef.current = null;
+          setControlsIdle(true);
+        }, 3000)
+      : null;
+  }, []);
+
+  const canAutoHide =
+    playing &&
+    !mediaLoading &&
+    !playbackError &&
+    !retryingPlayback &&
+    !resumePrompt &&
+    !needsClick &&
+    !menu &&
+    !episodeSwitching &&
+    !findingNextEpisode &&
+    nextEpisodeCountdown === null;
+  canAutoHideRef.current = Boolean(canAutoHide);
+
+  useEffect(() => {
+    revealControls();
+    return () => {
+      if (controlsTimerRef.current !== null)
+        clearTimeout(controlsTimerRef.current);
+      controlsTimerRef.current = null;
+    };
+  }, [canAutoHide, revealControls]);
+
+  useEffect(() => {
+    if (!canAutoHide || typeof navigator.getGamepads !== "function") return;
+    const timer = window.setInterval(() => {
+      try {
+        const gamepads = navigator.getGamepads();
+        if (
+          Array.from(gamepads).some(
+            (gamepad) =>
+              gamepad &&
+              (gamepad.buttons.some((button) => button.pressed) ||
+                gamepad.axes.some((axis) => Math.abs(axis) > 0.3)),
+          )
+        )
+          revealControls();
+      } catch {
+        // Some browsers expose the API while blocking access to gamepads.
+      }
+    }, 250);
+    return () => window.clearInterval(timer);
+  }, [canAutoHide, revealControls]);
+
   const closePlayer = () => {
     if (closingRef.current) return;
     closingRef.current = true;
-    const save = startedRef.current
-      ? api.savePlaybackProgress(
-          grant.grantId,
-          progressRef.current,
-          positionSecondsRef.current,
-          durationSecondsRef.current,
-        )
-      : Promise.resolve();
-    void save
+    const shouldSave = startedRef.current;
+    const progress = progressRef.current;
+    const positionSeconds = positionSecondsRef.current;
+    const durationSeconds = durationSecondsRef.current;
+    if (videoRef.current && !videoRef.current.paused) videoRef.current.pause();
+    onClosing?.();
+    setClosing(true);
+    void Promise.resolve()
+      .then(() =>
+        shouldSave
+          ? api.savePlaybackProgress(
+              grant.grantId,
+              progress,
+              positionSeconds,
+              durationSeconds,
+            )
+          : undefined,
+      )
       .catch(() => undefined)
-      .then(() => api.closePlayback(grant.grantId).catch(() => undefined))
-      .finally(onClose);
+      .then(() => api.closePlayback(grant.grantId))
+      .catch(() => undefined);
+    const finishClose = () => {
+      closeTimerRef.current = null;
+      onClose();
+    };
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+      finishClose();
+    } else {
+      closeTimerRef.current = setTimeout(finishClose, CLOSE_TRANSITION_MS);
+    }
   };
 
   const chooseResume = (continueWatching: boolean) => {
@@ -390,9 +494,12 @@ export function VideoPlayer({
     setResumeChosen(true);
     setResumeCountdown(5);
     if (!continueWatching) {
+      invalidateSubtitleRequests();
+      setSubtitleSeekVersion((version) => version + 1);
       progressRef.current = 0;
       positionSecondsRef.current = 0;
       setPosition(0);
+      setCaptionPosition(0);
       setSourceStart(0);
       setSourceVersion((value) => value + 1);
       void api
@@ -412,6 +519,8 @@ export function VideoPlayer({
 
   useEffect(() => {
     const keydown = (event: KeyboardEvent) => {
+      if (closingRef.current) return;
+      revealControls();
       if (event.code === "Space") {
         event.preventDefault();
         event.stopPropagation();
@@ -459,16 +568,19 @@ export function VideoPlayer({
   const isPaused =
     startedRef.current &&
     !playing &&
+    !closing &&
     !hasEnded &&
     !resumePrompt &&
     !episodeSwitching &&
+    !mediaLoading &&
     !playbackError;
   const mediaUrl = useMemo(() => {
     if (!info) return "";
     const parameters = new URLSearchParams({ start: sourceStart.toFixed(3) });
     if (selectedAudio !== null) parameters.set("audio", String(selectedAudio));
+    if (forceSourceRefresh) parameters.set("refresh", "1");
     return `${grant.url}/media?${parameters}`;
-  }, [grant.url, info, selectedAudio, sourceStart]);
+  }, [grant.url, info, selectedAudio, sourceStart, forceSourceRefresh]);
 
   const selectedLocal = localSubtitles.find(
     (track) => selectedSubtitle === `local:${track.id}`,
@@ -476,12 +588,29 @@ export function VideoPlayer({
   const selectedEmbedded = info?.subtitleTracks.find(
     (track) => selectedSubtitle === `embedded:${track.streamIndex}`,
   );
-  const subtitleUrl =
-    selectedLocal?.url ??
-    (selectedEmbedded
-      ? `${grant.url}/subtitles/${selectedEmbedded.streamIndex}?at=${subtitleWindowStart(position)}`
-      : null);
-  const captionText = subtitleTextAt(subtitleCues, position);
+  const externalSubtitleTracks = info?.externalSubtitleTracks ?? [];
+  const selectedExternal = externalSubtitleTracks.find(
+    (track) => selectedSubtitle === `external:${track.fileId}`,
+  );
+  const remoteSubtitleUrl = selectedEmbedded
+    ? `${grant.url}/subtitles/${selectedEmbedded.streamIndex}/window`
+    : selectedExternal
+      ? `${grant.url}/subtitles/external/${encodeURIComponent(selectedExternal.fileId)}/window`
+      : null;
+  const subtitleLookupPosition =
+    duration > 0 ? Math.min(position, Math.max(0, duration - 0.001)) : position;
+  const currentSubtitleWindowStartMs = canonicalSubtitleWindowStart(
+    subtitleLookupPosition,
+  );
+  const nextSubtitleWindowStartMs =
+    remoteSubtitleUrl &&
+    position * 1_000 - currentSubtitleWindowStartMs >=
+      SUBTITLE_WINDOW_MS * 0.8 &&
+    (duration <= 0 ||
+      currentSubtitleWindowStartMs + SUBTITLE_WINDOW_MS < duration * 1_000)
+      ? currentSubtitleWindowStartMs + SUBTITLE_WINDOW_MS
+      : null;
+  const captionText = subtitleTextAt(subtitleCues, captionPosition);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -511,86 +640,244 @@ export function VideoPlayer({
 
   useEffect(() => setSubtitleCues([]), [selectedSubtitle]);
 
+  const requestSubtitleWindow = useCallback(
+    (url: string, startMs: number, generation: number) => {
+      if (
+        subtitleWindowsRef.current.has(startMs) ||
+        subtitleRequestsRef.current.has(startMs)
+      )
+        return;
+      const controller = new AbortController();
+      subtitleRequestsRef.current.set(startMs, controller);
+      let timedOut = false;
+      const isCurrent = () =>
+        subtitleGenerationRef.current === generation &&
+        subtitleTrackUrlRef.current === url &&
+        subtitleWindowStartRef.current === startMs;
+      const timeout = window.setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+        if (isCurrent()) {
+          setSubtitleLoading(false);
+          setSubtitleError(
+            "Preparing this subtitle window is taking too long. Try another track or load a local file.",
+          );
+        }
+      }, 30_000);
+      void (async () => {
+        try {
+          const response = await fetch(
+            `${url}?startMs=${startMs}&durationMs=${SUBTITLE_WINDOW_MS}`,
+            { credentials: "same-origin", signal: controller.signal },
+          );
+          if (!response.ok) throw new Error("Subtitle download failed.");
+          const result = parseSubtitleWindow(await response.json(), startMs);
+          if (
+            controller.signal.aborted ||
+            subtitleGenerationRef.current !== generation ||
+            subtitleTrackUrlRef.current !== url
+          )
+            return;
+          subtitleWindowsRef.current.set(startMs, result);
+          setSubtitleCues(
+            nearbySubtitleCues(
+              subtitleWindowsRef.current,
+              subtitleWindowStartRef.current,
+            ),
+          );
+          if (isCurrent()) {
+            setSubtitleLoading(false);
+            setSubtitleError("");
+          }
+        } catch {
+          if (controller.signal.aborted || timedOut || !isCurrent()) return;
+          setSubtitleLoading(false);
+          setSubtitleError(
+            "These subtitles could not be loaded. Choose another track or a local file.",
+          );
+        } finally {
+          window.clearTimeout(timeout);
+          if (subtitleRequestsRef.current.get(startMs) === controller)
+            subtitleRequestsRef.current.delete(startMs);
+        }
+      })();
+    },
+    [],
+  );
+
+  const invalidateSubtitleRequests = useCallback(() => {
+    subtitleGenerationRef.current++;
+    for (const controller of subtitleRequestsRef.current.values())
+      controller.abort();
+    subtitleRequestsRef.current.clear();
+  }, []);
+
   useEffect(() => {
+    invalidateSubtitleRequests();
+    const generation = subtitleGenerationRef.current;
+    if (subtitleTrackUrlRef.current !== remoteSubtitleUrl)
+      subtitleWindowsRef.current.clear();
+    subtitleTrackUrlRef.current = remoteSubtitleUrl;
+    subtitleWindowStartRef.current = currentSubtitleWindowStartMs;
+    if (!remoteSubtitleUrl) {
+      if (!selectedLocal) {
+        setSubtitleLoading(false);
+      }
+      return;
+    }
+    for (const startMs of subtitleWindowsRef.current.keys()) {
+      if (Math.abs(startMs - currentSubtitleWindowStartMs) > SUBTITLE_WINDOW_MS)
+        subtitleWindowsRef.current.delete(startMs);
+    }
+    setSubtitleCues(
+      nearbySubtitleCues(
+        subtitleWindowsRef.current,
+        currentSubtitleWindowStartMs,
+      ),
+    );
     setSubtitleError("");
-    setSubtitleLoading(subtitleUrl !== null);
-    setSubtitleSlow(false);
-    if (!subtitleUrl) return;
+    const cached = subtitleWindowsRef.current.has(currentSubtitleWindowStartMs);
+    setSubtitleLoading(!cached);
+    if (!cached)
+      requestSubtitleWindow(
+        remoteSubtitleUrl,
+        currentSubtitleWindowStartMs,
+        generation,
+      );
+    return invalidateSubtitleRequests;
+  }, [
+    remoteSubtitleUrl,
+    currentSubtitleWindowStartMs,
+    requestSubtitleWindow,
+    invalidateSubtitleRequests,
+    selectedLocal,
+    subtitleSeekVersion,
+  ]);
+
+  useEffect(() => {
+    if (remoteSubtitleUrl && nextSubtitleWindowStartMs !== null)
+      requestSubtitleWindow(
+        remoteSubtitleUrl,
+        nextSubtitleWindowStartMs,
+        subtitleGenerationRef.current,
+      );
+  }, [
+    remoteSubtitleUrl,
+    nextSubtitleWindowStartMs,
+    requestSubtitleWindow,
+    subtitleSeekVersion,
+  ]);
+
+  const selectSubtitle = (trackId: string) => {
+    if (trackId !== selectedSubtitle) {
+      invalidateSubtitleRequests();
+      setSelectedSubtitle(trackId);
+    } else if (remoteSubtitleUrl) {
+      // Re-selecting a failed remote track should retry its current window.
+      invalidateSubtitleRequests();
+      setSubtitleSeekVersion((version) => version + 1);
+    }
+    setMenu(null);
+  };
+
+  useEffect(() => {
+    if (!selectedLocal) return;
     let active = true;
     const controller = new AbortController();
-    const slowTimer = window.setTimeout(() => {
-      if (active) setSubtitleSlow(true);
-    }, 5_000);
-    const timeout = window.setTimeout(() => {
-      controller.abort();
-      if (!active) return;
-      setSubtitleLoading(false);
-      setSubtitleSlow(false);
-      setSubtitleError(
-        "Subtitles took too long to prepare. Try the track again or load a local file.",
-      );
-    }, 28_000);
-    void fetch(subtitleUrl, {
-      credentials: "same-origin",
-      signal: controller.signal,
-    })
+    setSubtitleError("");
+    setSubtitleLoading(true);
+    void fetch(selectedLocal.url, { signal: controller.signal })
       .then(async (response) => {
         if (!response.ok) throw new Error("Subtitle download failed.");
-        const offset = selectedEmbedded
-          ? Number(response.headers?.get("x-streamer-subtitle-offset") ?? 0)
-          : 0;
-        const safeOffset = Number.isFinite(offset) && offset >= 0 ? offset : 0;
-        return parseWebVtt(await response.text()).map((cue) => ({
-          ...cue,
-          start: cue.start + safeOffset,
-          end: cue.end + safeOffset,
-        }));
+        return parseWebVtt(await response.text());
       })
       .then((cues) => {
-        if (!active || controller.signal.aborted) return;
+        if (!active) return;
         setSubtitleCues(cues);
         setSubtitleLoading(false);
-        setSubtitleSlow(false);
       })
       .catch(() => {
-        if (!active || controller.signal.aborted) return;
+        if (!active) return;
         setSubtitleLoading(false);
-        setSubtitleSlow(false);
-        setSubtitleError(
-          "These subtitles could not be loaded. Choose another track or a local file.",
-        );
-      })
-      .finally(() => {
-        window.clearTimeout(slowTimer);
-        window.clearTimeout(timeout);
+        setSubtitleError("The subtitle file could not be read.");
       });
     return () => {
       active = false;
-      window.clearTimeout(slowTimer);
-      window.clearTimeout(timeout);
       controller.abort();
     };
-  }, [selectedEmbedded, subtitleUrl]);
+  }, [selectedLocal]);
 
   const restartAt = (seconds: number, audio = selectedAudio) => {
-    const at = Math.min(Math.max(0, seconds), Math.max(0, duration - 0.2));
+    const at =
+      duration > 0
+        ? Math.min(Math.max(0, seconds), Math.max(0, duration - 0.2))
+        : Math.max(0, seconds);
     if (duration > 0) progressRef.current = (at / duration) * 100;
     positionSecondsRef.current = at;
     resumeAfterLoadRef.current = videoRef.current
       ? !videoRef.current.paused
       : true;
     videoRef.current?.pause();
+    if (pauseBurstTimerRef.current !== null) {
+      clearTimeout(pauseBurstTimerRef.current);
+      pauseBurstTimerRef.current = null;
+    }
+    pauseResumePendingRef.current = false;
+    setShowPauseBurst(false);
+    setMediaLoading(true);
     setSelectedAudio(audio);
     setPosition(at);
+    setCaptionPosition(at);
     setSourceStart(at);
+    setForceSourceRefresh(false);
     setSourceVersion((value) => value + 1);
     setScrubPosition(null);
     setPreview(null);
     setPlaybackError("");
   };
 
+  const retryPlayback = () => {
+    if (!info) {
+      setLoadingError("");
+      void api
+        .getPlaybackManifest(grant.grantId)
+        .then((manifest) => {
+          if (!rootRef.current || closingRef.current) return;
+          applyManifest(manifest);
+        })
+        .catch((error: unknown) => {
+          if (rootRef.current && !closingRef.current)
+            setLoadingError(safeErrorMessage(error));
+        });
+      return;
+    }
+    const mediaTime = videoRef.current?.currentTime;
+    const resumeAt = Math.max(
+      positionSecondsRef.current,
+      mediaTime !== undefined && Number.isFinite(mediaTime)
+        ? sourceStart + Math.max(0, mediaTime)
+        : 0,
+    );
+    restartAt(resumeAt);
+    setForceSourceRefresh(true);
+    resumeAfterLoadRef.current = true;
+    setHasEnded(false);
+    setNeedsClick(false);
+    setRetryingPlayback(true);
+    if (retryTimerRef.current !== null) clearTimeout(retryTimerRef.current);
+    retryTimerRef.current = setTimeout(() => {
+      retryTimerRef.current = null;
+      setRetryingPlayback(false);
+      setPlaybackError(
+        "This video could not be reloaded. Try again or return to StreamerAI.",
+      );
+    }, 30_000);
+  };
+
   const commitSeek = (seconds: number) => {
     if (duration <= 0) return;
+    invalidateSubtitleRequests();
+    setSubtitleSeekVersion((version) => version + 1);
     restartAt(seconds);
   };
 
@@ -622,6 +909,7 @@ export function VideoPlayer({
       const track = { id: crypto.randomUUID(), name: file.name, url };
       localUrlsRef.current.add(url);
       setLocalSubtitles((current) => [...current, track]);
+      invalidateSubtitleRequests();
       setSelectedSubtitle(`local:${track.id}`);
       setSubtitleError("");
       setMenu(null);
@@ -636,12 +924,14 @@ export function VideoPlayer({
 
   return (
     <div
-      className="video-player"
+      className={`video-player${controlsIdle ? " is-idle" : ""}${closing ? " is-closing" : ""}`}
       ref={rootRef}
       role="dialog"
       aria-modal="true"
       aria-label={`Playing ${title.title}`}
       tabIndex={-1}
+      onPointerMove={revealControls}
+      onPointerDown={revealControls}
     >
       <div
         className="video-player__stage"
@@ -662,6 +952,12 @@ export function VideoPlayer({
             playsInline
             preload="auto"
             onCanPlay={() => {
+              setMediaLoading(false);
+              if (retryTimerRef.current !== null) {
+                clearTimeout(retryTimerRef.current);
+                retryTimerRef.current = null;
+              }
+              setRetryingPlayback(false);
               if (!resumeAfterLoadRef.current || resumePrompt) return;
               resumeAfterLoadRef.current = false;
               void videoRef.current
@@ -684,9 +980,11 @@ export function VideoPlayer({
                 );
               }
             }}
+            onWaiting={() => setMediaLoading(true)}
+            onPlaying={() => setMediaLoading(false)}
             onPause={() => {
               setPlaying(false);
-              if (startedRef.current && duration > 0) {
+              if (startedRef.current && duration > 0 && !closingRef.current) {
                 void api
                   .savePlaybackProgress(
                     grant.grantId,
@@ -700,6 +998,7 @@ export function VideoPlayer({
             onTimeUpdate={(event) => {
               const at = sourceStart + event.currentTarget.currentTime;
               setPosition(at);
+              setCaptionPosition(at);
               positionSecondsRef.current = at;
               if (duration > 0) {
                 progressRef.current = Math.min(100, (at / duration) * 100);
@@ -722,7 +1021,10 @@ export function VideoPlayer({
             onEnded={() => {
               setPlaying(false);
               setHasEnded(true);
-              if (duration > 0) setPosition(duration);
+              if (duration > 0) {
+                setPosition(duration);
+                setCaptionPosition(duration);
+              }
               progressRef.current = 100;
               skipNextEpisodeRef.current = false;
               if (nextEpisode) {
@@ -751,11 +1053,24 @@ export function VideoPlayer({
                 .savePlaybackProgress(grant.grantId, 100, duration, duration)
                 .catch(() => undefined);
             }}
-            onLoadedData={() => setPlaybackError("")}
+            onLoadedData={() => {
+              if (retryTimerRef.current !== null) {
+                clearTimeout(retryTimerRef.current);
+                retryTimerRef.current = null;
+              }
+              setRetryingPlayback(false);
+              setPlaybackError("");
+            }}
             onError={() => {
+              setMediaLoading(false);
+              if (retryTimerRef.current !== null) {
+                clearTimeout(retryTimerRef.current);
+                retryTimerRef.current = null;
+              }
+              setRetryingPlayback(false);
               setPlaying(false);
               setPlaybackError(
-                "This video could not be played. Close the player and try again.",
+                "This video could not be played. Try reloading or return to StreamerAI.",
               );
             }}
             onClick={togglePlayback}
@@ -814,6 +1129,12 @@ export function VideoPlayer({
             Preparing your video…
           </div>
         )}
+        {info && retryingPlayback && !playbackError && (
+          <div className="video-player__center-message" role="status">
+            <span className="video-player__spinner" />
+            Reloading from {formatTime(positionSecondsRef.current)}…
+          </div>
+        )}
         {(loadingError || playbackError) && (
           <div
             className="video-player__center-message video-player__center-message--error"
@@ -827,6 +1148,13 @@ export function VideoPlayer({
               onClick={closePlayer}
             >
               Back to StreamerAI
+            </button>
+            <button
+              type="button"
+              className="button button--primary"
+              onClick={retryPlayback}
+            >
+              Reload and try continue
             </button>
           </div>
         )}
@@ -935,7 +1263,7 @@ export function VideoPlayer({
           </div>
         )}
 
-        {info && (
+        {info && !loadingError && !playbackError && !retryingPlayback && (
           <div className="video-player__controls">
             {needsClick && !playing && !resumePrompt && (
               <p className="video-player__audio-notice" role="status">
@@ -958,15 +1286,12 @@ export function VideoPlayer({
               </p>
             )}
             {subtitleError && (
-              <p className="video-player__subtitle-error" role="alert">
+              <p
+                id="video-player-subtitle-error"
+                className="video-player__subtitle-error"
+                role="alert"
+              >
                 {subtitleError}
-              </p>
-            )}
-            {subtitleLoading && (
-              <p className="video-player__audio-notice" role="status">
-                {subtitleSlow
-                  ? "Preparing subtitles for this part of the video…"
-                  : "Loading subtitles…"}
               </p>
             )}
             {duration > 0 && (
@@ -1065,12 +1390,23 @@ export function VideoPlayer({
               <div className="video-player__spacer" />
               <button
                 type="button"
-                className="video-player__icon-button video-player__play-toggle"
+                className={`video-player__icon-button video-player__play-toggle${mediaLoading ? " is-loading" : ""}`}
                 ref={playToggleRef}
                 onClick={togglePlayback}
-                aria-label={playing ? "Pause" : "Play"}
+                disabled={mediaLoading}
+                aria-label={
+                  mediaLoading ? "Loading video" : playing ? "Pause" : "Play"
+                }
+                aria-busy={mediaLoading}
               >
-                {playing ? <PauseIcon size="control" /> : "▶"}
+                <span className="video-player__play-symbol" aria-hidden="true">
+                  {playing ? <PauseIcon size="control" /> : "▶"}
+                </span>
+                <span className="video-player__loading-dots" aria-hidden="true">
+                  <span />
+                  <span />
+                  <span />
+                </span>
               </button>
               <button
                 type="button"
@@ -1152,15 +1488,25 @@ export function VideoPlayer({
                             : ""
                         }
                         onClick={() => {
-                          restartAt(position, track.streamIndex);
-                          if (preferences.autoFindSubtitles)
-                            setSelectedSubtitle(
-                              preferredEmbeddedSubtitle(
-                                info,
-                                preferences,
-                                track,
-                              ),
+                          const mediaTime = videoRef.current?.currentTime;
+                          restartAt(
+                            mediaTime !== undefined &&
+                              Number.isFinite(mediaTime)
+                              ? sourceStart + mediaTime
+                              : position,
+                            track.streamIndex,
+                          );
+                          if (preferences.autoFindSubtitles) {
+                            const preferred = preferredEmbeddedSubtitle(
+                              info,
+                              preferences,
+                              track,
                             );
+                            if (preferred !== selectedSubtitle) {
+                              invalidateSubtitleRequests();
+                              setSelectedSubtitle(preferred);
+                            }
+                          }
                           setMenu(null);
                         }}
                       >
@@ -1181,13 +1527,25 @@ export function VideoPlayer({
               <div className="video-player__menu-anchor">
                 <button
                   type="button"
-                  className="video-player__text-button"
+                  className={`video-player__text-button video-player__subtitle-toggle${subtitleLoading ? " is-loading" : ""}`}
                   onClick={() =>
                     setMenu(menu === "subtitles" ? null : "subtitles")
                   }
                   aria-expanded={menu === "subtitles"}
+                  aria-busy={subtitleLoading}
+                  aria-describedby={
+                    subtitleError ? "video-player-subtitle-error" : undefined
+                  }
                 >
-                  Subtitles
+                  <span>Subtitles</span>
+                  {subtitleError && (
+                    <span
+                      className="video-player__subtitle-warning"
+                      aria-hidden="true"
+                    >
+                      !
+                    </span>
+                  )}
                 </button>
                 {menu === "subtitles" && (
                   <div
@@ -1202,8 +1560,7 @@ export function VideoPlayer({
                         selectedSubtitle === "off" ? "is-selected" : ""
                       }
                       onClick={() => {
-                        setSelectedSubtitle("off");
-                        setMenu(null);
+                        selectSubtitle("off");
                       }}
                     >
                       Off
@@ -1218,13 +1575,29 @@ export function VideoPlayer({
                             : ""
                         }
                         onClick={() => {
-                          setSelectedSubtitle(`embedded:${track.streamIndex}`);
-                          setMenu(null);
+                          selectSubtitle(`embedded:${track.streamIndex}`);
                         }}
                       >
                         {track.title ??
                           track.language?.toUpperCase() ??
                           `Embedded ${index + 1}`}
+                      </button>
+                    ))}
+                    {externalSubtitleTracks.map((track) => (
+                      <button
+                        type="button"
+                        key={track.fileId}
+                        className={
+                          selectedSubtitle === `external:${track.fileId}`
+                            ? "is-selected"
+                            : ""
+                        }
+                        onClick={() => {
+                          selectSubtitle(`external:${track.fileId}`);
+                        }}
+                      >
+                        {track.filename}
+                        {track.forced ? " · Forced" : ""}
                       </button>
                     ))}
                     {localSubtitles.map((track) => (
@@ -1237,8 +1610,7 @@ export function VideoPlayer({
                             : ""
                         }
                         onClick={() => {
-                          setSelectedSubtitle(`local:${track.id}`);
-                          setMenu(null);
+                          selectSubtitle(`local:${track.id}`);
                         }}
                       >
                         {track.name}

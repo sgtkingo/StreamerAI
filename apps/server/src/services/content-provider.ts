@@ -62,7 +62,10 @@ export interface StreamerContentProvider {
     retry?: boolean,
   ): Promise<SeriesDetail>;
   /** Explicit title-wide media recheck; automatic episode discovery remains independent. */
-  forceSearchTitle?(profileId: string, title: CatalogTitle): Promise<CatalogTitle>;
+  forceSearchTitle?(
+    profileId: string,
+    title: CatalogTitle,
+  ): Promise<CatalogTitle>;
   forceSearchEpisode?(
     profileId: string,
     title: CatalogTitle,

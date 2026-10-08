@@ -1,0 +1,1405 @@
+You are working on the StreamerAI project.
+
+Your task is to audit and improve the current online media playback architecture, with primary focus on:
+
+1. lazy / random-access loading of embedded subtitles,
+2. discovery and loading of external subtitle files,
+3. efficient HTTP Range usage against the remote media source,
+4. preservation and improvement of the existing FFmpeg → fragmented MP4 browser playback pipeline,
+5. reduction of redundant remote reads,
+6. reproducibility, observability, caching, cancellation, and tests.
+
+Do NOT blindly implement the design below.
+
+First inspect the actual repository, understand the current architecture, compare it against this specification, identify discrepancies, and then implement the safest coherent solution.
+
+==================================================
+PROJECT FILES TO INSPECT FIRST
+==================================================
+
+Start with:
+
+- docs/PLAYER.md
+- apps/server/src/services/playback-media-engine.ts
+- apps/server/src/routes/playback.ts
+
+Then inspect all directly related:
+
+- playback services
+- FFmpeg/ffprobe wrappers
+- grant handling
+- stream lifecycle management
+- subtitle extraction
+- subtitle parsing/rendering
+- frontend player
+- API types/contracts
+- caching utilities
+- Dockerfiles
+- tests
+- Webshare integration
+- HTTP Range handling
+
+Search the repository for:
+
+- ffmpeg
+- ffprobe
+- subtitle
+- WebVTT
+- SRT
+- ASS
+- SSA
+- mov_text
+- Retry-After
+- Range
+- Content-Range
+- Accept-Ranges
+- playback grant
+- AbortController
+- child_process
+- spawn
+- fragmented mp4
+- movflags
+- stream cancellation
+
+Before modifying anything, summarize internally the actual implementation and derive the minimal safe migration plan.
+
+Do not assume the current documentation perfectly matches the code.
+
+==================================================
+CURRENT EXPECTED ARCHITECTURE
+==================================================
+
+The current implementation approximately behaves as follows:
+
+- Browser never receives the direct Webshare source URL.
+- Browser receives a short-lived playback grant.
+- Server resolves the remote source.
+- Server verifies Range capability using a small byte-range request and expects HTTP 206.
+- ffprobe discovers:
+  - duration
+  - video streams
+  - audio streams
+  - textual subtitle streams
+- At least one video stream is required.
+- First video stream is currently used.
+- Server streams media through FFmpeg.
+- Browser receives fragmented MP4.
+- Input file is not fully downloaded.
+- H.264 yuv420p/yuvj420p may be stream-copied.
+- Other video is converted using libx264.
+- Audio is normalized to AAC stereo.
+- Approximate fragment duration is ~1 second.
+- There is no browser-facing HTTP Range seek for the generated stream.
+- Seek creates a new playback request starting at the selected timestamp.
+- Audio stream changes also restart the media pipeline.
+- Only one active media stream is currently allowed per playback context.
+- Embedded textual subtitles are currently extracted in full to WebVTT.
+- Extraction is asynchronous:
+  - 202 while preparing
+  - Retry-After for polling
+- Extracted subtitle output is cached per grant/track.
+- Subtitle extraction has limits such as:
+  - ~10 minute timeout
+  - ~8 MB output
+- Local subtitle upload supports SRT/VTT/ASS/SSA.
+- Image subtitles such as PGS/VobSub are currently not exposed.
+- Full embedded subtitle extraction may perform a second complete/semi-complete remote pass and compete with video streaming for bandwidth.
+
+Validate all of these assumptions against the real code.
+
+==================================================
+PRIMARY DESIGN GOAL
+==================================================
+
+Replace:
+
+    embedded subtitle
+        ↓
+    extract entire subtitle track
+        ↓
+    wait
+        ↓
+    entire WebVTT
+        ↓
+    browser
+
+with a lazy random-access model:
+
+    current playback time T
+        ↓
+    request subtitle time window
+        ↓
+    demux only relevant source area
+        ↓
+    extract relevant subtitle packets
+        ↓
+    normalized subtitle cues
+        ↓
+    browser
+        ↓
+    prefetch next time window
+
+The cost of obtaining subtitles after a seek should be proportional primarily to the local time region required for playback, NOT to the total movie duration.
+
+Do NOT implement a custom Matroska/EBML parser unless absolutely necessary.
+
+Prefer FFmpeg/libavformat functionality.
+
+Matroska Cues / container indexes and HTTP byte seeking should be delegated to FFmpeg where possible.
+
+==================================================
+TARGET ARCHITECTURE
+==================================================
+
+Target conceptual architecture:
+
+Browser
+  │
+  ├── GET playback manifest
+  │       ↓
+  │   ProbeService
+  │
+  ├── GET media stream?start=T&audio=N
+  │       ↓
+  │   PlaybackMediaEngine
+  │       ↓
+  │     FFmpeg
+  │       ↓
+  │      fMP4
+  │
+  └── GET subtitle window
+          ↓
+      SubtitleService
+          │
+          ├── EmbeddedSubtitleProvider
+          │       ↓
+          │   FFmpeg/libavformat
+          │   timestamp seek
+          │
+          └── ExternalSubtitleProvider
+                  ↓
+              SRT/VTT/ASS parser
+
+All normalized to:
+
+interface SubtitleCue {
+    startMs: number;
+    endMs: number;
+    text: string;
+    settings?: string;
+}
+
+interface SubtitleWindow {
+    trackId: string;
+    startMs: number;
+    endMs: number;
+    cues: SubtitleCue[];
+}
+
+The frontend must not care whether subtitles originated from:
+
+- embedded SubRip
+- embedded ASS/SSA
+- WebVTT
+- mov_text
+- TTML
+- external SRT
+- external VTT
+- external ASS/SSA
+
+Container-specific behavior belongs server-side.
+
+==================================================
+PHASE 1 — AUDIT
+==================================================
+
+Before implementing:
+
+1. Inspect the real playback pipeline.
+2. Identify where ffprobe results are generated and cached.
+3. Identify how source URLs and grants are represented.
+4. Identify FFmpeg process ownership and cancellation.
+5. Identify how seek works today.
+6. Identify how subtitle extraction works today.
+7. Identify frontend subtitle representation.
+8. Identify existing caches.
+9. Identify how Webshare URLs expire.
+10. Identify Docker FFmpeg version/build.
+11. Identify test infrastructure.
+
+Document findings in docs/PLAYER.md as part of the final implementation.
+
+Do not create a parallel architecture when suitable abstractions already exist.
+
+Refactor existing components where appropriate.
+
+==================================================
+PHASE 2 — PROBE / MANIFEST IMPROVEMENTS
+==================================================
+
+Extend the media probe/manifest where useful.
+
+The manifest should expose at least:
+
+- duration
+- seekability
+- source size if known
+- source version identity if known:
+  - ETag
+  - Last-Modified
+  - remote file id
+  - equivalent stable identifier
+- video streams
+- audio streams
+- subtitle streams
+
+For subtitle streams expose normalized metadata:
+
+- track id/index
+- codec
+- language
+- title
+- disposition where available:
+  - default
+  - forced
+  - hearing impaired
+- source:
+  - embedded
+  - external
+- kind:
+  - text
+  - bitmap
+
+Do not expose image subtitle tracks as usable text tracks.
+
+Preserve them in metadata only if useful.
+
+Do not break existing API consumers unnecessarily.
+
+==================================================
+PHASE 3 — SUBTITLE SERVICE
+==================================================
+
+Create or refactor toward a dedicated SubtitleService.
+
+Suggested responsibilities:
+
+SubtitleService
+  ├── track metadata
+  ├── normalization
+  ├── lazy window extraction
+  ├── cache
+  ├── cancellation
+  ├── external subtitle handling
+  └── resource limits
+
+Suggested provider abstraction:
+
+interface SubtitleProvider {
+    getWindow(
+        source,
+        track,
+        startMs,
+        endMs,
+        signal?
+    ): Promise<SubtitleWindow>;
+}
+
+Implement at least:
+
+EmbeddedSubtitleProvider
+ExternalSubtitleProvider
+
+Keep source/container-specific logic out of route handlers.
+
+==================================================
+PHASE 4 — LAZY EMBEDDED SUBTITLE EXTRACTION
+==================================================
+
+Implement an API similar to:
+
+GET /api/playback/:grant/subtitles/:trackId/window
+    ?start=<seconds-or-ms>
+    &duration=<window-duration>
+
+Choose one consistent unit across API types.
+
+Milliseconds internally are preferred.
+
+Recommended default subtitle window:
+
+120 seconds
+
+Make the window duration configurable.
+
+Apply sane min/max limits.
+
+Example:
+
+requested:
+    start = 4,980,000 ms
+    duration = 120,000 ms
+
+returns cues overlapping:
+
+    [4,980,000 ; 5,100,000]
+
+Important:
+
+Include cues that START before the requested window but are still active at startMs when feasible.
+
+For example:
+
+cue:
+    4979.0 → 4983.0
+
+request:
+    4980.0 → 5100.0
+
+The cue should be included because it overlaps the requested interval.
+
+==================================================
+FFMPEG EXTRACTION BEHAVIOR
+==================================================
+
+Use FFmpeg/libavformat timestamp seeking.
+
+Do NOT sequentially process the complete file from t=0.
+
+Verify empirically that the resulting FFmpeg invocation performs remote seeking when the input supports HTTP ranges.
+
+Use appropriate input-side seeking.
+
+Be careful about the semantic difference between:
+
+    -ss before -i
+
+and:
+
+    -ss after -i
+
+For remote random access, prefer input seeking when compatible.
+
+The extraction process should:
+
+1. start near the requested timestamp,
+2. select only the requested subtitle stream,
+3. avoid transcoding unrelated video/audio,
+4. stop shortly after the requested end timestamp,
+5. produce either:
+   - WebVTT
+   - or another easily parsed textual representation,
+6. normalize result to SubtitleCue[].
+
+Do not let FFmpeg run until EOF.
+
+Do not decode video/audio merely to obtain subtitle text.
+
+Use explicit stream mapping.
+
+Example conceptual behavior:
+
+ffmpeg
+    input seek ~start
+    input remote URL
+    map subtitle track N
+    limit duration
+    subtitle conversion
+    output pipe
+
+Derive the exact safe command based on the currently supported FFmpeg version.
+
+Do not copy this pseudo-command blindly.
+
+==================================================
+SEEK ACCURACY
+==================================================
+
+Timestamp seek may land before the exact requested time due to container indexing.
+
+This is acceptable and expected.
+
+The service must:
+
+- parse resulting cues,
+- normalize timestamps to absolute movie timestamps,
+- filter by interval overlap,
+- avoid duplicate cues,
+- tolerate FFmpeg returning some cues before requested start.
+
+Pay special attention to whether FFmpeg resets timestamps when using:
+
+- -ss
+- -copyts
+- -start_at_zero
+- output WebVTT
+
+Write explicit tests for timestamp normalization.
+
+Do not ship a solution that returns window-relative timestamps if the frontend expects movie-relative timestamps.
+
+==================================================
+SUBTITLE CACHE
+==================================================
+
+Add a dedicated cache.
+
+Cache key should represent at least:
+
+- immutable/stable media identity
+- subtitle track
+- normalized time window
+- subtitle conversion version/settings
+
+Prefer media identity over grant identity when security semantics allow this.
+
+A grant can expire while cached subtitle data remains valid for the same immutable media object.
+
+Do not cache against URL strings if the remote URL is ephemeral.
+
+Possible key concept:
+
+mediaId
++ mediaVersion
++ subtitleTrack
++ windowStart
++ windowSize
++ converterVersion
+
+Use deterministic aligned windows.
+
+For example with 120 s windows:
+
+0–120
+120–240
+240–360
+...
+
+If client asks for t=170:
+
+serve/cache:
+
+120–240
+
+This gives significantly better cache reuse than arbitrary:
+
+170–290
+
+If necessary return the canonical actual window boundaries.
+
+Cache can initially be in-memory, but design the abstraction so persistent/distributed caching can be added later.
+
+Respect global memory limits and eviction.
+
+==================================================
+FRONTEND SUBTITLE PREFETCH
+==================================================
+
+Implement client-side window management.
+
+Recommended model:
+
+previous window
+current window
+next window
+
+Example:
+
+current playback = 1250 s
+window size = 120 s
+
+loaded roughly:
+
+1080–1200
+1200–1320
+1320–1440
+
+Prefetch the next window before entering it.
+
+For example:
+
+at ~75–85% of current window:
+    start fetching next window.
+
+Do NOT poll current playback every 100 ms merely to determine whether a subtitle cue exists if there is a cleaner event-based/render-loop implementation already available.
+
+Reuse existing rendering architecture when practical.
+
+==================================================
+SEEK BEHAVIOR
+==================================================
+
+When user seeks:
+
+1. abort obsolete subtitle requests,
+2. clear irrelevant prefetch state,
+3. calculate target canonical subtitle window,
+4. request it immediately,
+5. optionally request next window,
+6. let video seek happen independently.
+
+Video and subtitle seek should run concurrently.
+
+Do not serialize:
+
+    video seek
+    then subtitle seek
+
+unless a real synchronization requirement exists.
+
+Use AbortController or the project's existing cancellation abstraction.
+
+Old subtitle requests must not overwrite state after a newer seek.
+
+Protect against races using:
+
+- request generation id
+- AbortSignal
+- sequence/token validation
+
+==================================================
+AUDIO SWITCH
+==================================================
+
+Do not redesign the full media transport solely for this task.
+
+The current restart-on-audio-change behavior may remain if it is otherwise stable.
+
+However:
+
+- ensure subtitle state survives an audio-only stream restart,
+- do not unnecessarily re-download subtitle windows,
+- preserve current playback time,
+- cancel only processes/resources that need cancellation.
+
+==================================================
+PHASE 5 — EXTERNAL SUBTITLE DISCOVERY
+==================================================
+
+Implement external subtitle discovery if the Webshare abstraction allows directory/file listing.
+
+Do NOT brute-force large numbers of HTTP requests when a metadata API can enumerate sibling files.
+
+For media:
+
+Interstellar.2014.1080p.mkv
+
+recognize candidates such as:
+
+Interstellar.2014.1080p.srt
+Interstellar.2014.1080p.cs.srt
+Interstellar.2014.1080p.cze.srt
+Interstellar.2014.1080p.cz.srt
+Interstellar.2014.1080p.en.srt
+Interstellar.2014.1080p.eng.srt
+Interstellar.2014.1080p.forced.srt
+
+Also support:
+
+.vtt
+.ass
+.ssa
+
+Design discovery independently from parsing.
+
+External subtitle candidate metadata should include:
+
+- file id
+- filename
+- extension
+- inferred language
+- inferred forced/default status
+- confidence/match score
+- exact/fuzzy match type
+
+==================================================
+EXTERNAL SUBTITLE MATCHING
+==================================================
+
+Matching priority:
+
+1. exact normalized basename
+2. exact basename + language suffix
+3. safe normalized filename match
+4. conservative fuzzy match
+
+For filename normalization, consider removing common release metadata:
+
+- resolution
+- WEB-DL
+- WEBRip
+- BluRay
+- HDR
+- DV
+- codec names
+- audio codec names
+- release group
+
+Do NOT fuzzy-match across different TV episodes.
+
+Recognize at minimum patterns such as:
+
+S02E07
+s02e07
+2x07
+
+Episode identity is a hard constraint.
+
+Prefer false negatives over incorrect subtitle attachment.
+
+For movies, title + year should strongly influence matching.
+
+Do not implement a fragile huge regex if a cleaner tokenizer/normalizer design is possible.
+
+Add unit tests for filename matching.
+
+==================================================
+EXTERNAL SUBTITLE LOADING
+==================================================
+
+External subtitle files are generally small.
+
+Do NOT use lazy range-window extraction for ordinary standalone subtitle files unless measurement proves it is useful.
+
+Preferred behavior:
+
+external subtitle
+    ↓
+download once
+    ↓
+validate size
+    ↓
+parse once
+    ↓
+normalize Cue[]
+    ↓
+cache
+
+Keep existing upload size guards or improve them.
+
+Support at least:
+
+- SRT
+- WebVTT
+- ASS
+- SSA
+
+Preserve existing local subtitle upload functionality.
+
+External subtitles should use the same frontend SubtitleCue abstraction as embedded subtitles.
+
+==================================================
+ASS / SSA
+==================================================
+
+ASS/SSA may contain styling and positioning.
+
+For the first iteration:
+
+- preserve meaningful text,
+- avoid showing raw ASS override tags,
+- preserve line breaks,
+- preserve positioning/settings only if the current renderer supports them safely.
+
+Do not attempt to build a complete libass renderer unless the project already has one.
+
+Document styling limitations.
+
+==================================================
+IMAGE SUBTITLES
+==================================================
+
+Do not attempt full PGS/VobSub OCR.
+
+Keep them unsupported for textual rendering for now.
+
+The manifest may identify them as bitmap subtitle tracks and the UI may indicate that they are currently unsupported.
+
+Do not pretend that PGS/VobSub are text.
+
+==================================================
+PHASE 6 — RANGE CACHE / SOURCE ACCESS LAYER
+==================================================
+
+Investigate whether ffprobe, playback FFmpeg, and subtitle FFmpeg currently read overlapping remote ranges independently.
+
+If yes, introduce a reusable source access/cache layer only if it can be implemented without destabilizing playback.
+
+Conceptual architecture:
+
+Webshare
+    ↓
+RangeCache / RangeProxy
+    ├── ffprobe
+    ├── video FFmpeg
+    └── subtitle FFmpeg
+
+Potential chunk size:
+
+1–4 MiB
+
+But do NOT hardcode this without reasoning/testing.
+
+Cache identity:
+
+mediaId
++ mediaVersion
++ byteStart
++ byteEnd
+
+Invalidate if source identity/version changes.
+
+Important:
+
+Do NOT build a huge unbounded disk cache.
+
+Define:
+
+- block size
+- max RAM usage
+- optional disk usage
+- eviction policy
+- concurrent request coalescing
+- cancellation behavior
+
+If implementing the RangeProxy is too risky for this change set, create the interface and document it as a subsequent phase instead of destabilizing the media path.
+
+Priority order:
+
+1. subtitle lazy extraction
+2. cache subtitle windows
+3. external subtitle discovery
+4. shared byte-range cache
+
+==================================================
+HTTP RANGE VALIDATION
+==================================================
+
+Improve current source capability probing.
+
+Do not rely solely on Accept-Ranges header.
+
+A real request such as:
+
+Range: bytes=0-0
+
+with valid:
+
+206 Partial Content
+Content-Range: bytes 0-0/TOTAL
+
+is stronger evidence.
+
+Validate Content-Range.
+
+Store:
+
+- supportsRange
+- contentLength
+- ETag
+- Last-Modified where available
+
+Handle servers that:
+
+- ignore Range and return 200,
+- return malformed Content-Range,
+- use unknown total size,
+- expire signed URLs.
+
+Fail gracefully.
+
+==================================================
+REMOTE URL EXPIRY
+==================================================
+
+Do not use an expiring direct URL as long-lived cache identity.
+
+The service should be able to reacquire/refresh the remote source URL from the grant/source abstraction when required.
+
+A new subtitle window request several minutes later must not fail solely because an old internally cached signed URL expired, if the underlying grant/media authorization remains valid.
+
+Reuse the project's existing security model.
+
+Never expose source URL to the browser.
+
+==================================================
+FFPROBE CACHE
+==================================================
+
+Cache media probe results.
+
+Probe should not rerun for every seek.
+
+Key it by stable media identity/version.
+
+Include:
+
+- duration
+- tracks
+- source size
+- range capability
+- metadata relevant to playback
+
+Invalidate correctly when underlying source changes.
+
+==================================================
+FFMPEG VERSION / REPRODUCIBILITY
+==================================================
+
+Audit Dockerfile(s).
+
+Current design reportedly installs FFmpeg from Debian packages without pinning the exact build.
+
+Improve reproducibility.
+
+At minimum record/log:
+
+ffmpeg -version
+ffprobe -version
+
+Prefer a pinned container/base/package strategy that keeps the build deterministic and maintainable.
+
+Do not blindly switch distributions or introduce a custom FFmpeg build unless necessary.
+
+Update documentation with:
+
+- exact FFmpeg source/version strategy
+- expected codecs
+- expected protocol support
+
+==================================================
+PROCESS MANAGEMENT
+==================================================
+
+Every spawned FFmpeg/ffprobe process must have:
+
+- timeout
+- cancellation
+- stdout handling
+- stderr handling
+- max output protection where applicable
+- deterministic cleanup
+- no zombie processes
+
+When a client disconnects:
+
+- terminate unnecessary FFmpeg process
+- cancel subtitle extraction if not reusable
+- preserve cacheable completed work
+
+When seeking rapidly:
+
+seek A
+seek B
+seek C
+
+only C should ultimately control frontend state.
+
+Avoid leaking three active FFmpeg processes.
+
+==================================================
+SECURITY
+==================================================
+
+Preserve:
+
+- short-lived grant model
+- server-only origin URL
+- source access authorization
+- path/file validation
+- size limits
+
+Validate all API inputs:
+
+- track id
+- timestamps
+- window size
+- subtitle file size
+- subtitle format
+
+Prevent:
+
+- command injection
+- arbitrary FFmpeg argument injection
+- SSRF through user-controlled source URLs
+- path traversal
+- unbounded process spawning
+- unbounded memory cache
+
+Never concatenate shell command strings from user data.
+
+Use structured spawn arguments.
+
+==================================================
+OBSERVABILITY
+==================================================
+
+Add structured diagnostics/metrics where the project supports them.
+
+Useful fields:
+
+- mediaId
+- grantId where safe
+- operation
+- subtitleTrack
+- windowStart
+- windowEnd
+- cacheHit
+- cacheMiss
+- extractionDurationMs
+- bytesRead if measurable
+- ffmpegExitCode
+- aborted
+- timeout
+- sourceRangeCapable
+
+Never log signed source URLs or secrets.
+
+Useful metrics:
+
+subtitle_window_request_total
+subtitle_window_cache_hit_total
+subtitle_window_extract_duration_ms
+subtitle_window_errors_total
+subtitle_window_abort_total
+
+If telemetry infrastructure does not exist, use structured logs instead of creating a large metrics subsystem.
+
+==================================================
+API RESPONSE
+==================================================
+
+Prefer JSON SubtitleWindow for application-internal transport unless the current frontend naturally integrates better with WebVTT.
+
+Example:
+
+{
+  "trackId": "2",
+  "startMs": 4920000,
+  "endMs": 5040000,
+  "cues": [
+    {
+      "startMs": 4982130,
+      "endMs": 4985910,
+      "text": "Ahoj."
+    }
+  ]
+}
+
+Reasons:
+
+- explicit absolute timestamps
+- simple caching
+- easy merging
+- easier tests
+- codec-independent frontend
+
+If the current browser implementation uses native <track> and WebVTT URLs efficiently, evaluate both designs first and choose based on the existing architecture.
+
+Do not replace a clean native implementation just for theoretical purity.
+
+==================================================
+CACHE WINDOW MERGING
+==================================================
+
+Frontend must safely merge cues from adjacent windows.
+
+Deduplicate by a stable cue identity such as a deterministic hash over normalized:
+
+track
+start
+end
+text
+
+or another robust mechanism.
+
+Do not render the same cue twice at window boundaries.
+
+Handle cues spanning window boundaries.
+
+==================================================
+CURRENT VIDEO PIPELINE
+==================================================
+
+Do NOT replace the functional browser-compatible fMP4 pipeline merely to emulate VLC.
+
+Browser playback has different constraints from VLC.
+
+Keep conceptually:
+
+remote source
+    ↓
+FFmpeg
+    ↓
+H.264/AAC fragmented MP4
+    ↓
+browser
+
+unless inspection proves a better implementation is already feasible.
+
+The "VLC-like" part to adopt is server-side random access and indexed seeking, especially for subtitles.
+
+==================================================
+VIDEO CODEC POLICY
+==================================================
+
+Preserve current working behavior initially:
+
+- compatible H.264 may be copied
+- incompatible video may use libx264
+- output yuv420p
+- AAC audio
+
+Do not mix a large transcoding redesign into the subtitle change.
+
+However audit:
+
+- yuvj420p assumptions
+- browser compatibility
+- H.264 level/profile
+- AAC channel handling
+- timestamp continuity
+- fragmented MP4 flags
+- fragment duration
+
+Report defects found.
+
+Fix only clear correctness issues that are reasonably scoped.
+
+==================================================
+FUTURE HLS/DASH
+==================================================
+
+Do not migrate to HLS/DASH unless the current implementation has a strong reason to do so.
+
+Document it as a future option for:
+
+- adaptive bitrate
+- multiple simultaneous audio renditions
+- CDN distribution
+- seamless quality switching
+
+The immediate goal is not ABR.
+
+==================================================
+TESTS
+==================================================
+
+Add comprehensive tests.
+
+At minimum:
+
+--------------------------------------------------
+Unit tests
+--------------------------------------------------
+
+Subtitle time-window normalization:
+
+- canonical window calculation
+- negative timestamp rejection
+- duration limits
+- movie-end clipping
+
+Cue overlap:
+
+- cue inside window
+- cue starts before window but overlaps
+- cue ends after window
+- cue outside window
+- boundary equality
+
+Cue deduplication.
+
+SRT parser.
+
+WebVTT parser.
+
+ASS/SSA normalization.
+
+External subtitle filename matching.
+
+Movie matching.
+
+Episode matching:
+
+show.S02E07.mkv
+must never match:
+show.S02E08.srt
+
+Language suffix extraction.
+
+Cache key stability.
+
+--------------------------------------------------
+Integration tests
+--------------------------------------------------
+
+Generate small deterministic media fixtures using FFmpeg if appropriate.
+
+Create test MKV containing:
+
+- video
+- audio
+- at least one embedded SRT/ASS subtitle stream
+
+Test:
+
+1. probe detects subtitle stream
+2. request early window
+3. request middle window
+4. request late window
+5. seek directly to late window
+6. timestamps remain absolute
+7. only relevant cues returned
+8. cache hit on repeated window
+9. adjacent windows do not cause duplicates
+10. cancellation works
+
+Test HTTP Range source behavior using a local fixture HTTP server supporting:
+
+- proper 206
+- 200 ignoring Range
+- malformed Content-Range
+- delayed request
+- interrupted request
+
+Where feasible, assert that a late subtitle request does not require reading the entire file from byte zero.
+
+This is an important acceptance criterion.
+
+--------------------------------------------------
+Frontend tests
+--------------------------------------------------
+
+Test:
+
+- subtitle selection
+- current window load
+- next window prefetch
+- seek cancellation
+- rapid multiple seeks
+- audio switch retaining subtitle selection
+- cache reuse
+- no duplicate captions
+
+==================================================
+PERFORMANCE VALIDATION
+==================================================
+
+Create a reproducible benchmark/test.
+
+Compare old full extraction with new lazy extraction for a long media fixture or sufficiently representative large fixture.
+
+Measure:
+
+- time to first subtitle after selecting a track
+- time to subtitle availability after seek
+- remote bytes transferred if measurable
+- FFmpeg process duration
+- memory usage where practical
+
+Expected behavior:
+
+OLD:
+cost grows approximately with amount of source that must be traversed/extracted.
+
+NEW:
+late seek subtitle latency should remain primarily tied to seek/index access and local window extraction.
+
+Do not claim O(1) in formal complexity terms unless measurement/model justifies it.
+
+==================================================
+GRACEFUL FALLBACK
+==================================================
+
+Some containers or sources may not support efficient random access.
+
+Support fallback behavior.
+
+If source is not seekable:
+
+Option hierarchy:
+
+1. return clear capability metadata,
+2. use existing full extraction if acceptable and bounded,
+3. refuse expensive extraction where resource limits would be exceeded.
+
+Do not silently launch a multi-gigabyte sequential subtitle scan when a user expects an instant seek.
+
+Expose useful error/capability information.
+
+==================================================
+BACKWARD COMPATIBILITY
+==================================================
+
+Do not break the current player unnecessarily.
+
+If old subtitle endpoint exists:
+
+- retain temporarily,
+- or provide migration compatibility,
+- or update all clients atomically.
+
+Remove dead code once migration is complete and tested.
+
+Do not leave two competing subtitle implementations without a clear compatibility reason.
+
+==================================================
+DOCUMENTATION
+==================================================
+
+Update docs/PLAYER.md.
+
+Document:
+
+1. playback architecture
+2. grant/security flow
+3. source probing
+4. Range behavior
+5. media transcoding/passthrough
+6. seeking
+7. audio switching
+8. embedded subtitle loading
+9. external subtitle discovery
+10. subtitle cache
+11. unsupported bitmap subtitles
+12. FFmpeg version requirements
+13. limitations
+14. fallback behavior
+
+Include architecture diagrams using Mermaid if the project documentation already supports it.
+
+Example conceptual diagram:
+
+flowchart LR
+    Browser --> Manifest
+    Manifest --> ProbeService
+
+    Browser --> MediaAPI
+    MediaAPI --> MediaEngine
+    MediaEngine --> FFmpeg
+    FFmpeg --> Browser
+
+    Browser --> SubtitleAPI
+    SubtitleAPI --> SubtitleService
+    SubtitleService --> EmbeddedProvider
+    SubtitleService --> ExternalProvider
+
+    EmbeddedProvider --> Source
+    ExternalProvider --> Source
+
+==================================================
+IMPLEMENTATION QUALITY
+==================================================
+
+Use the project's existing coding conventions.
+
+Prefer:
+
+- small cohesive services
+- typed contracts
+- dependency injection where already used
+- explicit lifecycle ownership
+- deterministic cache keys
+- immutable normalized subtitle objects
+
+Avoid:
+
+- giant route handlers
+- shell string commands
+- hidden global mutable state
+- arbitrary sleeps
+- polling where promises/events suffice
+- parsing FFmpeg stderr with fragile regex unless no structured alternative exists
+- custom media container parsers
+
+==================================================
+DECISION RULE
+==================================================
+
+When there is a conflict between this proposed design and the actual codebase:
+
+1. correctness
+2. security
+3. compatibility
+4. simplicity
+5. performance
+
+take priority over blindly following the proposal.
+
+If an existing abstraction already solves a requirement well, reuse it.
+
+==================================================
+DELIVERABLE
+==================================================
+
+Implement the improvement, not merely a design document.
+
+At completion provide a concise engineering report containing:
+
+1. Initial architecture discovered
+2. Main problems found
+3. Files changed
+4. Architecture after modification
+5. Subtitle lazy-loading mechanism
+6. External subtitle discovery mechanism
+7. Cache behavior
+8. Seek/cancellation behavior
+9. Security implications
+10. Tests added
+11. Tests executed and exact results
+12. Performance comparison where available
+13. Known limitations
+14. Follow-up improvements
+
+Also explicitly report:
+
+- whether FFmpeg actually performs byte-range seeking for embedded subtitle windows,
+- whether late-file subtitle requests avoid sequential reading from byte zero,
+- whether the remote service supports the required behavior,
+- whether any behavior differs for MKV versus MP4,
+- whether ASS/SSA timestamps/styles required special handling.
+
+==================================================
+ACCEPTANCE CRITERIA
+==================================================
+
+The task is complete when all applicable criteria pass:
+
+[ ] Existing normal video playback still works.
+[ ] Existing seek still works.
+[ ] Existing audio selection still works.
+[ ] Existing local subtitle loading still works.
+[ ] Embedded subtitle tracks are still discovered.
+[ ] Selecting an embedded subtitle no longer requires full-track extraction in the normal seekable case.
+[ ] Subtitle windows are loaded lazily.
+[ ] Subtitle timestamps remain synchronized with absolute media time.
+[ ] Seeking to a late position fetches the relevant subtitle region without processing the complete file.
+[ ] Subtitle requests can be cancelled.
+[ ] Rapid seeks do not create stale subtitle state.
+[ ] Subtitle windows are cached.
+[ ] Adjacent windows do not produce duplicate rendered cues.
+[ ] External subtitle discovery works where the source API exposes sibling files.
+[ ] External subtitle files are cached after download.
+[ ] Incorrect TV episode subtitle matches are prevented.
+[ ] PGS/VobSub are not incorrectly exposed as text.
+[ ] FFmpeg processes are cleaned up correctly.
+[ ] Signed source URL remains server-side.
+[ ] No shell injection path is introduced.
+[ ] All new unit tests pass.
+[ ] All relevant existing regression tests pass.
+[ ] PLAYER.md matches the actual implementation.
+
+==================================================
+IMPORTANT
+==================================================
+
+Do not stop after analyzing.
+
+Inspect → plan → implement → test → fix regressions → document.
+
+Do not ask for confirmation for ordinary engineering decisions.
+
+If a proposed optimization such as a shared RangeCacheProxy would make the change excessively risky, implement the stable abstraction boundary and explicitly defer only that optimization.
+
+Prioritize production correctness of lazy subtitle loading over architectural overengineering.

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createApp, InMemoryPlaybackTicketStore } from "../src/index.js";
 
 describe("ephemeral playback tickets", () => {
-  it("keeps exactly one direct URL in memory and redirects without caching", async () => {
+  it("keeps exactly one direct URL in memory without exposing it through the grant path", async () => {
     const now = () => new Date("2026-09-28T12:00:00.000Z");
     const store = new InMemoryPlaybackTicketStore(now);
     const firstPath = store.issue({
@@ -32,22 +32,21 @@ describe("ephemeral playback tickets", () => {
       now,
       playbackTicketStore: store,
     });
-    const redirect = await app.inject({ method: "GET", url: secondPath });
-    expect(redirect.statusCode).toBe(302);
-    expect(redirect.headers.location).toBe("https://cdn.webshare.cz/second");
-    expect(redirect.headers["cache-control"]).toContain("no-store");
-    expect(redirect.headers["referrer-policy"]).toBe("no-referrer");
+    const direct = await app.inject({ method: "GET", url: secondPath });
+    expect(direct.statusCode).toBe(404);
+    expect(direct.headers.location).toBeUndefined();
+    expect(direct.body).not.toContain("https://cdn.webshare.cz/second");
     const history = await app.inject({
       method: "GET",
       url: "/api/v1/profiles/default/history",
     });
-    expect(history.json().items).toHaveLength(1);
+    expect(history.json().items).toHaveLength(0);
     await app.inject({ method: "GET", url: secondPath });
     const historyAfterReload = await app.inject({
       method: "GET",
       url: "/api/v1/profiles/default/history",
     });
-    expect(historyAfterReload.json().items).toHaveLength(1);
+    expect(historyAfterReload.json().items).toHaveLength(0);
     await app.close();
   });
 });

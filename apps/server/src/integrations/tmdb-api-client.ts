@@ -12,6 +12,7 @@ const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 export interface ProviderFetchResponse {
   readonly ok: boolean;
   readonly status: number;
+  readonly headers?: { get(name: string): string | null };
   readonly body?: { cancel(): Promise<void> } | null;
   text(): Promise<string>;
 }

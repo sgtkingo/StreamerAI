@@ -184,7 +184,9 @@ describe("TitleDetail", () => {
       name: "Details for Sample Show",
     });
     const episode = within(dialog).getByText(/Pilot/).closest("li")!;
-    expect(within(episode).getByRole("button", { name: /play/i })).toBeEnabled();
+    expect(
+      within(episode).getByRole("button", { name: /play/i }),
+    ).toBeEnabled();
     expect(
       within(episode).getByRole("button", {
         name: "Search sources for episode 1",

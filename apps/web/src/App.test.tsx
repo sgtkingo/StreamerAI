@@ -92,8 +92,12 @@ function createApi(): StreamerApi {
       series: null,
       related: [],
     })),
-    forceTitleSearch: vi.fn().mockResolvedValue({ detail: null, foundSources: 0 }),
-    forceEpisodeSearch: vi.fn().mockResolvedValue({ detail: null, sources: [] }),
+    forceTitleSearch: vi
+      .fn()
+      .mockResolvedValue({ detail: null, foundSources: 0 }),
+    forceEpisodeSearch: vi
+      .fn()
+      .mockResolvedValue({ detail: null, sources: [] }),
     discover: vi.fn().mockResolvedValue({
       sessionId: "session-1",
       mode: "preview",

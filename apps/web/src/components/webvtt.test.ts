@@ -13,7 +13,8 @@ describe("WebVTT subtitles", () => {
 
   it("rejects malformed files and ignores empty cue blocks", () => {
     expect(() => parseWebVtt("not subtitles")).toThrow(/WebVTT/);
-    expect(parseWebVtt("WEBVTT\n\nNOTE hi\n\n00:01.000 --> 00:02.000\n"))
-      .toEqual([]);
+    expect(
+      parseWebVtt("WEBVTT\n\nNOTE hi\n\n00:01.000 --> 00:02.000\n"),
+    ).toEqual([]);
   });
 });

@@ -17,10 +17,14 @@ import { createAppLogger } from "./logging.js";
 import { registerSystemRoutes } from "./routes/system.js";
 import { registerContentRoutes } from "./routes/content.js";
 import { registerInferenceRoutes } from "./routes/inference.js";
-import { registerPlaybackRoutes } from "./routes/playback.js";
+import {
+  registerPlaybackRoutes,
+  type ExternalSubtitleSource,
+} from "./routes/playback.js";
 import { registerTmdbRoutes } from "./routes/tmdb.js";
 import { registerWebshareRoutes } from "./routes/webshare.js";
 import { StreamerCore } from "./services/streamer-core.js";
+import { WebshareExternalSubtitleService } from "./services/external-subtitle-service.js";
 import type { StreamerContentProvider } from "./services/content-provider.js";
 import { LiveContentCoordinator } from "./services/live-content-coordinator.js";
 import {
@@ -58,6 +62,7 @@ export interface CreateAppOptions {
   runtimeConfig?: RuntimeConfig;
   playbackTicketStore?: PlaybackTicketStore;
   playbackMediaEngine?: PlaybackMediaEngine;
+  externalSubtitleSource?: ExternalSubtitleSource;
 }
 
 function defaultFetch(): FetchLike {
@@ -239,6 +244,8 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
       ticket.providerId === "webshare"
         ? webshareClient.createVideoLink(ticket.variantId)
         : ticket.directUrl,
+    options.externalSubtitleSource ??
+      new WebshareExternalSubtitleService(webshareClient),
   );
   registerInferenceRoutes(app, {
     fetch: options.inferenceFetch ?? defaultInferenceFetch(),

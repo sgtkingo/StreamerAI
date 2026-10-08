@@ -20,7 +20,7 @@ import {
 } from "@streamer-ai/contracts";
 import { randomUUID } from "node:crypto";
 import { ProviderRequestError } from "./provider-http.js";
-import { WebshareClient } from "./webshare-client.js";
+import { WebshareClient, type WebshareFileInfo } from "./webshare-client.js";
 
 const CONNECTOR_VERSION = "0.1.0";
 
@@ -34,6 +34,9 @@ export interface PlaybackTicketInput {
   variantId: string;
   directUrl: string;
   expiresAt: string;
+  supportsHttpRange?: boolean;
+  sourceSizeBytes?: number | null;
+  sourceFilename?: string | null;
 }
 
 export interface WebshareMediaProviderOptions {
@@ -209,10 +212,10 @@ export class WebshareMediaProvider implements MediaProvider {
       }));
   }
 
-  async inspect(
+  private async inspectFile(
     rawCandidate: MediaCandidateRef,
     context: ProviderContext,
-  ): Promise<MediaVariant> {
+  ): Promise<{ variant: MediaVariant; file: WebshareFileInfo }> {
     const candidate = MediaCandidateRefSchema.parse(rawCandidate);
     if (candidate.providerId !== "webshare") {
       throw new ProviderRequestError("webshare", "invalid-response", false);
@@ -230,15 +233,25 @@ export class WebshareMediaProvider implements MediaProvider {
       throw new ProviderRequestError("webshare", "forbidden", false);
     }
     return {
-      ref: candidate,
-      variantId: candidate.candidateId,
-      format: mediaFormat(file.name, file.type),
-      directPlay: true,
-      supportsHttpRange: false,
-      embeddedSubtitles: [],
-      provenance: provenance(this.#now().toISOString()),
-      expiresAt: null,
+      file,
+      variant: {
+        ref: candidate,
+        variantId: candidate.candidateId,
+        format: mediaFormat(file.name, file.type),
+        directPlay: true,
+        supportsHttpRange: false,
+        embeddedSubtitles: [],
+        provenance: provenance(this.#now().toISOString()),
+        expiresAt: null,
+      },
     };
+  }
+
+  async inspect(
+    rawCandidate: MediaCandidateRef,
+    context: ProviderContext,
+  ): Promise<MediaVariant> {
+    return (await this.inspectFile(rawCandidate, context)).variant;
   }
 
   async createPlayback(
@@ -250,7 +263,7 @@ export class WebshareMediaProvider implements MediaProvider {
       throw new ProviderRequestError("webshare", "invalid-response", false);
     }
     // Required just-in-time restriction and availability recheck.
-    const variant = await this.inspect(
+    const { variant, file } = await this.inspectFile(
       {
         providerId: request.variant.providerId,
         candidateId: request.variant.candidateId,
@@ -275,6 +288,9 @@ export class WebshareMediaProvider implements MediaProvider {
       variantId: variant.variantId,
       directUrl,
       expiresAt,
+      supportsHttpRange: true,
+      sourceSizeBytes: file.size,
+      sourceFilename: file.name,
     });
     return PlaybackGrantSchema.parse({
       grantId,
@@ -282,7 +298,7 @@ export class WebshareMediaProvider implements MediaProvider {
       providerId: "webshare",
       variantId: variant.variantId,
       url: ticketUrl,
-      supportsHttpRange: variant.supportsHttpRange,
+      supportsHttpRange: true,
       expiresAt,
       embeddedSubtitles: variant.embeddedSubtitles,
     });

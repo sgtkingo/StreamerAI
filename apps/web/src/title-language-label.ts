@@ -134,8 +134,7 @@ function titleLanguageDetails(
       showMissingSubtitleWarning;
     if (missingPreferredSubtitles) warning = true;
     return {
-      label:
-        language !== primary && hasSubtitles ? `${label} (sub)` : label,
+      label: language !== primary && hasSubtitles ? `${label} (sub)` : label,
       priority:
         language === primary
           ? ("primary" as const)

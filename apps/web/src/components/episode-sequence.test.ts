@@ -22,11 +22,8 @@ describe("episode succession", () => {
       episode(1, 2),
     ]);
     expect(
-      adjacentEpisode(
-        episodes,
-        { seasonNumber: 1, episodeNumber: 1 },
-        "next",
-      )?.episodeNumber,
+      adjacentEpisode(episodes, { seasonNumber: 1, episodeNumber: 1 }, "next")
+        ?.episodeNumber,
     ).toBe(2);
     expect(
       adjacentEpisode(

@@ -54,6 +54,7 @@ export function AppShell({
     episode?: EpisodeSelection;
     episodeTitle?: string;
   } | null>(null);
+  const [playbackClosing, setPlaybackClosing] = useState(false);
   const [detailTitle, setDetailTitle] = useState<CatalogTitle | null>(null);
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const profileMenuRef = useRef<HTMLDivElement>(null);
@@ -72,6 +73,7 @@ export function AppShell({
       const response = sourceId
         ? await api.preparePlayback(profileId, title.id, episode, sourceId)
         : await api.preparePlayback(profileId, title.id, episode);
+      setPlaybackClosing(false);
       setActivePlayback({
         title,
         grant: response.playback,
@@ -257,7 +259,7 @@ export function AppShell({
           profileId={profileId}
           title={detailTitle}
           playbackEnabled={playbackEnabled}
-          suspended={activePlayback !== null}
+          suspended={activePlayback !== null && !playbackClosing}
           onClose={closeDetail}
           onOpenRelated={setDetailTitle}
           onPlay={playFromDetail}
@@ -277,7 +279,9 @@ export function AppShell({
           onPlayEpisode={(episode, episodeTitle) =>
             playFromDetail(activePlayback.title, episode, episodeTitle)
           }
+          onClosing={() => setPlaybackClosing(true)}
           onClose={() => {
+            setPlaybackClosing(false);
             setActivePlayback(null);
             setLibraryVersion((value) => value + 1);
           }}

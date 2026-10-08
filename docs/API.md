@@ -117,12 +117,12 @@ afterward.
 | `POST` | `/profiles/:profileId/playback/check` | Verify a tile or selected episode asynchronously without issuing a grant or recording History; return detected audio and playable subtitle languages when media probing succeeds. Optional `sourceId` checks exactly one known file. |
 | `POST` | `/profiles/:profileId/playback/prepare` | Recheck the source and issue a short lived grant without changing Library or History. For a series episode, send `{ "titleId": "...", "seasonNumber": 1, "episodeNumber": 2 }`; both episode fields are required together. Optional `sourceId` selects exactly one file belonging to that title and episode. |
 | `POST` | `/profiles/:profileId/playback/start` | Legacy one-call prepare and start for clients that do not use the two-stage flow. |
-| `GET` | `/playback/grants/:grantId/manifest` | Probe the selected media and list duration, audio tracks and extractable text subtitles. |
-| `GET` | `/playback/grants/:grantId/media?audio=2&start=31.500` | Stream browser-compatible fragmented MP4 with selected audio and a start offset. First request records playback once. |
+| `GET` | `/playback/grants/:grantId/manifest` | Probe duration, seekability, source size/identity, media tracks, and discovered external subtitles. |
+| `GET` | `/playback/grants/:grantId/media?audio=2&start=31.500` | Stream browser-compatible fragmented MP4 with selected audio and a start offset. First request records playback once. `refresh=1` obtains a fresh private provider link for an explicit retry. |
 | `POST` | `/playback/grants/:grantId/progress` | Save the progress percentage, position and duration for the selected film or episode. Requires a started ticket, except a zero-percent reset before playback. |
 | `GET` | `/playback/grants/:grantId/thumbnail?at=30` | Generate a small JPEG preview near the requested second. |
-| `GET` | `/playback/grants/:grantId/subtitles/:streamIndex?at=<seconds>` | Convert a bounded subtitle window around the requested playback position to WebVTT. The `X-Streamer-Subtitle-Offset` response header gives the number of seconds to add to each segment-relative cue time. |
-| `GET` | `/playback/grants/:grantId` | Legacy direct redirect, retained for older clients. |
+| `GET` | `/playback/grants/:grantId/subtitles/:streamIndex/window?startMs=120000&durationMs=120000` | Return an aligned JSON window with absolute millisecond cues for one embedded text track. |
+| `GET` | `/playback/grants/:grantId/subtitles/external/:fileId/window?startMs=120000` | Return a JSON window from a discovered and authorized external subtitle file. |
 | `DELETE` | `/playback/grants/:grantId` | Stop/revoke the active ticket. |
 
 Playback body:
@@ -136,7 +136,7 @@ Playback body:
 Playback is disabled in preview mode. Live tiles call `check` automatically;
 Play becomes available only after that check succeeds. `prepare` reinspects
 the selected file, obtains a Webshare VIP link and requires a successful
-one-byte HTTP Range response (`206`). The browser opens the in-app player and
+one-byte HTTP Range response (`206`) with a valid `Content-Range`. The browser opens the in-app player and
 requests the manifest, then the media endpoint. The server uses FFmpeg to
 remux or transcode the chosen source; the direct Webshare URL remains only in
 the in-memory ticket store and never reaches the browser. A first media
@@ -146,7 +146,7 @@ position. The server refreshes the private provider link for later media
 requests, so an expired direct link does not break a seek. Local subtitle files
 are converted to WebVTT in browser memory.
 Only text-based embedded subtitles can be extracted; bitmap tracks are omitted.
-The player renders parsed WebVTT cues against the absolute playback position,
+The player fetches canonical two-minute subtitle windows and renders normalized cues against the absolute playback position,
 including resume/seek offsets. Profile playback preferences include an output
 device ID and subtitle size, color and font. Multichannel source audio is
 downmixed to stereo in the browser stream for compatibility; selecting a

@@ -203,15 +203,13 @@ describe("audio output selection", () => {
     Object.defineProperty(navigator, "mediaDevices", {
       configurable: true,
       value: {
-        enumerateDevices: vi
-          .fn()
-          .mockResolvedValue([
-            {
-              kind: "audiooutput",
-              deviceId: "headphones",
-              label: "Headphones",
-            },
-          ]),
+        enumerateDevices: vi.fn().mockResolvedValue([
+          {
+            kind: "audiooutput",
+            deviceId: "headphones",
+            label: "Headphones",
+          },
+        ]),
         addEventListener: vi.fn(),
         removeEventListener: vi.fn(),
       },

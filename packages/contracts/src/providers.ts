@@ -250,28 +250,76 @@ export const PlaybackSubtitleTrackSchema = z
     codec: z.string().trim().min(1).max(80),
     language: z.string().trim().max(16).nullable(),
     title: z.string().trim().max(80).nullable(),
+    source: z.literal("embedded").optional(),
+    kind: z.literal("text").optional(),
+    default: z.boolean().optional(),
+    forced: z.boolean().optional(),
+    hearingImpaired: z.boolean().optional(),
   })
   .strict();
 export type PlaybackSubtitleTrack = z.infer<typeof PlaybackSubtitleTrackSchema>;
 
-/** Embedded subtitles are extracted near playback, never from the entire film. */
-export const SUBTITLE_WINDOW_SECONDS = 10;
-export const SUBTITLE_WINDOW_OVERLAP_SECONDS = 2;
+export const PlaybackVideoTrackSchema = z
+  .object({
+    streamIndex: z.number().int().nonnegative(),
+    codec: z.string().trim().min(1).max(80),
+    pixelFormat: z.string().trim().max(80).nullable(),
+    language: z.string().trim().max(16).nullable(),
+    title: z.string().trim().max(80).nullable(),
+  })
+  .strict();
+export type PlaybackVideoTrack = z.infer<typeof PlaybackVideoTrackSchema>;
 
-export function subtitleWindowStart(seconds: number): number {
-  const safeSeconds = Number.isFinite(seconds) ? Math.max(0, seconds) : 0;
-  return (
-    Math.floor(safeSeconds / SUBTITLE_WINDOW_SECONDS) * SUBTITLE_WINDOW_SECONDS
-  );
-}
+export const ExternalSubtitleTrackSchema = z
+  .object({
+    fileId: z.string().trim().min(1).max(240),
+    filename: z.string().trim().min(1).max(500),
+    extension: z.enum(["srt", "vtt", "ass", "ssa"]),
+    language: z.string().trim().max(16).nullable(),
+    forced: z.boolean(),
+    default: z.boolean(),
+    matchScore: z.number().min(0).max(1),
+    matchType: z.enum(["exact", "language", "normalized", "fuzzy"]),
+  })
+  .strict();
+export type ExternalSubtitleTrack = z.infer<typeof ExternalSubtitleTrackSchema>;
+
+export const SubtitleCueSchema = z
+  .object({
+    startMs: z.number().int().nonnegative(),
+    endMs: z.number().int().positive(),
+    text: z.string().min(1).max(4000),
+    settings: z.string().max(200).optional(),
+  })
+  .strict();
+export type SubtitleCue = z.infer<typeof SubtitleCueSchema>;
+
+export const SubtitleWindowSchema = z
+  .object({
+    trackId: z.string().trim().min(1).max(260),
+    startMs: z.number().int().nonnegative(),
+    endMs: z.number().int().positive(),
+    cues: z.array(SubtitleCueSchema).max(10_000),
+  })
+  .strict();
+export type SubtitleWindow = z.infer<typeof SubtitleWindowSchema>;
 
 export const PlaybackMediaInfoSchema = z
   .object({
     durationSeconds: z.number().positive().max(86_400).nullable(),
     videoCodec: z.string().trim().min(1).max(80),
     videoPixelFormat: z.string().trim().max(80).nullable(),
+    container: z.string().trim().max(80).nullable().optional(),
+    videoTracks: z.array(PlaybackVideoTrackSchema).max(20).optional(),
     audioTracks: z.array(PlaybackAudioTrackSchema).max(20),
     subtitleTracks: z.array(PlaybackSubtitleTrackSchema).max(20),
+    externalSubtitleTracks: z
+      .array(ExternalSubtitleTrackSchema)
+      .max(20)
+      .optional(),
+    seekable: z.boolean().nullable().optional(),
+    sourceSizeBytes: z.number().int().nonnegative().nullable().optional(),
+    sourceVersion: z.string().trim().min(1).max(240).nullable().optional(),
   })
   .strict();
 export type PlaybackMediaInfo = z.infer<typeof PlaybackMediaInfoSchema>;

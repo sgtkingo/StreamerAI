@@ -496,38 +496,34 @@ export function TitleDetail({
           <div className="title-detail__body">
             <div className="title-detail__heading">
               <h3>Seasons & episodes</h3>
-              {detail?.series?.status === "searching" && (
-                <span className="title-detail__searching" role="status">
-                  • searching...
-                </span>
-              )}
+              <button
+                className={`button button--secondary button--compact title-detail__find-episodes${detail?.series?.status === "searching" ? " is-searching" : ""}`}
+                type="button"
+                disabled={
+                  !playbackEnabled || detail?.series?.status === "searching"
+                }
+                onClick={() => {
+                  setError("");
+                  void api
+                    .getTitleDetail(profileId, title.id, true)
+                    .then(setDetail)
+                    .catch(() => setError("Episode search could not restart."));
+                }}
+              >
+                {detail?.series?.status === "searching"
+                  ? "Searching…"
+                  : "Try to find more episodes"}
+              </button>
             </div>
             {!detail && !error && <p>Loading episode guide…</p>}
             {detail?.series === null && (
               <p>Episode guide is not available in preview mode.</p>
             )}
             {detail?.series?.status === "failed" && (
-              <div className="title-detail__retry">
-                <p>
-                  Some episodes could not be checked. Ready episodes are still
-                  playable.
-                </p>
-                <button
-                  className="button button--secondary button--compact"
-                  type="button"
-                  onClick={() => {
-                    setError("");
-                    void api
-                      .getTitleDetail(profileId, title.id, true)
-                      .then(setDetail)
-                      .catch(() =>
-                        setError("Episode search could not restart."),
-                      );
-                  }}
-                >
-                  Retry episode search
-                </button>
-              </div>
+              <p className="title-detail__retry-message">
+                Some episodes could not be checked. Ready episodes are still
+                playable.
+              </p>
             )}
             {seasons.length > 0 && (
               <>

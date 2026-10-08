@@ -16,10 +16,19 @@ import {
   md5Crypt,
 } from "../src/index.js";
 
-function response(status: number, body: string) {
+function response(
+  status: number,
+  body: string,
+  headers: Record<string, string> = {},
+) {
+  const values =
+    status === 206
+      ? { "content-range": "bytes 0-0/100", "content-length": "1", ...headers }
+      : headers;
   return {
     ok: status >= 200 && status < 300,
     status,
+    headers: { get: (name: string) => values[name.toLowerCase()] ?? null },
     text: async () => body,
   };
 }
@@ -439,6 +448,44 @@ describe("provider HTTP clients", () => {
       baseUrl: "https://webshare.test/api",
     });
 
+    await expect(client.createVideoLink("abc")).rejects.toMatchObject({
+      kind: "invalid-response",
+    });
+  });
+
+  it("rejects a malformed Content-Range from a nominal 206 response", async () => {
+    const secrets = new NonPersistentMemorySecretStore();
+    await secrets.set(WEBSHARE_WST_SECRET_KEY, "test-wst");
+    const client = new WebshareClient({
+      secretStore: secrets,
+      fetch: async (url) =>
+        url.includes("/file_link/")
+          ? response(
+              200,
+              "<response><status>OK</status><link>https://free.17.dl.wsfiles.cz/video</link></response>",
+            )
+          : response(206, "x", { "content-range": "bytes 5-5/100" }),
+      baseUrl: "https://webshare.test/api",
+    });
+    await expect(client.createVideoLink("abc")).rejects.toMatchObject({
+      kind: "invalid-response",
+    });
+  });
+
+  it("rejects a source that ignores the Range request", async () => {
+    const secrets = new NonPersistentMemorySecretStore();
+    await secrets.set(WEBSHARE_WST_SECRET_KEY, "test-wst");
+    const client = new WebshareClient({
+      secretStore: secrets,
+      fetch: async (url) =>
+        url.includes("/file_link/")
+          ? response(
+              200,
+              "<response><status>OK</status><link>https://free.17.dl.wsfiles.cz/video</link></response>",
+            )
+          : response(200, "full body"),
+      baseUrl: "https://webshare.test/api",
+    });
     await expect(client.createVideoLink("abc")).rejects.toMatchObject({
       kind: "invalid-response",
     });
