@@ -19,6 +19,7 @@ import { TmdbApiClient } from "./integrations/tmdb-api-client.js";
 import { TmdbMetadataProvider } from "./integrations/tmdb-metadata-provider.js";
 import { WebshareClient } from "./integrations/webshare-client.js";
 import { WebshareMediaProvider } from "./integrations/webshare-media-provider.js";
+import { LocalMediaProvider } from "./integrations/local-media-provider.js";
 import { OllamaAgentProvider } from "./integrations/ollama-agent-provider.js";
 import { AdapterRegistry } from "./integrations/provider-registry.js";
 import { createAppLogger } from "./logging.js";
@@ -31,7 +32,10 @@ import {
 } from "./routes/playback.js";
 import { registerTmdbRoutes } from "./routes/tmdb.js";
 import { registerWebshareRoutes } from "./routes/webshare.js";
+import { registerLocalFilesRoutes } from "./routes/local-files.js";
 import { StreamerCore } from "./services/streamer-core.js";
+import { LocalMediaLibrary } from "./services/local-media-library.js";
+import { OfflineDownloadManager } from "./services/offline-download-manager.js";
 import { WebshareExternalSubtitleService } from "./services/external-subtitle-service.js";
 import { MultiSourceExternalSubtitleService } from "./services/multi-source-subtitle-service.js";
 import type { StreamerContentProvider } from "./services/content-provider.js";
@@ -76,6 +80,8 @@ export interface CreateAppOptions {
   playbackTicketStore?: PlaybackTicketStore;
   playbackMediaEngine?: PlaybackMediaEngine;
   externalSubtitleSource?: ExternalSubtitleSource;
+  /** Replace the native folder dialog in tests or a desktop host. */
+  localFolderPicker?: () => Promise<string | null>;
 }
 
 function defaultFetch(): FetchLike {
@@ -157,11 +163,19 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
     options.playbackTicketStore ?? new InMemoryPlaybackTicketStore(now);
   const playbackMediaEngine =
     options.playbackMediaEngine ?? new FfmpegPlaybackMediaEngine();
+  const localMediaLibrary = new LocalMediaLibrary(database, now);
+  if (localMediaLibrary.getConfig().roots.length > 0)
+    localMediaLibrary.startScan();
   const webshareClient = new WebshareClient({
     secretStore: stores.secretStore,
     fetch: options.providerFetch ?? defaultProviderFetch(),
     timeoutMs: 8_000,
   });
+  const offlineDownloads = new OfflineDownloadManager(
+    database,
+    localMediaLibrary,
+    webshareClient,
+  );
   const metadata = new AdapterRegistry("metadata", [
     new TmdbMetadataProvider({
       client: new TmdbApiClient({
@@ -180,6 +194,11 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
       probeMedia: (directUrl) => playbackMediaEngine.probe(directUrl),
       now,
     }),
+    new LocalMediaProvider(
+      localMediaLibrary,
+      (input) => playbackTicketStore.issue(input),
+      now,
+    ),
     ...(options.mediaProviders ?? []),
   ]);
   const subtitleProviders = new AdapterRegistry<SubtitleProvider>(
@@ -229,6 +248,21 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
           bodyLimit: 64 * 1024,
         });
 
+  app.addHook("onReady", async () => {
+    if (environment !== "test") {
+      await localMediaLibrary.ensureDefaultRoot(
+        resolve(runtimeConfig.server.dataDir, "StreamerAI", "Local", "Library"),
+      );
+    }
+    const configured = localMediaLibrary.getConfig().roots.length > 0;
+    await stores.integrationStateStore.set({
+      integrationId: "local-files",
+      status: configured ? "connected" : "not_configured",
+      configured,
+      updatedAt: now().toISOString(),
+    });
+  });
+
   if (!stores.secretStore.isPersistent) {
     app.log.warn(
       {
@@ -277,7 +311,19 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
     now,
     providerDescriptors,
   });
-  registerContentRoutes(app, { core });
+  registerContentRoutes(app, {
+    core,
+    ensureLocalLibrary: (profileId) =>
+      localMediaLibrary.ensureProfileLibrary(profileId),
+  });
+  registerLocalFilesRoutes(
+    app,
+    localMediaLibrary,
+    stores.integrationStateStore,
+    now,
+    offlineDownloads,
+    options.localFolderPicker,
+  );
   const externalSubtitleSource =
     options.externalSubtitleSource ??
     new WebshareExternalSubtitleService(webshareClient);
@@ -355,6 +401,10 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
     now,
   });
 
+  app.addHook("onClose", async () => {
+    await offlineDownloads.close();
+    await localMediaLibrary.close();
+  });
   if (ownsDatabase) {
     app.addHook("onClose", async () => database.close());
   }

@@ -125,10 +125,43 @@ describe("TitleCard sources", () => {
     );
     expect(screen.getByText("2 sources")).toBeInTheDocument();
     expect(
+      screen.getByRole("img", { name: "Downloadable" }),
+    ).toBeInTheDocument();
+    expect(
       screen.queryByRole("button", { name: "More sources for Example" }),
     ).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /Play/i }));
     expect(onPlay).toHaveBeenLastCalledWith(movie);
+  });
+
+  it("marks a locally available title with a green saved icon", () => {
+    render(
+      <TitleCard
+        item={{
+          ...movie,
+          sources: [
+            ...sources,
+            {
+              ...sources[0]!,
+              id: "c".repeat(32),
+              providerId: "local-files",
+              candidateId: "local-copy",
+            },
+          ],
+        }}
+        preferences={DEFAULT_PLAYBACK_PREFERENCES}
+        onPlay={vi.fn()}
+        onAdd={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("img", { name: "Available offline" })).toHaveClass(
+      "is-downloaded",
+    );
+    expect(
+      screen
+        .getByRole("img", { name: "Available offline" })
+        .querySelector(".download-glyph__check"),
+    ).toBeInTheDocument();
   });
 
   it("stacks at most three distinct stream providers and fades overflow", () => {

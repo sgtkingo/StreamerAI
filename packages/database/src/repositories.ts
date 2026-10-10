@@ -707,6 +707,104 @@ export class CatalogTitlesRepository {
     ).map(canonicalTitleFromRow);
   }
 
+  /** Replace one adapter's indexed files without retaining removed folders as stale sources. */
+  replaceProviderSources(
+    titleId: string,
+    providerId: string,
+    replacement: CanonicalTitleData["sources"],
+  ): CanonicalTitleRecord {
+    const existing = this.getRequired(titleId);
+    const sources = [
+      ...(replacement ?? []),
+      ...(existing.sources ?? []).filter(
+        (source) => source.providerId !== providerId,
+      ),
+    ].slice(0, 1_000);
+    const formats = [
+      ...new Map(
+        sources.map((source) => [JSON.stringify(source.format), source.format]),
+      ).values(),
+    ].slice(0, 24);
+    const episodes = new Set(
+      sources
+        .filter(
+          (source) =>
+            source.seasonNumber !== null && source.episodeNumber !== null,
+        )
+        .map((source) => `${source.seasonNumber}:${source.episodeNumber}`),
+    );
+    const seasons = new Set(
+      sources
+        .filter((source) => source.seasonNumber !== null)
+        .map((source) => source.seasonNumber),
+    );
+    const expectedEpisodes =
+      existing.metadataProvider === providerId
+        ? episodes.size
+        : Math.max(episodes.size, existing.seriesCoverage?.episodesTotal ?? 0);
+    const expectedSeasons =
+      existing.metadataProvider === providerId
+        ? seasons.size
+        : Math.max(seasons.size, existing.seriesCoverage?.seasonsTotal ?? 0);
+    const complete =
+      expectedEpisodes > 0 &&
+      expectedSeasons > 0 &&
+      episodes.size === expectedEpisodes &&
+      seasons.size === expectedSeasons;
+    const seriesCoverage =
+      existing.kind === "series" && sources.length > 0
+        ? {
+            seasonsAvailable: seasons.size,
+            seasonsTotal: expectedSeasons,
+            episodesAvailable: episodes.size,
+            episodesTotal: expectedEpisodes,
+            complete,
+            nextEpisodeLabel: null,
+          }
+        : null;
+    const availability =
+      sources.length === 0
+        ? "unknown"
+        : existing.kind === "series" && !complete
+          ? "partial"
+          : "available";
+    const { createdAt: _createdAt, updatedAt: _updatedAt, ...data } = existing;
+    const primarySource = sources[0];
+    const availabilityProvider = primarySource?.providerId ?? null;
+    const availabilityCheckedAt = primarySource?.checkedAt ?? null;
+    const normalized = validateCanonicalTitle({
+      ...data,
+      sources,
+      formats,
+      seriesCoverage,
+      availability,
+      availabilityProvider,
+      availabilityCheckedAt,
+      availabilityProvenance: primarySource
+        ? {
+            providerId: primarySource.providerId,
+            retrievedAt: primarySource.checkedAt,
+            connectorVersion: "0.1.0",
+            confidence: 1,
+            validationState: "verified",
+            expiresAt: null,
+          }
+        : undefined,
+    });
+    this.database
+      .prepare(
+        `UPDATE canonical_titles SET normalized_json = ?, availability_state = ?, availability_checked_at = ?, updated_at = ? WHERE id = ?`,
+      )
+      .run(
+        stringifyJson(normalized, "Canonical title"),
+        normalized.availability,
+        normalized.availabilityCheckedAt,
+        isoNow(this.clock),
+        titleId,
+      );
+    return this.getRequired(titleId);
+  }
+
   mapExternalEntity(input: {
     titleId: string;
     providerId: string;
@@ -1087,6 +1185,18 @@ export class HistoryRepository {
           limit,
         ) as WatchHistoryRow[]
     ).map(watchHistoryFromRow);
+  }
+
+  titleIds(profileId: string): string[] {
+    return (
+      this.database
+        .prepare(
+          "SELECT DISTINCT title_id AS titleId FROM watch_history_events WHERE profile_id = ?",
+        )
+        .all(assertShortString(profileId, "Profile id", 120)) as {
+        titleId: string;
+      }[]
+    ).map((row) => row.titleId);
   }
 
   remove(profileId: string, eventId: string): boolean {

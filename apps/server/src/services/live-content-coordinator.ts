@@ -712,7 +712,7 @@ export class LiveContentCoordinator implements StreamerContentProvider {
       this.#now(),
       conversation?.signal,
     );
-    const history = (conversation?.messages ?? []).slice(-8).map((message) => {
+    const history = (conversation?.messages ?? []).map((message) => {
       const data = record(message.content);
       const previousTitles = Array.isArray(data?.titles)
         ? data.titles
@@ -733,20 +733,71 @@ export class LiveContentCoordinator implements StreamerContentProvider {
                   : JSON.stringify(message.content),
       };
     });
+    const instruction = `You propose films and series for a ${locale} user. Keep earlier preferences unless revised. Apply objections and avoid rejected or already watched titles. A quick-search note contains metadata candidates, not user preferences. For a direct title request, consider an exact quick-search match. Include only currently required people; every candidate must feature them. Return up to 6 real, correctly spelled titles with kind, approximate year, short reason and score. Give a brief acknowledgement in the user's language without naming unvalidated titles or claiming availability. Do not invent facts. Output only JSON.`;
+    const displayInstruction =
+      "Acknowledgement and reasons are shown to the user. Use natural language without naming metadata or media providers, websites, APIs, tools, or validation steps.";
+    const seenNote = conversation?.unseen
+      ? `The user asked for something unseen. Never propose these already watched titles: ${conversation.unseen.titles.join(", ")}. The application also filters them by canonical ID.`
+      : "";
+    // Keep durable conversation in SQLite, but send a compact view to small models.
+    // Roughly three characters per token leaves room for schema and output.
+    const inputBudget = Math.max(
+      400,
+      (this.#inference.contextTokens - this.#inference.maxOutputTokens - 400) *
+        3,
+    );
+    const note = seenNote.slice(0, Math.max(0, Math.floor(inputBudget / 4)));
+    let remaining = Math.max(
+      200,
+      inputBudget -
+        instruction.length -
+        displayInstruction.length -
+        note.length,
+    );
+    const older = history.slice(0, Math.max(0, history.length - 6));
+    const olderUserRequests = older
+      .filter((message) => message.role === "user")
+      .map((message) => message.content);
+    const earlierPreferences = [
+      ...olderUserRequests.slice(0, 1),
+      ...olderUserRequests.slice(-2),
+    ]
+      .filter((message, index, all) => all.indexOf(message) === index)
+      .join(" | ")
+      .slice(0, Math.min(500, Math.floor(remaining / 3)));
+    remaining -= earlierPreferences.length;
+    const recent = [] as typeof history;
+    for (const message of history.slice(-6).reverse()) {
+      if (remaining < 80) break;
+      const content = message.content.slice(0, Math.min(1_200, remaining));
+      recent.unshift({ ...message, content });
+      remaining -= content.length;
+    }
+    const compactHistory = [
+      ...(earlierPreferences
+        ? [
+            {
+              role: "system" as const,
+              content: `Earlier user requests and corrections: ${earlierPreferences}`,
+            },
+          ]
+        : []),
+      ...recent,
+    ];
     const generation = await this.#agent.generateStructured<unknown>(
       {
         model: this.#inference.model,
         messages: [
           {
             role: "system",
-            content: `You propose films and series for a ${locale} user. The latest message may be feedback on an earlier shortlist: keep the user's original preferences unless revised, apply objections, and avoid previously suggested titles the user rejected. A quick-search note, if present, lists deterministic metadata title candidates; it is not a user rejection or a reason to avoid those titles. Give an exact quick-search title strong consideration for a direct title query, while still respecting every user constraint. Put only currently required people in the people array; omit people the user rejected. Return exactly 6 real, correctly spelled candidate titles that best satisfy the latest request and conversation. Every candidate must actually feature each currently required person. Prefer well-known titles when uncertain. Use your knowledge only to propose title, kind, approximate release year, a short preference-based reason, and match score. Add a brief acknowledgement in the user's language that responds to their latest preference or objection; do not name unvalidated titles or claim availability, ratings, or other unverified facts in it. Do not invent metadata, availability, ratings, people, or URLs. Output only the requested JSON.`,
+            content: instruction,
           },
           {
             role: "system",
-            content:
-              "The acknowledgement and every candidate reason are shown directly to the user. Describe the recommendation in natural language without naming metadata services, streaming providers, websites, APIs, search tools, or internal validation steps. Never mention TMDB, Webshare, or any other source in these user-facing fields.",
+            content: displayInstruction,
           },
-          ...history,
+          ...(note ? [{ role: "system" as const, content: note }] : []),
+          ...compactHistory,
           ...(history.some(
             (message) =>
               message.role === "user" &&
@@ -1127,6 +1178,38 @@ export class LiveContentCoordinator implements StreamerContentProvider {
     title: CatalogTitle,
     retry = false,
   ): Promise<SeriesDetail> {
+    if (title.metadataProvider === "local-files") {
+      const seasons = new Map<number, Map<number, string>>();
+      for (const source of title.sources ?? []) {
+        if (source.seasonNumber === null || source.episodeNumber === null)
+          continue;
+        const episodes =
+          seasons.get(source.seasonNumber) ?? new Map<number, string>();
+        episodes.set(source.episodeNumber, source.releaseName);
+        seasons.set(source.seasonNumber, episodes);
+      }
+      return {
+        status: seasons.size > 0 ? "complete" : "unavailable",
+        seasons: [...seasons.entries()]
+          .sort(([a], [b]) => a - b)
+          .map(([seasonNumber, episodes]) => ({
+            seasonNumber,
+            title: null,
+            episodes: [...episodes.entries()]
+              .sort(([a], [b]) => a - b)
+              .map(([episodeNumber, releaseName]) => ({
+                seasonNumber,
+                episodeNumber,
+                title: releaseName
+                  .replace(/\.[^.]+$/, "")
+                  .replace(/[._]+/g, " "),
+                synopsis: "",
+                airDate: null,
+                availability: "available" as const,
+              })),
+          })),
+      };
+    }
     let job = this.#seriesJobs.get(title.id);
     if (!job) {
       const storedCandidates = new Map<string, MediaCandidateRef[]>();

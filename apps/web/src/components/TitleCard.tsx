@@ -6,6 +6,7 @@ import {
   titleLanguageLabel,
 } from "../title-language-label";
 import { SourceOriginStack, titleSourceProviderIds } from "./SourceIcon";
+import { DownloadGlyph } from "./DownloadButton";
 import type { PlaybackCheckState } from "./usePlaybackChecks";
 
 let cardHoverAudioContext: AudioContext | null = null;
@@ -192,6 +193,26 @@ export function TitleCard({
       : source.seasonNumber === null && source.episodeNumber === null,
   );
   const sourceProviderIds = titleSourceProviderIds(item, episode);
+  const downloadable =
+    (episode ? alternateSources : (item.sources ?? [])).some(
+      (source) =>
+        source.providerId === "webshare" &&
+        /\.(mkv|avi|mp4|m4v|mov|webm|mpg|mpeg|ts|m2ts)$/i.test(
+          source.releaseName,
+        ),
+    ) ||
+    (item.availabilityProvider === "webshare" &&
+      (item.availability === "available" || item.availability === "partial") &&
+      item.formats.some(
+        (format) =>
+          format.container !== null &&
+          /^(mkv|avi|mp4|m4v|mov|webm|mpg|mpeg|ts|m2ts)$/i.test(
+            format.container,
+          ),
+      ));
+  const availableOffline = (
+    episode ? alternateSources : (item.sources ?? [])
+  ).some((source) => source.providerId === "local-files");
   const canShowPlayback = playbackEnabled || playable;
   const displayAvailability = playbackEnabled
     ? item.kind === "series"
@@ -364,7 +385,25 @@ export function TitleCard({
               )}
             </div>
           </div>
-          <SourceOriginStack providerIds={sourceProviderIds} />
+          <div className="title-card__indicators">
+            {(downloadable || availableOffline) && (
+              <span
+                className={`title-card__downloadable${availableOffline ? " is-downloaded" : ""}`}
+                role="img"
+                aria-label={
+                  availableOffline ? "Available offline" : "Downloadable"
+                }
+                title={
+                  availableOffline
+                    ? "Available offline"
+                    : "Available to save offline"
+                }
+              >
+                <DownloadGlyph checked={availableOffline} />
+              </span>
+            )}
+            <SourceOriginStack providerIds={sourceProviderIds} />
+          </div>
         </div>
         <h3>
           {onOpen ? (

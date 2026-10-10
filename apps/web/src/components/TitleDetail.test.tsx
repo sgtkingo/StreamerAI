@@ -7,6 +7,17 @@ import type {
 } from "@streamer-ai/contracts";
 import type { StreamerApi } from "../api/client";
 import { TitleDetail } from "./TitleDetail";
+import { ToastProvider } from "./ToastProvider";
+
+const offlineApi = {
+  getLocalFolders: vi.fn().mockResolvedValue({
+    roots: [],
+    extensions: [],
+    availableExtensions: [],
+    scan: { state: "idle", fileCount: 0, error: null, completedAt: null },
+  }),
+  getOfflineDownloads: vi.fn().mockResolvedValue({ items: [] }),
+};
 
 const title = {
   id: "sai:tmdb:series:42",
@@ -90,6 +101,7 @@ describe("TitleDetail", () => {
       },
     };
     const api = {
+      ...offlineApi,
       getTitleDetail: vi.fn().mockResolvedValue(detail),
     } as unknown as StreamerApi;
     render(
@@ -153,6 +165,24 @@ describe("TitleDetail", () => {
     expect(
       within(dialog).getByRole("button", { name: "Season 1" }),
     ).toHaveFocus();
+    const downloadButton = within(dialog).getByRole("button", {
+      name: "Download Sample Show S01E01",
+    });
+    const actions = downloadButton.parentElement;
+    expect(actions).toHaveClass("title-detail__episode-actions");
+    expect(
+      within(dialog).getByRole("button", { name: "Play" }).parentElement,
+    ).toBe(actions);
+    expect(
+      within(dialog).getByRole("button", {
+        name: /Details for Sample Show S01E01/,
+      }).parentElement,
+    ).toBe(actions);
+    expect(
+      within(dialog).getByRole("button", {
+        name: "Search sources for episode 1",
+      }).parentElement,
+    ).toBe(actions);
   });
 
   it("lets a verified episode play while later episodes are still searching", async () => {
@@ -188,6 +218,7 @@ describe("TitleDetail", () => {
       },
     } as Detail;
     const api = {
+      ...offlineApi,
       getTitleDetail: vi.fn().mockResolvedValue(detail),
     } as unknown as StreamerApi;
     render(
@@ -272,6 +303,7 @@ describe("TitleDetail", () => {
       },
     };
     const api = {
+      ...offlineApi,
       getTitleDetail: vi.fn().mockResolvedValue(detail),
       forceEpisodeSearch: vi.fn().mockResolvedValue({ detail, sources }),
     } as unknown as StreamerApi;
@@ -328,6 +360,7 @@ describe("TitleDetail", () => {
       seriesCoverage: null,
     };
     const api = {
+      ...offlineApi,
       getTitleDetail: vi.fn().mockResolvedValue({
         title: movie,
         related: [],
@@ -379,6 +412,10 @@ describe("TitleDetail", () => {
       sources,
     };
     const api = {
+      ...offlineApi,
+      getPreferredSource: vi
+        .fn()
+        .mockResolvedValue({ sourceId: sources[1]!.id }),
       getTitleDetail: vi
         .fn()
         .mockResolvedValue({ title: movie, related: [], series: null }),
@@ -410,22 +447,367 @@ describe("TitleDetail", () => {
       }),
     );
     const menu = within(dialog).getByRole("group", { name: "Search results" });
-    await within(menu).findByRole("button", { name: /Source 2/ });
+    await within(menu).findByRole("button", { name: /Default/ });
     expect(
-      within(menu).getAllByRole("button", { name: /Recommended|Source 2/ }),
+      within(menu).getAllByRole("button", { name: /Recommended|Default/ }),
     ).toHaveLength(2);
-    const alternate = within(menu).getByRole("button", { name: /Source 2/ });
+    expect(
+      within(menu).getByRole("button", {
+        name: "Download Sample.Movie.1080p.mkv",
+      }),
+    ).toBeInTheDocument();
+    const alternate = within(menu).getByRole("button", { name: /Default/ });
     expect(within(alternate).getByText("FTP")).toBeInTheDocument();
     expect(alternate.querySelector("img")).toHaveAttribute(
       "src",
       "/source-icons/ftp.svg",
     );
-    await user.click(within(menu).getByRole("button", { name: /Source 2/ }));
+    await user.click(alternate);
     expect(onPlay).toHaveBeenCalledWith(
       movie,
       undefined,
       undefined,
       sources[1]!.id,
     );
+  });
+
+  it("offers an offline download into a connected local folder", async () => {
+    const user = userEvent.setup();
+    const source = {
+      id: "a".repeat(32),
+      providerId: "webshare",
+      candidateId: "file-1",
+      releaseName: "Sample.Movie.mkv",
+      sizeBytes: 100,
+      format: title.formats[0]!,
+      seasonNumber: null,
+      episodeNumber: null,
+      checkedAt: "2026-09-29T20:00:00.000Z",
+    };
+    const movie: CatalogTitle = {
+      ...title,
+      kind: "movie",
+      title: "Sample Movie",
+      availability: "available",
+      seriesCoverage: null,
+      sources: [source],
+    };
+    const api = {
+      getTitleDetail: vi
+        .fn()
+        .mockResolvedValue({ title: movie, related: [], series: null }),
+      checkPlayback: vi.fn().mockResolvedValue({ ok: true }),
+      getLocalFolders: vi.fn().mockResolvedValue({
+        roots: [{ id: "root-1", path: "D:\\Movies" }],
+        extensions: ["mkv"],
+        availableExtensions: ["mkv"],
+        scan: {
+          state: "complete",
+          fileCount: 0,
+          error: null,
+          completedAt: null,
+        },
+      }),
+      getOfflineDownloads: vi.fn().mockResolvedValue({ items: [] }),
+      startOfflineDownload: vi.fn().mockResolvedValue({
+        id: "download-1",
+        profileId: "default",
+        titleId: movie.id,
+        sourceId: source.id,
+        rootId: "root-1",
+        state: "complete",
+        bytes: 100,
+        totalBytes: 100,
+        error: null,
+      }),
+    } as unknown as StreamerApi;
+    render(
+      <TitleDetail
+        api={api}
+        profileId="default"
+        title={movie}
+        playbackEnabled
+        onClose={vi.fn()}
+        onOpenRelated={vi.fn()}
+        onPlay={vi.fn()}
+        onAdded={vi.fn()}
+      />,
+    );
+    await user.click(
+      await screen.findByRole("button", { name: "Download Sample Movie" }),
+    );
+    expect(api.startOfflineDownload).toHaveBeenCalledWith(
+      "default",
+      movie.id,
+      source.id,
+      "root-1",
+      false,
+    );
+    const savedButton = await screen.findByRole("button", {
+      name: "Download Sample Movie again",
+    });
+    expect(savedButton).toHaveClass("download-button--complete");
+    await user.click(savedButton);
+    expect(
+      screen.getByRole("dialog", { name: "Replace offline copy" }),
+    ).toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: "Replace and download" }),
+    );
+    expect(api.startOfflineDownload).toHaveBeenLastCalledWith(
+      "default",
+      movie.id,
+      source.id,
+      "root-1",
+      true,
+    );
+    expect(api.getTitleDetail).toHaveBeenCalledTimes(2);
+  });
+
+  it("shows the title detail download control as green when a local copy is indexed", async () => {
+    const localSource = {
+      id: "f".repeat(32),
+      providerId: "local-files",
+      candidateId: "local-copy",
+      releaseName: "Sample.Movie.mkv",
+      sizeBytes: 100,
+      format: title.formats[0]!,
+      seasonNumber: null,
+      episodeNumber: null,
+      checkedAt: "2026-09-29T20:00:00.000Z",
+    };
+    const movie: CatalogTitle = {
+      ...title,
+      kind: "movie",
+      title: "Sample Movie",
+      seriesCoverage: null,
+      sources: [localSource],
+    };
+    const api = {
+      ...offlineApi,
+      getTitleDetail: vi
+        .fn()
+        .mockResolvedValue({ title: movie, related: [], series: null }),
+      checkPlayback: vi.fn().mockResolvedValue({ ok: true }),
+    } as unknown as StreamerApi;
+    render(
+      <TitleDetail
+        api={api}
+        profileId="default"
+        title={movie}
+        playbackEnabled
+        onClose={vi.fn()}
+        onOpenRelated={vi.fn()}
+        onPlay={vi.fn()}
+        onAdded={vi.fn()}
+      />,
+    );
+    expect(
+      await screen.findByRole("button", {
+        name: "Download Sample Movie again",
+      }),
+    ).toHaveClass("download-button--complete");
+  });
+
+  it("keeps the download button visible before a folder is connected", async () => {
+    const user = userEvent.setup();
+    const movie: CatalogTitle = {
+      ...title,
+      kind: "movie",
+      title: "Sample Movie",
+      seriesCoverage: null,
+    };
+    const api = {
+      ...offlineApi,
+      getTitleDetail: vi
+        .fn()
+        .mockResolvedValue({ title: movie, related: [], series: null }),
+      checkPlayback: vi.fn().mockResolvedValue({ ok: true }),
+      startOfflineDownload: vi.fn(),
+    } as unknown as StreamerApi;
+    render(
+      <ToastProvider>
+        <TitleDetail
+          api={api}
+          profileId="default"
+          title={movie}
+          playbackEnabled
+          onClose={vi.fn()}
+          onOpenRelated={vi.fn()}
+          onPlay={vi.fn()}
+          onAdded={vi.fn()}
+        />
+      </ToastProvider>,
+    );
+    await user.click(
+      await screen.findByRole("button", { name: "Download Sample Movie" }),
+    );
+    expect(
+      await screen.findByText(/Connect a Local folder or drive in Settings/),
+    ).toBeInTheDocument();
+    expect(api.startOfflineDownload).not.toHaveBeenCalled();
+  });
+
+  it("resets the button and shows the standard error message for a failed download", async () => {
+    const user = userEvent.setup();
+    const source = {
+      id: "a".repeat(32),
+      providerId: "webshare",
+      candidateId: "file-1",
+      releaseName: "Sample.Movie.mkv",
+      sizeBytes: 100,
+      format: title.formats[0]!,
+      seasonNumber: null,
+      episodeNumber: null,
+      checkedAt: "2026-09-29T20:00:00.000Z",
+    };
+    const movie: CatalogTitle = {
+      ...title,
+      kind: "movie",
+      title: "Sample Movie",
+      seriesCoverage: null,
+      sources: [source],
+    };
+    const api = {
+      ...offlineApi,
+      getTitleDetail: vi
+        .fn()
+        .mockResolvedValue({ title: movie, related: [], series: null }),
+      checkPlayback: vi.fn().mockResolvedValue({ ok: true }),
+      getLocalFolders: vi.fn().mockResolvedValue({
+        roots: [{ id: "root-1", path: "D:\\Movies" }],
+        extensions: ["mkv"],
+        availableExtensions: ["mkv"],
+        scan: {
+          state: "complete",
+          fileCount: 0,
+          error: null,
+          completedAt: null,
+        },
+      }),
+      getOfflineDownloads: vi.fn().mockResolvedValue({
+        items: [
+          {
+            id: "failed-1",
+            profileId: "default",
+            titleId: movie.id,
+            sourceId: source.id,
+            rootId: "root-1",
+            state: "failed",
+            bytes: 3,
+            totalBytes: 100,
+            error: "Network unavailable",
+          },
+        ],
+      }),
+      startOfflineDownload: vi.fn().mockResolvedValue({
+        id: "failed-2",
+        profileId: "default",
+        titleId: movie.id,
+        sourceId: source.id,
+        rootId: "root-1",
+        state: "failed",
+        bytes: 3,
+        totalBytes: 100,
+        error: "Network unavailable",
+      }),
+    } as unknown as StreamerApi;
+    render(
+      <ToastProvider>
+        <TitleDetail
+          api={api}
+          profileId="default"
+          title={movie}
+          playbackEnabled
+          onClose={vi.fn()}
+          onOpenRelated={vi.fn()}
+          onPlay={vi.fn()}
+          onAdded={vi.fn()}
+        />
+      </ToastProvider>,
+    );
+    await screen.findByRole("button", { name: "Download Sample Movie" });
+    expect(screen.queryByText("Network unavailable")).not.toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: "Download Sample Movie" }),
+    );
+    expect(await screen.findByText("Network unavailable")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Download Sample Movie" }),
+    ).toHaveClass("download-button--idle");
+  });
+
+  it("turns the download control into a progress ring that can cancel", async () => {
+    const user = userEvent.setup();
+    const source = {
+      id: "b".repeat(32),
+      providerId: "webshare",
+      candidateId: "file-2",
+      releaseName: "Sample.Movie.mkv",
+      sizeBytes: 100,
+      format: title.formats[0]!,
+      seasonNumber: null,
+      episodeNumber: null,
+      checkedAt: "2026-09-29T20:00:00.000Z",
+    };
+    const movie: CatalogTitle = {
+      ...title,
+      kind: "movie",
+      title: "Sample Movie",
+      seriesCoverage: null,
+      sources: [source],
+    };
+    const api = {
+      ...offlineApi,
+      getTitleDetail: vi
+        .fn()
+        .mockResolvedValue({ title: movie, related: [], series: null }),
+      checkPlayback: vi.fn().mockResolvedValue({ ok: true }),
+      getLocalFolders: vi.fn().mockResolvedValue({
+        roots: [{ id: "root-1", path: "D:\\Movies" }],
+        extensions: ["mkv"],
+        availableExtensions: ["mkv"],
+        scan: {
+          state: "complete",
+          fileCount: 0,
+          error: null,
+          completedAt: null,
+        },
+      }),
+      startOfflineDownload: vi.fn().mockResolvedValue({
+        id: "job-1",
+        profileId: "default",
+        titleId: movie.id,
+        sourceId: source.id,
+        rootId: "root-1",
+        state: "downloading",
+        bytes: 25,
+        totalBytes: 100,
+        error: null,
+      }),
+      cancelOfflineDownload: vi.fn().mockResolvedValue(undefined),
+    } as unknown as StreamerApi;
+    render(
+      <TitleDetail
+        api={api}
+        profileId="default"
+        title={movie}
+        playbackEnabled
+        onClose={vi.fn()}
+        onOpenRelated={vi.fn()}
+        onPlay={vi.fn()}
+        onAdded={vi.fn()}
+      />,
+    );
+    await user.click(
+      await screen.findByRole("button", { name: "Download Sample Movie" }),
+    );
+    const cancel = await screen.findByRole("button", {
+      name: "Cancel Sample Movie",
+    });
+    expect(cancel).toHaveClass("download-button--downloading");
+    expect(cancel.querySelector(".download-button__ring")).toBeInTheDocument();
+    await user.click(cancel);
+    expect(api.cancelOfflineDownload).toHaveBeenCalledWith("default", "job-1");
   });
 });

@@ -6,6 +6,7 @@ import type {
 } from "../api/client";
 import { safeErrorMessage } from "../api/client";
 import { SourceIcon } from "./SourceIcon";
+import { LocalFolderSettings } from "./LocalFolderSettings";
 
 type SourceCategory = IntegrationCatalogItem["category"];
 
@@ -103,6 +104,7 @@ function connectionError(id: string, code: string): string {
 interface IntegrationManagerProps {
   api: StreamerApi;
   context: "onboarding" | "settings";
+  category?: "services" | "agents";
   initialTmdbState?: ConnectionState;
   initialWebshareState?: ConnectionState;
   onConnectionChange?: (id: string, connected: boolean) => void;
@@ -111,9 +113,21 @@ interface IntegrationManagerProps {
 function ActionIcon({
   kind,
 }: {
-  kind: "settings" | "disconnect" | "remove";
+  kind: "connect" | "settings" | "disconnect" | "remove";
 }) {
-  return kind === "settings" ? (
+  return kind === "connect" ? (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M9 3v5M15 3v5M7 8h10v3a5 5 0 0 1-10 0V8Zm5 8v5" />
+    </svg>
+  ) : kind === "settings" ? (
     <svg
       aria-hidden="true"
       viewBox="0 0 24 24"
@@ -157,6 +171,7 @@ function ActionIcon({
 export function IntegrationManager({
   api,
   context,
+  category = "services",
   initialTmdbState,
   initialWebshareState,
   onConnectionChange,
@@ -348,311 +363,351 @@ export function IntegrationManager({
 
   return (
     <div className={"integration-manager integration-manager--" + context}>
-      {groups.map((group) => {
-        const groupItems = items.filter(
-          (item) => item.category === group.id && visible(item),
-        );
-        if (
-          groupItems.length === 0 &&
-          !["metadata", "media", "subtitle"].includes(group.id) &&
-          !items.some((item) => item.category === group.id)
-        ) {
-          return null;
-        }
-        return (
-          <section
-            className="integration-group"
-            key={group.id}
-            aria-label={group.title}
-          >
-            <div className="integration-group__heading">
-              <h3>{group.title}</h3>
-              <p>{group.description}</p>
-            </div>
-            <div className="integration-group__cards">
-              {groupItems.length === 0 && (
-                <button
-                  className="integration-empty"
-                  type="button"
-                  onClick={() => setPicker(group.id)}
-                >
-                  <span aria-hidden="true">+</span>
-                  <strong>{group.emptyLabel}</strong>
-                  <small>View available services</small>
-                </button>
-              )}
-              {groupItems.map((item) => {
-                const supported = item.id === "tmdb" || item.id === "webshare";
-                const busy = workingId === item.id;
-                return (
-                  <article className="integration-block" key={item.id}>
-                    <div className="integration-block__top">
-                      <div className="integration-block__identity">
-                        <SourceIcon providerId={item.id} />
-                        <div>
-                          <h4>{item.name}</h4>
-                          <span
-                            className={
-                              "integration-block__status " +
-                              (item.configured
-                                ? "is-connected"
+      {groups
+        .filter((group) =>
+          category === "agents"
+            ? group.id === "inference"
+            : group.id !== "inference",
+        )
+        .map((group) => {
+          const groupItems = items.filter(
+            (item) => item.category === group.id && visible(item),
+          );
+          if (
+            groupItems.length === 0 &&
+            !["metadata", "media", "subtitle"].includes(group.id) &&
+            !items.some((item) => item.category === group.id)
+          ) {
+            return null;
+          }
+          return (
+            <section
+              className="integration-group"
+              key={group.id}
+              aria-label={group.title}
+            >
+              <div className="integration-group__heading">
+                <h3>{group.title}</h3>
+                <p>{group.description}</p>
+              </div>
+              <div className="integration-group__cards">
+                {groupItems.length === 0 && (
+                  <button
+                    className="integration-empty"
+                    type="button"
+                    onClick={() => setPicker(group.id)}
+                  >
+                    <span aria-hidden="true">+</span>
+                    <strong>{group.emptyLabel}</strong>
+                    <small>View available services</small>
+                  </button>
+                )}
+                {groupItems.map((item) => {
+                  const supported =
+                    item.id === "tmdb" ||
+                    item.id === "webshare" ||
+                    item.id === "local-files";
+                  const busy = workingId === item.id;
+                  return (
+                    <article className="integration-block" key={item.id}>
+                      <div className="integration-block__top">
+                        <div className="integration-block__identity">
+                          <SourceIcon providerId={item.id} />
+                          <div>
+                            <h4>{item.name}</h4>
+                            <span
+                              className={
+                                "integration-block__status " +
+                                (item.configured
+                                  ? "is-connected"
+                                  : item.planned
+                                    ? "is-planned"
+                                    : "")
+                              }
+                            >
+                              {item.configured
+                                ? "Connected"
                                 : item.planned
-                                  ? "is-planned"
-                                  : "")
-                            }
-                          >
-                            {item.configured
-                              ? "Connected"
-                              : item.planned
-                                ? "Planned"
-                                : "Ready to connect"}
-                          </span>
+                                  ? "Planned"
+                                  : "Ready to connect"}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="integration-block__actions">
+                          {!item.planned && supported && (
+                            <button
+                              type="button"
+                              onClick={() => openSetup(item.id)}
+                              disabled={busy}
+                            >
+                              <ActionIcon
+                                kind={item.configured ? "settings" : "connect"}
+                              />
+                              {item.configured ? "Settings" : "Connect"}
+                            </button>
+                          )}
+                          {(!item.configured || supported) && (
+                            <button
+                              type="button"
+                              className="integration-block__remove"
+                              onClick={() =>
+                                item.configured
+                                  ? setConfirmId(item.id)
+                                  : void remove(item)
+                              }
+                              disabled={busy}
+                            >
+                              <ActionIcon
+                                kind={item.configured ? "disconnect" : "remove"}
+                              />
+                              {item.configured ? "Disconnect" : "Remove"}
+                            </button>
+                          )}
                         </div>
                       </div>
-                      <div className="integration-block__actions">
-                        {!item.planned && supported && (
-                          <button
-                            type="button"
-                            onClick={() => openSetup(item.id)}
-                            disabled={busy}
-                          >
-                            {item.configured && <ActionIcon kind="settings" />}
-                            {item.configured ? "Settings" : "Connect"}
-                          </button>
-                        )}
-                        {(!item.configured || supported) && (
-                          <button
-                            type="button"
-                            className="integration-block__remove"
-                            onClick={() =>
-                              item.configured
-                                ? setConfirmId(item.id)
-                                : void remove(item)
-                            }
-                            disabled={busy}
-                          >
-                            <ActionIcon
-                              kind={item.configured ? "disconnect" : "remove"}
-                            />
-                            {item.configured ? "Disconnect" : "Remove"}
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                    <p>{item.description}</p>
-                    {item.planned && (
-                      <p className="integration-block__hint">
-                        Saved for later. This adapter cannot connect yet.
-                      </p>
-                    )}
-                    {!item.planned && !supported && (
-                      <p className="integration-block__hint">
-                        {item.configured
-                          ? "This connection is managed in its own setup flow."
-                          : "This connector needs its own setup flow before it can be configured here."}
-                      </p>
-                    )}
-                    {item.setup.documentationUrl && (
-                      <a
-                        href={item.setup.documentationUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        Provider information <span aria-hidden="true">↗</span>
-                      </a>
-                    )}
-                    {confirmId === item.id && (
-                      <div className="integration-block__confirm">
-                        <p>
-                          Disconnect {item.name}? It will stop supplying new
-                          results.
-                        </p>
-                        <button
-                          type="button"
-                          onClick={() => setConfirmId(null)}
-                          disabled={busy}
-                        >
-                          Cancel
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => void remove(item)}
-                          disabled={busy}
-                        >
-                          {busy ? "Disconnecting…" : "Disconnect now"}
-                        </button>
-                      </div>
-                    )}
-                    {expandedId === item.id && supported && (
-                      <div className="integration-block__form">
-                        {item.id === "tmdb" ? (
-                          <>
-                            <label className="field token-field">
-                              <span>TMDB Read Access Token</span>
-                              <span className="input-with-action">
-                                <input
-                                  type={showToken ? "text" : "password"}
-                                  autoComplete="off"
-                                  spellCheck={false}
-                                  value={token}
-                                  onChange={(event) =>
-                                    setToken(event.target.value)
-                                  }
-                                  placeholder="Paste token"
-                                />
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    setShowToken((value) => !value)
-                                  }
-                                >
-                                  {showToken ? "Hide" : "Show"}
-                                </button>
-                              </span>
-                            </label>
-                            <p className="integration-block__hint">
-                              Get the API Read Access Token from your TMDB
-                              account settings.
-                            </p>
-                            <button
-                              className="button button--secondary"
-                              type="button"
-                              disabled={busy}
-                              onClick={() => void connect("tmdb")}
-                            >
-                              {busy ? "Verifying…" : "Verify and connect"}
-                            </button>
-                          </>
-                        ) : (
-                          <>
-                            <p className="integration-block__hint">
-                              Your password is used only to obtain a session
-                              token.
-                            </p>
-                            <label className="field">
-                              <span>Username or email</span>
-                              <input
-                                type="text"
-                                autoComplete="username"
-                                value={username}
-                                onChange={(event) =>
-                                  setUsername(event.target.value)
-                                }
-                              />
-                            </label>
-                            <label className="field">
-                              <span>Password</span>
-                              <span className="input-with-action">
-                                <input
-                                  type={showPassword ? "text" : "password"}
-                                  autoComplete="current-password"
-                                  value={password}
-                                  onChange={(event) =>
-                                    setPassword(event.target.value)
-                                  }
-                                />
-                                <button
-                                  type="button"
-                                  aria-label={
-                                    showPassword
-                                      ? "Hide Webshare password"
-                                      : "Show Webshare password"
-                                  }
-                                  onClick={() =>
-                                    setShowPassword((value) => !value)
-                                  }
-                                >
-                                  {showPassword ? "Hide" : "Show"}
-                                </button>
-                              </span>
-                            </label>
-                            <button
-                              className="button button--secondary"
-                              type="button"
-                              disabled={busy}
-                              onClick={() => void connect("webshare")}
-                            >
-                              {busy ? "Connecting…" : "Connect Webshare"}
-                            </button>
-                          </>
-                        )}
-                      </div>
-                    )}
-                    {message?.id === item.id && (
-                      <p
-                        className={
-                          "integration-block__message " +
-                          (message.error ? "is-error" : "is-success")
-                        }
-                        role={message.error ? "alert" : "status"}
-                      >
-                        {message.text}
-                      </p>
-                    )}
-                    {message?.id === item.id &&
-                      !message.error &&
-                      memoryOnly && (
-                        <p className="integration-block__hint" role="status">
-                          Development mode: this credential is held in memory
-                          only.
+                      <p>{item.description}</p>
+                      {item.planned && (
+                        <p className="integration-block__hint">
+                          Saved for later. This adapter cannot connect yet.
                         </p>
                       )}
-                  </article>
-                );
-              })}
-            </div>
-            <button
-              className="integration-add-more"
-              type="button"
-              aria-expanded={picker === group.id}
-              aria-controls={"integration-picker-" + group.id}
-              onClick={() =>
-                setPicker((current) => (current === group.id ? null : group.id))
-              }
-            >
-              + Add more
-            </button>
-            {picker === group.id && (
-              <section
-                className="integration-picker"
-                id={"integration-picker-" + group.id}
-                aria-label={group.title + " available integrations"}
+                      {!item.planned && !supported && (
+                        <p className="integration-block__hint">
+                          {item.configured
+                            ? "This connection is managed in its own setup flow."
+                            : "This connector needs its own setup flow before it can be configured here."}
+                        </p>
+                      )}
+                      {item.setup.documentationUrl && (
+                        <a
+                          href={item.setup.documentationUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          Provider information <span aria-hidden="true">↗</span>
+                        </a>
+                      )}
+                      {confirmId === item.id && (
+                        <div className="integration-block__confirm">
+                          <p>
+                            Disconnect {item.name}? It will stop supplying new
+                            results.
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => setConfirmId(null)}
+                            disabled={busy}
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void remove(item)}
+                            disabled={busy}
+                          >
+                            {busy ? "Disconnecting…" : "Disconnect now"}
+                          </button>
+                        </div>
+                      )}
+                      {expandedId === item.id && item.id === "local-files" && (
+                        <div className="integration-block__form">
+                          <LocalFolderSettings
+                            api={api}
+                            onConfigured={(configured) => {
+                              setItems((current) =>
+                                current.map((entry) =>
+                                  entry.id === item.id
+                                    ? {
+                                        ...entry,
+                                        configured,
+                                        status: configured
+                                          ? "connected"
+                                          : "not_configured",
+                                      }
+                                    : entry,
+                                ),
+                              );
+                              onConnectionChange?.(item.id, configured);
+                            }}
+                          />
+                        </div>
+                      )}
+                      {expandedId === item.id &&
+                        supported &&
+                        item.id !== "local-files" && (
+                          <div className="integration-block__form">
+                            {item.id === "tmdb" ? (
+                              <>
+                                <label className="field token-field">
+                                  <span>TMDB Read Access Token</span>
+                                  <span className="input-with-action">
+                                    <input
+                                      type={showToken ? "text" : "password"}
+                                      autoComplete="off"
+                                      spellCheck={false}
+                                      value={token}
+                                      onChange={(event) =>
+                                        setToken(event.target.value)
+                                      }
+                                      placeholder="Paste token"
+                                    />
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setShowToken((value) => !value)
+                                      }
+                                    >
+                                      {showToken ? "Hide" : "Show"}
+                                    </button>
+                                  </span>
+                                </label>
+                                <p className="integration-block__hint">
+                                  Get the API Read Access Token from your TMDB
+                                  account settings.
+                                </p>
+                                <button
+                                  className="button button--secondary"
+                                  type="button"
+                                  disabled={busy}
+                                  onClick={() => void connect("tmdb")}
+                                >
+                                  <ActionIcon kind="connect" />
+                                  {busy ? "Verifying…" : "Verify and connect"}
+                                </button>
+                              </>
+                            ) : (
+                              <>
+                                <p className="integration-block__hint">
+                                  Your password is used only to obtain a session
+                                  token.
+                                </p>
+                                <label className="field">
+                                  <span>Username or email</span>
+                                  <input
+                                    type="text"
+                                    autoComplete="username"
+                                    value={username}
+                                    onChange={(event) =>
+                                      setUsername(event.target.value)
+                                    }
+                                  />
+                                </label>
+                                <label className="field">
+                                  <span>Password</span>
+                                  <span className="input-with-action">
+                                    <input
+                                      type={showPassword ? "text" : "password"}
+                                      autoComplete="current-password"
+                                      value={password}
+                                      onChange={(event) =>
+                                        setPassword(event.target.value)
+                                      }
+                                    />
+                                    <button
+                                      type="button"
+                                      aria-label={
+                                        showPassword
+                                          ? "Hide Webshare password"
+                                          : "Show Webshare password"
+                                      }
+                                      onClick={() =>
+                                        setShowPassword((value) => !value)
+                                      }
+                                    >
+                                      {showPassword ? "Hide" : "Show"}
+                                    </button>
+                                  </span>
+                                </label>
+                                <button
+                                  className="button button--secondary"
+                                  type="button"
+                                  disabled={busy}
+                                  onClick={() => void connect("webshare")}
+                                >
+                                  <ActionIcon kind="connect" />
+                                  {busy ? "Connecting…" : "Connect Webshare"}
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        )}
+                      {message?.id === item.id && (
+                        <p
+                          className={
+                            "integration-block__message " +
+                            (message.error ? "is-error" : "is-success")
+                          }
+                          role={message.error ? "alert" : "status"}
+                        >
+                          {message.text}
+                        </p>
+                      )}
+                      {message?.id === item.id &&
+                        !message.error &&
+                        memoryOnly && (
+                          <p className="integration-block__hint" role="status">
+                            Development mode: this credential is held in memory
+                            only.
+                          </p>
+                        )}
+                    </article>
+                  );
+                })}
+              </div>
+              <button
+                className="integration-add-more"
+                type="button"
+                aria-expanded={picker === group.id}
+                aria-controls={"integration-picker-" + group.id}
+                onClick={() =>
+                  setPicker((current) =>
+                    current === group.id ? null : group.id,
+                  )
+                }
               >
-                <div className="integration-picker__heading">
-                  <h3>Available {group.title.toLowerCase()}</h3>
-                  <button type="button" onClick={() => setPicker(null)}>
-                    Close
-                  </button>
-                </div>
-                {pickerItems.length === 0 ? (
-                  <p>All listed services in this group are already added.</p>
-                ) : (
-                  <div className="integration-picker__options">
-                    {pickerItems.map((item) => (
-                      <button
-                        type="button"
-                        key={item.id}
-                        onClick={() => void choose(item)}
-                        disabled={workingId !== null}
-                      >
-                        <SourceIcon providerId={item.id} />
-                        <span>
-                          <strong>{item.name}</strong>
-                          <small>
-                            {item.planned ? "Planned · " : ""}
-                            {item.description}
-                          </small>
-                        </span>
-                        <span aria-hidden="true">+</span>
-                      </button>
-                    ))}
+                + Add more
+              </button>
+              {picker === group.id && (
+                <section
+                  className="integration-picker"
+                  id={"integration-picker-" + group.id}
+                  aria-label={group.title + " available integrations"}
+                >
+                  <div className="integration-picker__heading">
+                    <h3>Available {group.title.toLowerCase()}</h3>
+                    <button type="button" onClick={() => setPicker(null)}>
+                      Close
+                    </button>
                   </div>
-                )}
-              </section>
-            )}
-          </section>
-        );
-      })}
+                  {pickerItems.length === 0 ? (
+                    <p>All listed services in this group are already added.</p>
+                  ) : (
+                    <div className="integration-picker__options">
+                      {pickerItems.map((item) => (
+                        <button
+                          type="button"
+                          key={item.id}
+                          onClick={() => void choose(item)}
+                          disabled={workingId !== null}
+                        >
+                          <SourceIcon providerId={item.id} />
+                          <span>
+                            <strong>{item.name}</strong>
+                            <small>
+                              {item.planned ? "Planned · " : ""}
+                              {item.description}
+                            </small>
+                          </span>
+                          <span aria-hidden="true">+</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </section>
+              )}
+            </section>
+          );
+        })}
       {catalogError && (
         <p className="integration-manager__error" role="alert">
           {catalogError}

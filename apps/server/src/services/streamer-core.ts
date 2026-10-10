@@ -33,6 +33,14 @@ import {
   PreviewContentProvider,
   type StreamerContentProvider,
 } from "./content-provider.js";
+import { PreferredSourceStore } from "./preferred-source-store.js";
+import {
+  excludeWatchedTitles,
+  normalizeWatchedTitle,
+  requestsUnseenTitles,
+  watchedTitlesFromReply,
+  type UnseenExclusions,
+} from "./unseen-discovery.js";
 
 function storageTitle(item: CatalogTitle) {
   const {
@@ -75,12 +83,14 @@ function discoveryRequestHash(request: DiscoveryRequest): string {
 export class StreamerCore {
   private readonly activeDiscoveries = new Map<string, AbortController>();
   private readonly cancelledDiscoveries = new Map<string, number>();
+  private readonly preferredSources: PreferredSourceStore;
 
   constructor(
     private readonly database: StreamerDatabase,
     private readonly now: () => Date,
     private readonly contentProvider: StreamerContentProvider = new PreviewContentProvider(),
   ) {
+    this.preferredSources = new PreferredSourceStore(database);
     for (const item of contentProvider.bootstrapTitles()) {
       this.database.titles.upsert(storageTitle(item));
     }
@@ -101,6 +111,17 @@ export class StreamerCore {
     if (this.database.profiles.get(profileId) === null) {
       throw new UnknownProfileError(profileId);
     }
+  }
+
+  preferredSourceId(
+    profileId: string,
+    titleId: string,
+    episode?: EpisodeSelection,
+  ): string | null {
+    this.requireProfile(profileId);
+    if (!this.database.titles.get(titleId))
+      throw new UnknownTitleError(titleId);
+    return this.preferredSources.get(profileId, titleId, episode);
   }
 
   configureProfile(input: {
@@ -297,6 +318,84 @@ export class StreamerCore {
     return sessionId;
   }
 
+  private unseenDiscovery(
+    sessionId: string,
+    profileId: string,
+    completedAt: string,
+  ): { question: DiscoveryResponse | null; exclusions?: UnseenExclusions } {
+    if (this.contentProvider.mode !== "live") return { question: null };
+    const messages = this.database.discoverySessions.listMessages<{
+      message?: string;
+      stage?: string;
+    }>(sessionId);
+    const firstUnseen = messages.findIndex(
+      (item) =>
+        item.role === "user" &&
+        typeof item.content.message === "string" &&
+        requestsUnseenTitles(item.content.message),
+    );
+    if (firstUnseen < 0) return { question: null };
+    const questionIndex = messages.findIndex(
+      (item, index) =>
+        index > firstUnseen &&
+        item.role === "assistant" &&
+        item.content.stage === "needs-input",
+    );
+    const replies = messages
+      .slice(questionIndex + 1)
+      .filter(
+        (item) =>
+          item.role === "user" && typeof item.content.message === "string",
+      );
+    if (questionIndex < 0 || replies.length === 0) {
+      const firstMessage = messages[firstUnseen]?.content.message ?? "";
+      const locale =
+        /\b(nevidel|nevidela|nevideli|nevidene|nevideny|nezhlednute)\b/.test(
+          normalizeWatchedTitle(firstMessage),
+        )
+          ? "cs"
+          : (this.database.profiles.get(profileId)?.locale ?? "en");
+      const reply =
+        locale === "cs"
+          ? "Pošli mi prosím seznam filmů a seriálů, které už jsi viděl(a). Můžeš je oddělit čárkami nebo napsat každý na nový řádek. Pak je z doporučení vyřadím."
+          : locale === "de"
+            ? "Welche Filme und Serien hast du schon gesehen? Schick mir eine Liste, durch Kommas oder Zeilenumbrüche getrennt, damit ich sie ausschließen kann."
+            : "Which films and series have you already seen? Send me a list separated by commas or new lines so I can exclude them.";
+      return {
+        question: DiscoveryResponseSchema.parse({
+          sessionId,
+          mode: this.contentProvider.mode,
+          stage: "needs-input",
+          reply,
+          bestMatch: null,
+          available: [],
+          unavailable: [],
+          unverified: [],
+          warnings: [],
+          completedAt,
+        }),
+      };
+    }
+    const titleIds = new Set(this.database.history.titleIds(profileId));
+    for (const entry of this.database.library.list(profileId)) {
+      if (entry.state === "completed" || entry.membershipReason === "playback")
+        titleIds.add(entry.titleId);
+    }
+    const titles = watchedTitlesFromReply(replies[0]?.content.message ?? "");
+    for (const id of titleIds) {
+      const title = this.database.titles.get(id);
+      if (title)
+        titles.push(
+          title.title,
+          ...(title.originalTitle ? [title.originalTitle] : []),
+        );
+    }
+    return {
+      question: null,
+      exclusions: { titleIds: [...titleIds], titles: [...new Set(titles)] },
+    };
+  }
+
   async discoverFast(
     rawRequest: DiscoveryRequest,
     externalSignal?: AbortSignal,
@@ -307,16 +406,26 @@ export class StreamerCore {
       throw new PlaybackNotConfiguredError();
     externalSignal?.throwIfAborted();
     const sessionId = this.ensureDiscoverySession(request, true);
+    const unseen = this.unseenDiscovery(
+      sessionId,
+      request.profileId,
+      this.now().toISOString(),
+    );
     const response = DiscoveryResponseSchema.parse(
-      await this.contentProvider.discoverFast(
-        { ...request, sessionId },
-        this.now().toISOString(),
-        {
-          sessionId,
-          signal: externalSignal,
-          messages: this.database.discoverySessions.listMessages(sessionId),
-        },
-      ),
+      unseen.question ??
+        excludeWatchedTitles(
+          await this.contentProvider.discoverFast(
+            { ...request, sessionId },
+            this.now().toISOString(),
+            {
+              sessionId,
+              signal: externalSignal,
+              messages: this.database.discoverySessions.listMessages(sessionId),
+              unseen: unseen.exclusions,
+            },
+          ),
+          unseen.exclusions ?? { titleIds: [], titles: [] },
+        ),
     );
     externalSignal?.throwIfAborted();
     if (
@@ -353,7 +462,7 @@ export class StreamerCore {
         content: {
           reply: response.reply,
           titles: ranked.map((item) => item.title.title),
-          stage: "quick",
+          stage: response.stage === "needs-input" ? "needs-input" : "quick",
         },
         requestId: quickRequestId,
       });
@@ -426,20 +535,30 @@ export class StreamerCore {
       // The fast branch may finish first. Its validated metadata is useful
       // evidence for the agent, but neither branch waits for the other.
       const messages = this.database.discoverySessions.listMessages(sessionId);
+      const unseen = this.unseenDiscovery(
+        sessionId,
+        request.profileId,
+        this.now().toISOString(),
+      );
       const providerResult = DiscoveryResponseSchema.parse(
-        await this.contentProvider.discover(
-          { ...request, sessionId },
-          this.now().toISOString(),
-          {
-            sessionId,
-            signal: controller.signal,
-            messages: messages.map((message) => ({
-              role: message.role,
-              content: message.content,
-              createdAt: message.createdAt,
-            })),
-          },
-        ),
+        unseen.question ??
+          excludeWatchedTitles(
+            await this.contentProvider.discover(
+              { ...request, sessionId },
+              this.now().toISOString(),
+              {
+                sessionId,
+                signal: controller.signal,
+                unseen: unseen.exclusions,
+                messages: messages.map((message) => ({
+                  role: message.role,
+                  content: message.content,
+                  createdAt: message.createdAt,
+                })),
+              },
+            ),
+            unseen.exclusions ?? { titleIds: [], titles: [] },
+          ),
       );
       controller.signal.throwIfAborted();
       if (
@@ -853,15 +972,38 @@ export class StreamerCore {
     if (episode && title.kind !== "series")
       throw new UnplayableTitleError(titleId);
     let playback: PlaybackGrant;
+    const remembered =
+      sourceId === undefined
+        ? this.preferredSources.get(profileId, titleId, episode)
+        : null;
+    const rememberedAvailable =
+      remembered !== null &&
+      title.sources?.some(
+        (source) =>
+          source.id === remembered &&
+          (episode
+            ? source.seasonNumber === episode.seasonNumber &&
+              source.episodeNumber === episode.episodeNumber
+            : source.seasonNumber === null && source.episodeNumber === null),
+      );
     try {
-      playback = PlaybackGrantSchema.parse(
-        await this.contentProvider.preparePlayback(
+      let result;
+      try {
+        result = await this.contentProvider.preparePlayback(
           profileId,
           title,
           episode,
-          sourceId,
-        ),
-      );
+          sourceId ?? (rememberedAvailable ? remembered : undefined),
+        );
+      } catch (error) {
+        if (sourceId !== undefined || !rememberedAvailable) throw error;
+        result = await this.contentProvider.preparePlayback(
+          profileId,
+          title,
+          episode,
+        );
+      }
+      playback = PlaybackGrantSchema.parse(result);
     } catch {
       throw new PlaybackRecheckError(titleId);
     }
@@ -888,11 +1030,25 @@ export class StreamerCore {
     profileId: string,
     titleId: string,
     episode?: EpisodeSelection,
+    source?: { providerId: string; candidateId: string },
   ): { eventId: string; library: LibraryResponse } {
     this.requireProfile(profileId);
     const item = this.database.titles.get(titleId);
     if (item === null) throw new UnknownTitleError(titleId);
     const now = this.now().toISOString();
+    if (source) {
+      const selected = item.sources?.find(
+        (entry) =>
+          entry.providerId === source.providerId &&
+          entry.candidateId === source.candidateId &&
+          (episode
+            ? entry.seasonNumber === episode.seasonNumber &&
+              entry.episodeNumber === episode.episodeNumber
+            : entry.seasonNumber === null && entry.episodeNumber === null),
+      );
+      if (selected)
+        this.preferredSources.set(profileId, titleId, selected.id, episode);
+    }
     const eventId = randomUUID();
     const previousEntry = this.database.library.get(profileId, titleId);
     const episodePosition = this.database.playbackPositions.get(

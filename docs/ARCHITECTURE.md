@@ -123,6 +123,21 @@ The canonical cache is not intended to become a full mirrored film database.
 Refresh metadata and availability according to provider-specific TTLs while
 preserving local Library and History state.
 
+## Agent instructions and conversation memory
+
+The application agent does not load `SOUL.md`, `SKILLS.md` or `MEMORY.md` at
+runtime. Its instructions and structured output contract live in the discovery
+coordinator. Discovery messages are stored per session in SQLite. Before each
+model call, older user requests are condensed into a short summary and recent
+turns are bounded by the configured inference context size. The full local
+session remains available for later turns.
+
+For requests for something the viewer has not seen, discovery asks for a list
+before recommending. The reply and the profile's playback history become
+exclusions. The coordinator receives the exclusion names as context, and the
+core filters validated titles by canonical ID and normalized title before
+sending the response. The fast discovery lane follows the same rule.
+
 ## Failure model
 
 External systems are optional failure domains. Metadata, media, AI, search or

@@ -24,6 +24,7 @@ import {
 
 interface ContentRouteDependencies {
   core: StreamerCore;
+  ensureLocalLibrary?: (profileId: string) => void;
 }
 
 const profileParamsSchema = {
@@ -336,6 +337,9 @@ export function registerContentRoutes(
     { schema: { params: profileParamsSchema } },
     async (request, reply) => {
       try {
+        dependencies.ensureLocalLibrary?.(
+          (request.params as { profileId: string }).profileId,
+        );
         return dependencies.core.library(
           (request.params as { profileId: string }).profileId,
         );
@@ -368,6 +372,55 @@ export function registerContentRoutes(
           titleId,
           (request.query as { retry?: boolean }).retry === true,
         );
+      } catch (error) {
+        return sendDomainError(reply, error);
+      }
+    },
+  );
+
+  app.get(
+    "/api/v1/profiles/:profileId/titles/:titleId/preferred-source",
+    {
+      schema: {
+        params: titleParamsSchema,
+        querystring: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            seasonNumber: { type: "integer", minimum: 0 },
+            episodeNumber: { type: "integer", minimum: 1 },
+          },
+        },
+      },
+    },
+    async (request, reply) => {
+      const { profileId, titleId } = request.params as {
+        profileId: string;
+        titleId: string;
+      };
+      const { seasonNumber, episodeNumber } = request.query as {
+        seasonNumber?: number;
+        episodeNumber?: number;
+      };
+      if ((seasonNumber === undefined) !== (episodeNumber === undefined))
+        return reply
+          .code(400)
+          .send({
+            error: {
+              code: "INVALID_EPISODE",
+              message: "Choose an exact episode.",
+            },
+          });
+      try {
+        return {
+          sourceId: dependencies.core.preferredSourceId(
+            profileId,
+            titleId,
+            seasonNumber === undefined
+              ? undefined
+              : { seasonNumber, episodeNumber: episodeNumber! },
+          ),
+        };
       } catch (error) {
         return sendDomainError(reply, error);
       }

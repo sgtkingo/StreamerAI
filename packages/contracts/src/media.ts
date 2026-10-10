@@ -138,7 +138,7 @@ export const CatalogTitleSchema = z
     availabilityCheckedAt: z.string().datetime({ offset: true }).nullable(),
     formats: z.array(MediaFormatSchema).max(24),
     /** Ranked, distinct files for this title. Empty for legacy and preview records. */
-    sources: z.array(TitleSourceSchema).max(24).optional(),
+    sources: z.array(TitleSourceSchema).max(1_000).optional(),
     seriesCoverage: SeriesCoverageSchema.nullable(),
     metadataProvider: z.string().trim().min(1).max(80),
     /** Stable source reference when the provider-backed title ID is shortened. */
@@ -419,6 +419,7 @@ export const DISCOVERY_STAGES = [
   "checking-availability",
   "ranking",
   "completed",
+  "needs-input",
   "needs-setup",
   "failed",
 ] as const;
@@ -568,9 +569,12 @@ export const DiscoveryResponseSchema = z
         });
       }
     }
-    const terminal = ["completed", "needs-setup", "failed"].includes(
-      result.stage,
-    );
+    const terminal = [
+      "completed",
+      "needs-input",
+      "needs-setup",
+      "failed",
+    ].includes(result.stage);
     if (terminal !== (result.completedAt !== null)) {
       context.addIssue({
         code: z.ZodIssueCode.custom,

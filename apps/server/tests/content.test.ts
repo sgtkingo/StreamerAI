@@ -9,9 +9,11 @@ import {
 } from "@streamer-ai/contracts";
 import {
   createApp,
+  PreviewContentProvider,
   type FetchLike,
   type StreamerContentProvider,
 } from "../src/index.js";
+import { openStreamerDatabase } from "@streamer-ai/database";
 
 const unusedFetch: FetchLike = async () => {
   throw new Error("External providers must not run in content route tests");
@@ -97,6 +99,129 @@ describe("provider-neutral content API", () => {
     expect(conflict.statusCode).toBe(409);
     expect(conflict.json()).toMatchObject({
       error: { code: "IDEMPOTENCY_CONFLICT" },
+    });
+  });
+
+  it("asks for watched titles, then excludes the reply and playback history", async () => {
+    const fixture = new PreviewContentProvider();
+    const titles = fixture.bootstrapTitles();
+    const provenance = {
+      providerId: "test-metadata",
+      retrievedAt: "2026-09-27T12:00:00.000Z",
+      connectorVersion: "test",
+      confidence: 1,
+      validationState: "verified" as const,
+      expiresAt: null,
+    };
+    const liveTitle = (title: CatalogTitle) =>
+      CatalogTitleSchema.parse({
+        ...title,
+        metadataProvider: "test-metadata",
+        availabilityProvider: "test-media",
+        metadataProvenance: provenance,
+        availabilityProvenance: { ...provenance, providerId: "test-media" },
+        ratings: title.ratings.map((rating) => ({ ...rating, provenance })),
+      });
+    const watched = liveTitle(
+      titles.find((item) => item.title === "Knives Out")!,
+    );
+    const listed = liveTitle(titles.find((item) => item.title === "Arrival")!);
+    const fresh = liveTitle(
+      titles.find((item) => item.title === "The Lake House")!,
+    );
+    const discover = vi.fn(
+      async (request: { sessionId?: string }, completedAt: string) =>
+        DiscoveryResponseSchema.parse({
+          sessionId: request.sessionId,
+          mode: "live",
+          stage: "completed",
+          reply: "Here are some options.",
+          bestMatch: {
+            title: { ...watched, matchPercent: 95 },
+            reason: "First",
+          },
+          available: [
+            { title: { ...listed, matchPercent: 90 }, reason: "Second" },
+            { title: { ...fresh, matchPercent: 85 }, reason: "Third" },
+          ],
+          unavailable: [],
+          unverified: [],
+          warnings: [],
+          completedAt,
+        }),
+    );
+    const provider: StreamerContentProvider = {
+      id: "unseen-test",
+      mode: "live",
+      bootstrapTitles: () => [watched, listed, fresh],
+      buildHome: ({ profileId, generatedAt }) =>
+        HomeFeedSchema.parse({
+          profileId,
+          mode: "live",
+          generatedAt,
+          sections: [],
+        }),
+      discover,
+      discoverFast: discover,
+    };
+    const database = openStreamerDatabase({ filename: ":memory:" });
+    const instance = createApp({
+      environment: "test",
+      logger: false,
+      fetch: unusedFetch,
+      contentProvider: provider,
+      database,
+      now: () => new Date("2026-09-27T12:00:00.000Z"),
+    });
+    apps.push(instance);
+    database.history.append({
+      id: "watched-event",
+      profileId: "default",
+      titleId: watched.id,
+      eventType: "start",
+      episodeLabel: null,
+      progressPercent: 5,
+    });
+    const first = {
+      profileId: "default",
+      sessionId: "unseen-session",
+      message: "Něco, co jsem neviděl",
+      idempotencyKey: "unseen-first",
+    };
+    const fast = await instance.inject({
+      method: "POST",
+      url: "/api/v1/discovery/fast",
+      payload: first,
+    });
+    const deep = await instance.inject({
+      method: "POST",
+      url: "/api/v1/discovery/sessions",
+      payload: { ...first, createSession: true },
+    });
+    expect(fast.statusCode, fast.body).toBe(200);
+    expect(fast.json().stage).toBe("needs-input");
+    expect(deep.json().stage).toBe("needs-input");
+    expect(deep.json().reply).toMatch(/seznam filmů/i);
+    expect(discover).not.toHaveBeenCalled();
+
+    const reply = await instance.inject({
+      method: "POST",
+      url: "/api/v1/discovery/sessions",
+      payload: {
+        ...first,
+        message: "Viděl jsem Arrival (2016)",
+        idempotencyKey: "unseen-reply",
+      },
+    });
+    expect(reply.statusCode).toBe(200);
+    expect(reply.json().bestMatch.title.title).toBe("The Lake House");
+    expect(reply.json().available).toEqual([]);
+    expect(discover).toHaveBeenCalledTimes(1);
+    expect(discover.mock.calls[0]?.[2]).toMatchObject({
+      unseen: {
+        titleIds: [watched.id],
+        titles: expect.arrayContaining(["Arrival (2016)", "Knives Out"]),
+      },
     });
   });
 

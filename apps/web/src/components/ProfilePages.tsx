@@ -55,6 +55,8 @@ export function ProfilePages({
   const [deleteConfirmationOpen, setDeleteConfirmationOpen] = useState(false);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
+  const [agentCheck, setAgentCheck] = useState("");
+  const [checkingAgent, setCheckingAgent] = useState(false);
   const deleteDialogRef = useRef<HTMLDivElement>(null);
   const { showToast } = useToasts();
 
@@ -135,6 +137,25 @@ export function ProfilePages({
     } catch (reason) {
       setError(safeErrorMessage(reason));
       setDeleting(false);
+    }
+  };
+
+  const checkLocalAgent = async () => {
+    setCheckingAgent(true);
+    setAgentCheck("");
+    try {
+      const result = await api.detectLocalAi();
+      setAgentCheck(
+        result.message ||
+          (result.ok
+            ? "Local agent is ready."
+            : "Local agent needs attention."),
+      );
+      onIntegrationsChanged();
+    } catch (reason) {
+      setAgentCheck(safeErrorMessage(reason));
+    } finally {
+      setCheckingAgent(false);
     }
   };
 
@@ -226,6 +247,47 @@ export function ProfilePages({
               context="settings"
               onConnectionChange={onIntegrationsChanged}
             />
+          </section>
+          <section className="profile-page__section" id="settings-ai-agent">
+            <p className="eyebrow">06 / Agent adapters</p>
+            <h2>AI agent</h2>
+            <p>
+              Manage the agents that help organise your library and make
+              recommendations.
+            </p>
+            <div className="agent-adapters">
+              <div className="agent-adapters__panel">
+                <h3>Local Agent</h3>
+                <p>
+                  Run the current local model integration with Ollama on your
+                  device.
+                </p>
+                <IntegrationManager
+                  api={api}
+                  context="settings"
+                  category="agents"
+                  onConnectionChange={onIntegrationsChanged}
+                />
+                <button
+                  className="button button--secondary"
+                  type="button"
+                  disabled={checkingAgent}
+                  onClick={() => void checkLocalAgent()}
+                >
+                  {checkingAgent ? "Checking…" : "Check local agent"}
+                </button>
+                {agentCheck && <p role="status">{agentCheck}</p>}
+              </div>
+              <div className="agent-adapters__panel">
+                <p className="eyebrow">Planned</p>
+                <h3>Remote Agent</h3>
+                <p>
+                  Connect a remote agent through an API. Adapter setup and
+                  credentials will be available here when the integration is
+                  ready.
+                </p>
+              </div>
+            </div>
           </section>
           <div className="profile-page__actions">
             <button

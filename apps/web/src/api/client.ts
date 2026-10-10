@@ -67,6 +67,29 @@ export interface IntegrationCatalogItem {
   };
 }
 
+export interface LocalFolderConfig {
+  roots: { id: string; path: string }[];
+  extensions: string[];
+  availableExtensions: string[];
+  scan: {
+    state: "idle" | "scanning" | "complete" | "failed";
+    fileCount: number;
+    error: string | null;
+    completedAt: string | null;
+  };
+}
+export interface OfflineDownload {
+  id: string;
+  profileId: string;
+  titleId: string;
+  sourceId: string;
+  rootId: string;
+  state: "downloading" | "complete" | "failed" | "cancelled";
+  bytes: number;
+  totalBytes: number | null;
+  error: string | null;
+}
+
 export interface PlaybackStartResult {
   ok: true;
   eventId: string;
@@ -92,6 +115,26 @@ export interface StreamerApi {
     selected: boolean,
   ): Promise<IntegrationCatalogItem>;
   disconnectIntegration(id: string): Promise<void>;
+  getLocalFolders(): Promise<LocalFolderConfig>;
+  selectLocalFolder(): Promise<LocalFolderConfig | null>;
+  addLocalFolder(path: string): Promise<LocalFolderConfig>;
+  removeLocalFolder(rootId: string): Promise<LocalFolderConfig>;
+  setLocalFormats(extensions: string[]): Promise<LocalFolderConfig>;
+  scanLocalFolders(): Promise<LocalFolderConfig>;
+  getOfflineDownloads(profileId: string): Promise<{ items: OfflineDownload[] }>;
+  getPreferredSource?(
+    profileId: string,
+    titleId: string,
+    episode?: EpisodeSelection,
+  ): Promise<{ sourceId: string | null }>;
+  startOfflineDownload(
+    profileId: string,
+    titleId: string,
+    sourceId: string,
+    rootId: string,
+    replaceExisting?: boolean,
+  ): Promise<OfflineDownload>;
+  cancelOfflineDownload(profileId: string, downloadId: string): Promise<void>;
   getSetupStatus(): Promise<SetupStatus>;
   connectTmdb(token: string): Promise<ConnectionResult>;
   connectWebshare(
@@ -207,6 +250,11 @@ const domainErrorMessages: Record<string, string> = {
   INVALID_REQUEST:
     "Some information is missing or invalid. Check it and try again.",
   RATE_LIMITED: "The provider is busy. Wait a moment and try again.",
+  FOLDER_PICKER_LOCAL_ONLY:
+    "Open StreamerAI on the home server to use Select folder, or enter the server path manually.",
+  FOLDER_PICKER_BUSY: "A folder picker is already open on the home server.",
+  FOLDER_PICKER_FAILED:
+    "The folder picker is unavailable. Enter the folder path manually.",
 };
 
 async function readPublicErrorCode(
@@ -432,6 +480,63 @@ export const apiClient: StreamerApi = {
     request<void>(`/integrations/${encodeURIComponent(id)}`, {
       method: "DELETE",
     }),
+  getLocalFolders: () =>
+    request<LocalFolderConfig>("/integrations/local-files"),
+  selectLocalFolder: async () =>
+    (await request<LocalFolderConfig | undefined>(
+      "/integrations/local-files/select-folder",
+      { method: "POST" },
+    )) ?? null,
+  addLocalFolder: (path) =>
+    request<LocalFolderConfig>("/integrations/local-files/roots", {
+      method: "POST",
+      body: JSON.stringify({ path }),
+    }),
+  removeLocalFolder: (rootId) =>
+    request<LocalFolderConfig>(
+      `/integrations/local-files/roots/${encodeURIComponent(rootId)}`,
+      { method: "DELETE" },
+    ),
+  setLocalFormats: (extensions) =>
+    request<LocalFolderConfig>("/integrations/local-files/formats", {
+      method: "PUT",
+      body: JSON.stringify({ extensions }),
+    }),
+  scanLocalFolders: () =>
+    request<LocalFolderConfig>("/integrations/local-files/scan", {
+      method: "POST",
+    }),
+  getOfflineDownloads: (profileId) =>
+    request<{ items: OfflineDownload[] }>(
+      `/profiles/${encodeURIComponent(profileId)}/offline-downloads`,
+    ),
+  getPreferredSource: (profileId, titleId, episode) => {
+    const query = episode
+      ? `?seasonNumber=${episode.seasonNumber}&episodeNumber=${episode.episodeNumber}`
+      : "";
+    return request<{ sourceId: string | null }>(
+      `/profiles/${encodeURIComponent(profileId)}/titles/${encodeURIComponent(titleId)}/preferred-source${query}`,
+    );
+  },
+  startOfflineDownload: (
+    profileId,
+    titleId,
+    sourceId,
+    rootId,
+    replaceExisting = false,
+  ) =>
+    request<OfflineDownload>(
+      `/profiles/${encodeURIComponent(profileId)}/offline-downloads`,
+      {
+        method: "POST",
+        body: JSON.stringify({ titleId, sourceId, rootId, replaceExisting }),
+      },
+    ),
+  cancelOfflineDownload: (profileId, downloadId) =>
+    request<void>(
+      `/profiles/${encodeURIComponent(profileId)}/offline-downloads/${encodeURIComponent(downloadId)}`,
+      { method: "DELETE" },
+    ),
   getSetupStatus: async () => {
     const status = await request<SetupStatusResponse>("/setup/status");
     const complete = status.complete;

@@ -1,4 +1,5 @@
 import type { FastifyInstance } from "fastify";
+import { fileURLToPath } from "node:url";
 import type { ExternalSubtitleTrack } from "@streamer-ai/contracts";
 import { PlaybackMediaError } from "../services/playback-media-engine.js";
 import {
@@ -63,15 +64,20 @@ export function registerPlaybackRoutes(
       cached !== undefined || forceRefresh
         ? await refreshSource(ticket)
         : ticket.directUrl,
+      ticket.providerId,
     );
+    const engineSource =
+      ticket.providerId === "local-files" && url.startsWith("file:")
+        ? fileURLToPath(url)
+        : url;
     sources.clear();
     // Third-party adapters may issue URLs with very short lifetimes. Their
     // refresh method is called on each subsequent media request.
     sources.set(ticket.grantId, {
-      url,
+      url: engineSource,
       validUntil: ticket.providerId === "webshare" ? Date.now() + 60_000 : 0,
     });
-    return url;
+    return engineSource;
   };
   app.addHook("onClose", async () => {
     activeMedia?.stop();
@@ -347,6 +353,10 @@ export function registerPlaybackRoutes(
                   episodeNumber: ticket.episodeNumber,
                 }
               : undefined,
+            {
+              providerId: ticket.providerId,
+              candidateId: ticket.candidateId ?? ticket.variantId,
+            },
           );
         }
         return reply

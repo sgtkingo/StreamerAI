@@ -312,6 +312,7 @@ export function HomePage({
         published = true;
         setResult(next);
         setResultPhase(deepResult ? "deep" : "quick");
+        if (next.stage === "needs-input") setChatOpen(true);
         setTurns([
           { id: `${sessionId}-user-${turnId}`, role: "user", text: message },
           {
@@ -427,6 +428,7 @@ export function HomePage({
       scrollToNextResult.current = true;
       setResult(response as DiscoveryUiResponse);
       setResultPhase("deep");
+      if (response.stage === "needs-input") setChatOpen(true);
       setTurns([
         {
           id: `${response.sessionId}-user-${requestCounter.current}`,
@@ -714,7 +716,9 @@ export function HomePage({
                     : "StreamerAI answer"}
               </p>
               <h2 id="results-heading" ref={resultsHeadingRef} tabIndex={-1}>
-                A considered shortlist
+                {result?.stage === "needs-input"
+                  ? "A question before I recommend"
+                  : "A considered shortlist"}
               </h2>
             </div>
             {result?.reply && <p>{result.reply}</p>}
@@ -868,7 +872,7 @@ export function HomePage({
         ))}
       </div>
       {result?.mode === "live" &&
-        result.stage === "completed" &&
+        (result.stage === "completed" || result.stage === "needs-input") &&
         !isSearching && (
           <aside
             className={`discovery-chat${chatOpen ? " is-open" : ""}`}

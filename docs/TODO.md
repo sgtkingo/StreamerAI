@@ -42,9 +42,9 @@ DONE: Seriály by měli mít po kliknuí detail a rozdělení do sérií a episo
 
 - DONE: Proč vyhledávání "Naruto" nic nenajde, když na TMDB i Websharu je? 
 
-- Pokud uživatel zadá např. "Něco co jsem neviděl" tak by si agent měl zažádat o seznam filmů které už uživatel viděl a vyhnout se jim. Pokud je konktextové okno malé, komprimovat. Má agent SOUL.md, SKILLS, MEMORY.md apod? 
+- DONE:  Pokud uživatel zadá např. "Něco co jsem neviděl" tak by si agent měl zažádat o seznam filmů které už uživatel viděl a vyhnout se jim. Pokud je konktextové okno malé, komprimovat. Má agent SOUL.md, SKILLS, MEMORY.md apod? 
 
-- Připrav architekturu tak, aby bylo možné přidávat libovolné konektory zdrojů pro DB, streamy i titulky. Musíme mít pevně daný univerzální konktrakt na straně Streamer AI, který se bude přes adaptéry párovat na konkterétní zdroj. Takový adapter musí být dokonale zdokumentován a navržen čistě, aby mohla komunikata tvořit své vlastní a mergovat. Uzpůsob také workflow dohledávání a vyhledávání tak aby uměl pracovat z multi-source zdroji, a vybírál tedy z více zdrojů to nejlepší + stavěl alternativní streamy ze všeho co má k dispozici. Na to také navážeme malým UI prvkem - mimiaturní ikonou umístěnou v pravém horním rohu dláždice - v sekci s popisem, která bude symbolizovat původ zdroje - v případěš že jich bude více, tak se ikony budou překrývat za sebou s malým offsetem doleva, ale max 3 ikony zdrojů, pak do ztracena. Ikona zdroje by měla být i v rámci výběru zdroje přes tři tečky - u každého zdroje zvlášt v seznamu. Vizuál ikony získej z loga služby nebo jej vygeneruj, ikona by měla být jako soubor v repu který se načte. V návaznosti na to připrav PLACEHOLDERY na několik nových integrací, a uprav také onboarding a Settings tak aby je bylo možné vybrat:
+- DONE: Připrav architekturu tak, aby bylo možné přidávat libovolné konektory zdrojů pro DB, streamy i titulky. Musíme mít pevně daný univerzální konktrakt na straně Streamer AI, který se bude přes adaptéry párovat na konkterétní zdroj. Takový adapter musí být dokonale zdokumentován a navržen čistě, aby mohla komunikata tvořit své vlastní a mergovat. Uzpůsob také workflow dohledávání a vyhledávání tak aby uměl pracovat z multi-source zdroji, a vybírál tedy z více zdrojů to nejlepší + stavěl alternativní streamy ze všeho co má k dispozici. Na to také navážeme malým UI prvkem - mimiaturní ikonou umístěnou v pravém horním rohu dláždice - v sekci s popisem, která bude symbolizovat původ zdroje - v případěš že jich bude více, tak se ikony budou překrývat za sebou s malým offsetem doleva, ale max 3 ikony zdrojů, pak do ztracena. Ikona zdroje by měla být i v rámci výběru zdroje přes tři tečky - u každého zdroje zvlášt v seznamu. Vizuál ikony získej z loga služby nebo jej vygeneruj, ikona by měla být jako soubor v repu který se načte. V návaznosti na to připrav PLACEHOLDERY na několik nových integrací, a uprav také onboarding a Settings tak aby je bylo možné vybrat:
 Pro DB:
 -- https://www.csfd.cz/ (ČSFD)
 
@@ -59,17 +59,21 @@ Pro titulky:
 
 
 
-- Měli bychom uživatelům umožnit stahovat obsah do své offline knihovny. Tato knihovna by pak mohla být dalším offline zdrojem, tzn další konektor. 
+- DONE: Měli bychom uživatelům umožnit stahovat obsah do své offline knihovny. Tuto knihovnu implementuj jako součást integrace Local folder or drive: tzn součást tohoto tasku je i  obecna integrace konektoru Local folder or drive. Tento konektor by měl umožnovat připojit více složek / disků, které bude rekurzivně async prohledávat a obohacovat Library. Nastavení by mělo sočívat v přidání / odebírání složek, a filtraci dle formátů (třeba mkv, avi, mp4, defaultně vše on). 
 
-- Každý profil by měl mít oddělené data, i v rámci onboardingu - hlavně api konektory
+- Po zavření přehrávače se někdy možnost skrolování zasekne.  Černé pozadí pod křížkem Close v kartě by měl začínát více v roku, at jde plynule z úplně černé. Zelený symbol stažení by u dláždice měl být bez fajfky - prostě původní download ikona ale jen zelená, v kartě ji nech tak. Po dokončení stahování titulu by se ikona měla změnit na červený trash a další kliknutím by měl být titul smazán (po potvrzení uživatelem). 
+
+
+
+- Každý profil by měl mít oddělené data, i v rámci onboardingu - hlavně api konektory.
 
 - DONE: Přehrávač nezobrazuje titulky, pro titulky přuprav napoj také nastavení v rámci 03 / Subtitles (velikost, barva, font). U přehrávače neslyším zvuk, dodělej funční Audio output v 02 / Audio a napoj ho na přehrávač.  Seriály by na konci měli automaticky začít odpočítávat přehrání dalšího dílu (5 sekund?), 
 
 - DONE: Tlačítko Find při přejetí (hover) nemění barvy a mění skokově intenzitu záře místo toho aby ji měnilo pomalu, jakoby tepalo. Problém bude asi příliš mnoho animací a jejich překrývání se stop - Stop ted září a sálá duhově, místo jen bílou barvou (při přejetí hover by navíc mělo jen zářit bíle). Je třeba se podívat na starší commit kde vše fungovalo. 
 
-- Je třeba připravit integrace na více zdrojů obsahu - zavést kontratky atd. 
+- DONE:Je třeba připravit integrace na více zdrojů obsahu - zavést kontratky atd. 
 
-- U serálů (i filmů) budeme potřebovat multivariatní vyhledávání, např hledat díly sérii ne jen podle S01E01, 1 + název ale i jen 1. / 1 Problém může být že řeba S02E05 bude v databázi jako díl 15. Také bychom měli připustit nalezení a hledání jen konkterétního dílu seriálu,  třeba S02E05. Uprav vyhledávání tak aby tohle fungovalo.
+- DONE:U serálů (i filmů) budeme potřebovat multivariatní vyhledávání, např hledat díly sérii ne jen podle S01E01, 1 + název ale i jen 1. / 1 Problém může být že řeba S02E05 bude v databázi jako díl 15. Také bychom měli připustit nalezení a hledání jen konkterétního dílu seriálu,  třeba S02E05. Uprav vyhledávání tak aby tohle fungovalo.
 
 DONE: Subtitles vyvolávájí Loading subtitles - to není UI přívětívé a navíc se titulky nenačtou v některých případech. Nechápu jaktože titulk dělají takvý problém. Přijde mi že po seek se zase načítají odznovu a zas  časují. Jaktože to ve VLC jde bez problému a okamžitě?  
 

@@ -430,6 +430,42 @@ Direct media URLs are short-lived server concerns. Do not persist them in
 canonical records, expose provider credentials to the browser, or treat search
 results as playable before a final recheck.
 
+### Local folder or drive
+
+The built-in `local-files` media adapter is connected by default on a new
+installation. It creates `<STREAMERAI_DATA_DIR>/StreamerAI/Local/Library` and
+shows that root in Connections and Settings. An explicit disconnect is retained
+across restarts. Add more absolute folders or mounted drives accessible to the
+home server. **Select folder** opens a native directory picker on the server
+machine when StreamerAI is opened locally; remote browsers can enter a server
+path manually. Each root is scanned recursively in the background. Symlinks are
+skipped, and the index is refreshed when roots or enabled formats change. All
+supported formats are enabled initially: MKV, AVI, MP4, M4V, MOV, WebM, MPG,
+MPEG, TS and M2TS. The scan limit is 50,000 files, with at most 1,000 sources
+stored for one title. Folder paths and file URLs stay on the server. Playback
+uses the normal same-origin grant and FFmpeg pipeline, with a fresh real-path
+check before a local file is opened.
+
+Files are grouped into Library titles from filenames. `S01E02` and `1x02`
+identify episodes; the prefix is used as the series name. Movie filenames are
+matched to an existing title when possible, or create a local-only title.
+Removing a root removes its indexed sources from Library after the next scan.
+An inaccessible root is skipped during a scan, so its indexed sources also
+disappear. A later scan can restore them when the drive returns.
+
+The download control in title and episode details copies a selected Webshare
+variant into a connected root. Source menus offer the same control for each
+downloadable variant. The file is staged under `.streamerai-downloads`, then
+renamed and indexed into Library. The downloaded local source becomes the
+default for that movie or exact episode. Starting playback with another source
+updates that default. Completed downloads are remembered across server restarts;
+an explicit confirmation is required before replacing a saved copy. Active
+downloads can be cancelled and show byte progress, but do not resume after a
+server restart. They are limited to 30 GB. Failed or cancelled transfers remove
+their temporary file. The source must have a supported video extension and a
+current Webshare download link. Other media adapters can add their own download
+capability through the provider contract later.
+
 The ticket store is deliberately memory-only and holds at most one active
 playback grant. The in-app player uses the same-origin `PlaybackMediaEngine`
 boundary for probing, audio selection, fragmented MP4, thumbnails and embedded

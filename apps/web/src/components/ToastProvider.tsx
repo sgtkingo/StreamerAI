@@ -48,7 +48,13 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   const showToast = useCallback<ToastContextValue["showToast"]>(
     (message, kind = "info", options = {}) => {
       const next = [
-        ...itemsRef.current,
+        ...itemsRef.current.filter(
+          (item) =>
+            item.action ||
+            options.action ||
+            item.message !== message ||
+            item.kind !== kind,
+        ),
         {
           id: ++nextIdRef.current,
           message,

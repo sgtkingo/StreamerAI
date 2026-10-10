@@ -35,6 +35,16 @@ const items: IntegrationCatalogItem[] = [
     configured: false,
     setup: { documentationUrl: null, supportsDisconnect: true },
   },
+  {
+    id: "local-files",
+    name: "Local folder or drive",
+    description: "Local media.",
+    category: "media",
+    planned: false,
+    selected: false,
+    configured: false,
+    setup: { documentationUrl: null, supportsDisconnect: true },
+  },
 ];
 
 function apiWith(integrations: IntegrationCatalogItem[]) {
@@ -47,6 +57,17 @@ function apiWith(integrations: IntegrationCatalogItem[]) {
         selected,
       })),
     disconnectIntegration: vi.fn().mockResolvedValue(undefined),
+    getLocalFolders: vi.fn().mockResolvedValue({
+      roots: [],
+      extensions: ["mkv", "avi", "mp4"],
+      availableExtensions: ["mkv", "avi", "mp4"],
+      scan: { state: "idle", fileCount: 0, error: null, completedAt: null },
+    }),
+    addLocalFolder: vi.fn(),
+    selectLocalFolder: vi.fn(),
+    removeLocalFolder: vi.fn(),
+    setLocalFormats: vi.fn(),
+    scanLocalFolders: vi.fn(),
     connectTmdb: vi.fn().mockResolvedValue({
       ok: true,
       integrationId: "tmdb",
@@ -59,6 +80,37 @@ function apiWith(integrations: IntegrationCatalogItem[]) {
 }
 
 describe("integration manager", () => {
+  it("shows the default local integration and connects a folder through Select folder", async () => {
+    const user = userEvent.setup();
+    const configured = items.map((item) =>
+      item.id === "local-files" ? { ...item, configured: true } : item,
+    );
+    const api = apiWith(configured);
+    const selected = {
+      roots: [{ id: "picked", path: "D:\\Media" }],
+      extensions: ["mkv"],
+      availableExtensions: ["mkv"],
+      scan: {
+        state: "scanning" as const,
+        fileCount: 0,
+        error: null,
+        completedAt: null,
+      },
+    };
+    vi.mocked(api.getLocalFolders).mockResolvedValue(selected);
+    vi.mocked(api.selectLocalFolder).mockResolvedValue(selected);
+    render(<IntegrationManager api={api} context="settings" />);
+    const card = (await screen.findByText("Local folder or drive")).closest(
+      "article",
+    )!;
+    await user.click(within(card).getByRole("button", { name: "Settings" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Select folder" }),
+    );
+    await waitFor(() => expect(api.selectLocalFolder).toHaveBeenCalledOnce());
+    expect(screen.getByText("D:\\Media")).toBeInTheDocument();
+  });
+
   it("shows existing connections in their groups and disconnects one service", async () => {
     const user = userEvent.setup();
     const api = apiWith(items);
@@ -199,5 +251,54 @@ describe("integration manager", () => {
     expect(
       screen.getByRole("button", { name: /choose a subtitle source/i }),
     ).toBeInTheDocument();
+  });
+
+  it("connects a local folder and saves a video format filter", async () => {
+    const user = userEvent.setup();
+    const api = apiWith(items.map((item) => ({ ...item, configured: false })));
+    const config = {
+      roots: [{ id: "root-1", path: "D:\\Movies" }],
+      extensions: ["mkv", "avi", "mp4"],
+      availableExtensions: ["mkv", "avi", "mp4"],
+      scan: {
+        state: "scanning" as const,
+        fileCount: 0,
+        error: null,
+        completedAt: null,
+      },
+    };
+    vi.mocked(api.addLocalFolder).mockResolvedValue(config);
+    vi.mocked(api.setLocalFormats).mockResolvedValue({
+      ...config,
+      extensions: ["mkv", "mp4"],
+    });
+    const onConnectionChange = vi.fn();
+    render(
+      <IntegrationManager
+        api={api}
+        context="onboarding"
+        onConnectionChange={onConnectionChange}
+      />,
+    );
+    const streams = screen.getByRole("region", { name: "Stream sources" });
+    await user.click(
+      within(streams).getByRole("button", { name: /add more/i }),
+    );
+    await user.click(
+      within(streams).getByRole("button", { name: /Local folder or drive/i }),
+    );
+    await user.type(
+      await screen.findByLabelText("Folder or mounted drive path"),
+      "D:\\Movies",
+    );
+    await user.click(screen.getByRole("button", { name: "Add folder" }));
+    await waitFor(() =>
+      expect(api.addLocalFolder).toHaveBeenCalledWith("D:\\Movies"),
+    );
+    expect(onConnectionChange).toHaveBeenCalledWith("local-files", true);
+    await user.click(screen.getByRole("checkbox", { name: ".avi" }));
+    await waitFor(() =>
+      expect(api.setLocalFormats).toHaveBeenCalledWith(["mkv", "mp4"]),
+    );
   });
 });

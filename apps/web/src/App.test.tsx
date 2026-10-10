@@ -55,6 +55,20 @@ function createApi(): StreamerApi {
         selected,
       })),
     disconnectIntegration: vi.fn().mockResolvedValue(undefined),
+    getLocalFolders: vi.fn().mockResolvedValue({
+      roots: [],
+      extensions: ["mkv", "avi", "mp4"],
+      availableExtensions: ["mkv", "avi", "mp4"],
+      scan: { state: "idle", fileCount: 0, error: null, completedAt: null },
+    }),
+    addLocalFolder: vi.fn(),
+    selectLocalFolder: vi.fn(),
+    removeLocalFolder: vi.fn(),
+    setLocalFormats: vi.fn(),
+    scanLocalFolders: vi.fn(),
+    getOfflineDownloads: vi.fn().mockResolvedValue({ items: [] }),
+    startOfflineDownload: vi.fn(),
+    cancelOfflineDownload: vi.fn(),
     getSetupStatus: vi.fn().mockResolvedValue({
       complete: true,
       tmdb: "not-configured",
@@ -1561,6 +1575,59 @@ describe("conversational Home", () => {
         screen.getByRole("complementary", { name: "StreamerAI chat" }),
       ).queryByText("Less spooky, please"),
     ).not.toBeInTheDocument();
+  });
+
+  it("opens the chat for a watched-list question and sends the reply in the same session", async () => {
+    const user = userEvent.setup();
+    const api = createApi();
+    const base = {
+      sessionId: "unseen-session",
+      mode: "live" as const,
+      bestMatch: null,
+      available: [],
+      unavailable: [],
+      unverified: [],
+      warnings: [],
+      completedAt: "2026-09-27T12:00:00.000Z",
+    };
+    vi.mocked(api.discover)
+      .mockResolvedValueOnce({
+        ...base,
+        stage: "needs-input",
+        reply: "Which films have you already seen?",
+      })
+      .mockResolvedValueOnce({
+        ...base,
+        stage: "completed",
+        reply: "I excluded Arrival.",
+      });
+    window.history.replaceState({}, "", "/");
+    render(<App api={api} />);
+
+    await user.click(await screen.findByRole("button", { name: /alex/i }));
+    await user.type(
+      screen.getByLabelText(/ask streamerai/i),
+      "Something I haven't seen",
+    );
+    await user.click(screen.getByRole("button", { name: "Find something" }));
+    const chat = await screen.findByRole("complementary", {
+      name: "StreamerAI chat",
+    });
+    expect(
+      within(chat).getByText("Which films have you already seen?"),
+    ).toBeInTheDocument();
+    await user.type(
+      within(chat).getByLabelText("Reply to StreamerAI"),
+      "Arrival",
+    );
+    await user.click(within(chat).getByRole("button", { name: "Send" }));
+    expect(
+      await within(chat).findByText("I excluded Arrival."),
+    ).toBeInTheDocument();
+    expect(vi.mocked(api.discover).mock.calls[1]?.[0]).toMatchObject({
+      sessionId: "unseen-session",
+      message: "Arrival",
+    });
   });
 
   it.each([

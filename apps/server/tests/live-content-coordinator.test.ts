@@ -1353,8 +1353,62 @@ describe("LiveContentCoordinator", () => {
       ]),
     );
     expect(input.messages[0]?.content).toContain(
-      "A quick-search note, if present, lists deterministic metadata title candidates",
+      "A quick-search note contains metadata candidates",
     );
+  });
+
+  it("compresses long conversations for a small model context", async () => {
+    const dependencies = coordinatorDependencies();
+    const coordinator = new LiveContentCoordinator({
+      ...dependencies,
+      integrationStateStore: await connectedStateStore(),
+      inference: {
+        provider: "ollama",
+        baseUrl: "http://127.0.0.1:11434",
+        model: "qwen3.5:4b",
+        minimumVersion: "0.5.0",
+        contextTokens: 1_024,
+        maxOutputTokens: 256,
+        timeoutMs: 60_000,
+      },
+      localeForProfile: () => "en",
+      now: () => new Date(NOW),
+    });
+    const messages = [
+      {
+        role: "user" as const,
+        content: { message: "A warm comedy" },
+        createdAt: NOW,
+      },
+      ...Array.from({ length: 16 }, (_, index) => ({
+        role: "assistant" as const,
+        content: { reply: `Suggestion ${index}: ${"x".repeat(300)}` },
+        createdAt: NOW,
+      })),
+      {
+        role: "user" as const,
+        content: { message: "Make it shorter" },
+        createdAt: NOW,
+      },
+    ];
+    await coordinator.discover(
+      {
+        profileId: "default",
+        sessionId: "small-context",
+        message: "Make it shorter",
+        idempotencyKey: "small-context-request",
+      },
+      NOW,
+      { sessionId: "small-context", messages },
+    );
+    const input = dependencies.generateStructured.mock.calls[0]?.[0];
+    const prompt = input.messages
+      .map((item: { content: string }) => item.content)
+      .join(" ");
+    expect(prompt).toContain("A warm comedy");
+    expect(prompt).toContain("Make it shorter");
+    expect(prompt).not.toContain("Suggestion 0:");
+    expect(prompt.length).toBeLessThan(1_500);
   });
 
   it("returns needs-setup without invoking the model when a provider is disconnected", async () => {

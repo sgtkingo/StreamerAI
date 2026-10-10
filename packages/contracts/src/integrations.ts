@@ -246,10 +246,9 @@ export const INTEGRATION_DESCRIPTORS = {
       "Dateien aus einem ausgewählten Ordner oder Datenträger abspielen.",
     ),
     setupMode: "informed-consent",
-    planned: true,
     optional: true,
     canAutoDetect: false,
-    automatedChecks: false,
+    automatedChecks: true,
     supportsDisconnect: true,
   }),
   ftp: descriptor({

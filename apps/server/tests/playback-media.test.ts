@@ -1,5 +1,7 @@
 import { Readable } from "node:stream";
 import { Writable } from "node:stream";
+import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import Fastify from "fastify";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -12,6 +14,62 @@ import { registerPlaybackRoutes } from "../src/routes/playback.js";
 import type { StreamerCore } from "../src/services/streamer-core.js";
 
 describe("in-app media gateway", () => {
+  it("passes a local file path to the media engine behind a same-origin grant", async () => {
+    const tickets = new InMemoryPlaybackTicketStore();
+    const filePath = resolve("sample-local-video.mkv");
+    tickets.issue({
+      grantId: "local-grant",
+      profileId: "default",
+      providerId: "local-files",
+      titleId: "local-movie",
+      variantId: "indexed-file",
+      directUrl: pathToFileURL(filePath).href,
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    });
+    const media: PlaybackMediaEngine = {
+      probe: vi.fn().mockResolvedValue({
+        durationSeconds: 120,
+        videoCodec: "h264",
+        videoPixelFormat: "yuv420p",
+        audioTracks: [],
+        subtitleTracks: [],
+      }),
+      stream: vi.fn().mockImplementation(() => ({
+        body: Readable.from([Buffer.from("mp4")]),
+        stop: vi.fn(),
+      })),
+      thumbnail: vi.fn(),
+      subtitle: vi.fn(),
+    };
+    const app = Fastify({ logger: false });
+    registerPlaybackRoutes(
+      app,
+      tickets,
+      { recordPlaybackStart: vi.fn() } as unknown as StreamerCore,
+      media,
+      vi.fn().mockResolvedValue(pathToFileURL(filePath).href),
+    );
+    try {
+      expect(
+        (
+          await app.inject({
+            method: "GET",
+            url: "/api/v1/playback/grants/local-grant/media",
+          })
+        ).statusCode,
+      ).toBe(200);
+      expect(media.probe).toHaveBeenCalledWith(filePath);
+      expect(media.stream).toHaveBeenCalledWith(
+        filePath,
+        expect.anything(),
+        null,
+        0,
+      );
+    } finally {
+      await app.close();
+    }
+  });
+
   it("refreshes the private source on an explicit media retry", async () => {
     const tickets = new InMemoryPlaybackTicketStore();
     tickets.issue({

@@ -30,8 +30,23 @@ export interface PlaybackTicketStore {
 }
 
 /** Validate server-only source URLs when issued and after every refresh. */
-export function validatePlaybackSourceUrl(value: string): string {
+export function validatePlaybackSourceUrl(
+  value: string,
+  providerId?: string,
+): string {
   const directUrl = new URL(value);
+  if (providerId === "local-files" && directUrl.protocol === "file:") {
+    if (
+      directUrl.hostname ||
+      directUrl.search ||
+      directUrl.hash ||
+      !directUrl.pathname
+    )
+      throw new Error(
+        "Local playback path must be a server file without a host or query.",
+      );
+    return value;
+  }
   const loopback = ["127.0.0.1", "localhost", "::1"].includes(
     directUrl.hostname,
   );
@@ -59,7 +74,7 @@ export class InMemoryPlaybackTicketStore implements PlaybackTicketStore {
     if (!/^[A-Za-z0-9_-]{1,160}$/.test(input.grantId)) {
       throw new Error("Playback grant id is invalid.");
     }
-    validatePlaybackSourceUrl(input.directUrl);
+    validatePlaybackSourceUrl(input.directUrl, input.providerId);
     if (Date.parse(input.expiresAt) <= this.now().getTime()) {
       throw new Error("Playback ticket must expire in the future.");
     }

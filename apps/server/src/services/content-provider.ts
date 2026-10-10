@@ -82,6 +82,10 @@ export interface DiscoveryConversationMessage {
 export interface DiscoveryConversationContext {
   readonly sessionId: string;
   readonly messages: readonly DiscoveryConversationMessage[];
+  readonly unseen?: {
+    readonly titleIds: readonly string[];
+    readonly titles: readonly string[];
+  };
   readonly signal?: AbortSignal;
 }
 

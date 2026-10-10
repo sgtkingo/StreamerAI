@@ -5,12 +5,13 @@ import type {
   TitleSource,
   TitleDetail as Detail,
 } from "@streamer-ai/contracts";
-import type { StreamerApi } from "../api/client";
+import type { OfflineDownload, StreamerApi } from "../api/client";
 import { safeErrorMessage } from "../api/client";
 import { sourceLabel } from "../source-label";
 import { SourceIcon, sourceName } from "./SourceIcon";
 import { useToasts } from "./ToastProvider";
 import { playCardHoverTick } from "./TitleCard";
+import { DownloadButton } from "./DownloadButton";
 
 interface Props {
   api: StreamerApi;
@@ -29,6 +30,10 @@ interface Props {
   ) => Promise<void>;
   onAdded: () => void;
 }
+
+const isDownloadableSource = (source: TitleSource) =>
+  source.providerId === "webshare" &&
+  /\.(mkv|avi|mp4|m4v|mov|webm|mpg|mpeg|ts|m2ts)$/i.test(source.releaseName);
 
 function PlayActionContent({ label }: { label: string }) {
   return (
@@ -86,6 +91,30 @@ export function TitleDetail({
     useState<EpisodeSelection | null>(initialEpisode ?? null);
   const [playing, setPlaying] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
+  const [localRoots, setLocalRoots] = useState<{ id: string; path: string }[]>(
+    [],
+  );
+  const [offlineJobs, setOfflineJobs] = useState<OfflineDownload[]>([]);
+  const [preferredSourceId, setPreferredSourceId] = useState<string | null>(
+    null,
+  );
+  const [downloadBusy, setDownloadBusy] = useState(false);
+  const [confirmDownload, setConfirmDownload] = useState<{
+    sourceId: string;
+    rootId: string;
+    label: string;
+  } | null>(null);
+  const [chooseRoot, setChooseRoot] = useState<{
+    sourceId: string;
+    rootId: string;
+    label: string;
+  } | null>(null);
+  const downloadDialogOpenRef = useRef(false);
+  downloadDialogOpenRef.current =
+    confirmDownload !== null || chooseRoot !== null;
+  const refreshedOfflineJobs = useRef(new Set<string>());
+  const reportedOfflineFailures = useRef(new Set<string>());
+  const startedOfflineJobs = useRef(new Set<string>());
   const [openSourceFor, setOpenSourceFor] = useState<string | null>(null);
   const [forceSearch, setForceSearch] = useState<
     { status: "searching" } | { status: "done"; message: string } | null
@@ -108,6 +137,85 @@ export function TitleDetail({
   useEffect(() => {
     if (error) showToast(error, "error");
   }, [error, showToast]);
+  useEffect(() => {
+    let active = true;
+    void api
+      .getLocalFolders()
+      .then((config) => {
+        if (!active) return;
+        setLocalRoots(config.roots);
+      })
+      .catch(() => undefined);
+    void api
+      .getOfflineDownloads(profileId)
+      .then((response) => {
+        if (active) setOfflineJobs(response.items);
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [api, profileId]);
+  useEffect(() => {
+    let active = true;
+    setPreferredSourceId(null);
+    void api
+      .getPreferredSource?.(profileId, title.id, selectedEpisode ?? undefined)
+      .then((value) => {
+        if (active) setPreferredSourceId(value.sourceId);
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [api, profileId, title.id, selectedEpisode, suspended]);
+  useEffect(() => {
+    if (!offlineJobs.some((job) => job.state === "downloading")) return;
+    const timer = window.setTimeout(() => {
+      void api
+        .getOfflineDownloads(profileId)
+        .then((response) => setOfflineJobs(response.items))
+        .catch(() => undefined);
+    }, 1200);
+    return () => window.clearTimeout(timer);
+  }, [api, offlineJobs, profileId]);
+  useEffect(() => {
+    const newlyIndexed = offlineJobs.filter(
+      (job) =>
+        job.titleId === title.id &&
+        job.state === "complete" &&
+        !refreshedOfflineJobs.current.has(job.id),
+    );
+    if (newlyIndexed.length === 0) return;
+    for (const job of newlyIndexed) refreshedOfflineJobs.current.add(job.id);
+    void api
+      .getTitleDetail(profileId, title.id)
+      .then((updated) => {
+        setDetail(updated);
+        onAdded();
+        void api
+          .getPreferredSource?.(
+            profileId,
+            title.id,
+            selectedEpisode ?? undefined,
+          )
+          .then((value) => setPreferredSourceId(value.sourceId))
+          .catch(() => undefined);
+      })
+      .catch(() => undefined);
+  }, [api, offlineJobs, onAdded, profileId, title.id, selectedEpisode]);
+  useEffect(() => {
+    for (const job of offlineJobs) {
+      if (
+        job.state !== "failed" ||
+        !startedOfflineJobs.current.has(job.id) ||
+        reportedOfflineFailures.current.has(job.id)
+      )
+        continue;
+      reportedOfflineFailures.current.add(job.id);
+      showToast(job.error ?? "Offline download failed.", "error");
+    }
+  }, [offlineJobs, showToast]);
   const [movieStatus, setMovieStatus] = useState<
     "checking" | "ready" | "unavailable"
   >("checking");
@@ -227,7 +335,10 @@ export function TitleDetail({
     const keydown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
-        if (openSourceForRef.current !== null) setOpenSourceFor(null);
+        if (downloadDialogOpenRef.current) {
+          setConfirmDownload(null);
+          setChooseRoot(null);
+        } else if (openSourceForRef.current !== null) setOpenSourceFor(null);
         else if (selectedEpisodeRef.current !== null) {
           const episode = selectedEpisodeRef.current;
           navigationFocusRef.current = "episode";
@@ -312,6 +423,149 @@ export function TitleDetail({
           source.episodeNumber === episode.episodeNumber
         : source.seasonNumber === null && source.episodeNumber === null,
     );
+  const sourceChoicesFor = (
+    episode: EpisodeSelection,
+    searched: TitleSource[],
+  ) =>
+    [...sourcesFor(episode), ...searched].filter(
+      (source, index, all) =>
+        all.findIndex((item) => item.id === source.id) === index,
+    );
+  const downloadableSourcesFor = (episode?: EpisodeSelection) =>
+    sourcesFor(episode).filter(isDownloadableSource);
+  const downloadJobsFor = (
+    episode?: EpisodeSelection,
+    explicitSource?: TitleSource,
+  ) => {
+    const sourceIds = explicitSource
+      ? [explicitSource.id]
+      : downloadableSourcesFor(episode).map((source) => source.id);
+    return offlineJobs.filter(
+      (job) => job.titleId === current.id && sourceIds.includes(job.sourceId),
+    );
+  };
+  const downloadStateFor = (
+    episode?: EpisodeSelection,
+    source?: TitleSource,
+  ) => {
+    const jobs = downloadJobsFor(episode, source);
+    const active = jobs.find((job) => job.state === "downloading");
+    const saved = jobs.findLast((job) => job.state === "complete");
+    const availableOffline = sourcesFor(episode).some(
+      (candidate) => candidate.providerId === "local-files",
+    );
+    return {
+      active,
+      saved,
+      state: active
+        ? ("downloading" as const)
+        : saved || availableOffline
+          ? ("complete" as const)
+          : ("idle" as const),
+      progress:
+        active?.totalBytes && active.totalBytes > 0
+          ? Math.round((active.bytes / active.totalBytes) * 100)
+          : null,
+    };
+  };
+  const launchDownload = async (
+    sourceId: string,
+    rootId: string,
+    replaceExisting = false,
+  ) => {
+    setDownloadBusy(true);
+    try {
+      const job = await api.startOfflineDownload(
+        profileId,
+        current.id,
+        sourceId,
+        rootId,
+        replaceExisting,
+      );
+      startedOfflineJobs.current.add(job.id);
+      setOfflineJobs((jobs) => [...jobs, job]);
+    } catch (reason) {
+      showToast(safeErrorMessage(reason), "error");
+    } finally {
+      setDownloadBusy(false);
+    }
+  };
+  const download = async (
+    episode?: EpisodeSelection,
+    explicitSource?: TitleSource,
+  ) => {
+    if (downloadBusy) return;
+    const state = downloadStateFor(episode, explicitSource);
+    if (state.active) {
+      try {
+        await api.cancelOfflineDownload(profileId, state.active.id);
+      } catch (reason) {
+        showToast(safeErrorMessage(reason), "error");
+      }
+      return;
+    }
+    if (localRoots.length === 0) {
+      showToast(
+        "Connect a Local folder or drive in Settings before downloading.",
+        "error",
+      );
+      return;
+    }
+    let source: TitleSource | undefined =
+      explicitSource ?? downloadableSourcesFor(episode)[0];
+    if (!source) {
+      setDownloadBusy(true);
+      try {
+        if (episode) {
+          const result = await api.forceEpisodeSearch(
+            profileId,
+            current.id,
+            episode,
+          );
+          setDetail(result.detail);
+          source = result.sources.find(isDownloadableSource);
+        } else {
+          const result = await api.forceTitleSearch(profileId, current.id);
+          setDetail(result.detail);
+          source = result.detail.title.sources?.find(isDownloadableSource);
+        }
+      } catch (reason) {
+        showToast(safeErrorMessage(reason), "error");
+        return;
+      } finally {
+        setDownloadBusy(false);
+      }
+    }
+    if (!source) {
+      showToast("No downloadable source is available for this title.", "error");
+      return;
+    }
+    const saved = downloadJobsFor(episode, source).findLast(
+      (job) => job.state === "complete",
+    );
+    const rootId = saved?.rootId ?? localRoots[0]!.id;
+    if (saved) {
+      setConfirmDownload({
+        sourceId: source.id,
+        rootId,
+        label: episode
+          ? `${current.title} S${String(episode.seasonNumber).padStart(2, "0")}E${String(episode.episodeNumber).padStart(2, "0")}`
+          : current.title,
+      });
+      return;
+    }
+    if (localRoots.length > 1) {
+      setChooseRoot({
+        sourceId: source.id,
+        rootId,
+        label: episode
+          ? `${current.title} S${String(episode.seasonNumber).padStart(2, "0")}E${String(episode.episodeNumber).padStart(2, "0")}`
+          : current.title,
+      });
+      return;
+    }
+    await launchDownload(source.id, rootId);
+  };
   const selectedEpisodeKey = selectedEpisode
     ? `${selectedEpisode.seasonNumber}:${selectedEpisode.episodeNumber}`
     : null;
@@ -638,24 +892,40 @@ export function TitleDetail({
                 </small>
                 {current.kind === "movie" &&
                   forceSearch?.status === "done" &&
-                  sourcesFor().length > 1 &&
+                  sourcesFor().length > 0 &&
                   sourcesFor().map((source, index) => (
-                    <button
-                      key={source.id}
-                      type="button"
-                      title={source.releaseName}
-                      onClick={() => {
-                        setOpenSourceFor(null);
-                        void play(undefined, undefined, source.id);
-                      }}
-                    >
-                      <SourceOptionContent
-                        source={source}
-                        label={
-                          index === 0 ? "Recommended" : `Source ${index + 1}`
-                        }
-                      />
-                    </button>
+                    <div className="title-detail__source-row" key={source.id}>
+                      <button
+                        type="button"
+                        title={source.releaseName}
+                        onClick={() => {
+                          setOpenSourceFor(null);
+                          void play(undefined, undefined, source.id);
+                        }}
+                      >
+                        <SourceOptionContent
+                          source={source}
+                          label={
+                            source.id === preferredSourceId
+                              ? "Default"
+                              : index === 0
+                                ? "Recommended"
+                                : `Source ${index + 1}`
+                          }
+                        />
+                      </button>
+                      {isDownloadableSource(source) && (
+                        <DownloadButton
+                          compact
+                          state={downloadStateFor(undefined, source).state}
+                          progress={
+                            downloadStateFor(undefined, source).progress
+                          }
+                          label={source.releaseName}
+                          onClick={() => void download(undefined, source)}
+                        />
+                      )}
+                    </div>
                   ))}
               </div>
             )}
@@ -673,6 +943,22 @@ export function TitleDetail({
               <span className="in-library">✓ In Library</span>
             )}
           </div>
+          {(current.kind === "movie" || selectedEpisode) && playbackEnabled && (
+            <div className="title-detail__hero-download">
+              <DownloadButton
+                state={downloadStateFor(selectedEpisode ?? undefined).state}
+                progress={
+                  downloadStateFor(selectedEpisode ?? undefined).progress
+                }
+                label={
+                  selectedEpisode
+                    ? `${current.title} ${episodeCode}`
+                    : current.title
+                }
+                onClick={() => void download(selectedEpisode ?? undefined)}
+              />
+            </div>
+          )}
         </div>
         {current.kind === "series" && selectedEpisode && (
           <div className="title-detail__body title-detail__episode-details">
@@ -709,27 +995,48 @@ export function TitleDetail({
                         : null}
                 </small>
                 {selectedEpisodeSearch?.status === "done" &&
-                  selectedEpisodeSearch.sources.map((source, index) => (
-                    <button
-                      key={source.id}
-                      type="button"
-                      title={source.releaseName}
-                      onClick={() => {
-                        setOpenSourceFor(null);
-                        void play(
-                          selectedEpisode,
-                          episodeDetail?.title,
-                          source.id,
-                        );
-                      }}
-                    >
-                      <SourceOptionContent
-                        source={source}
-                        label={
-                          index === 0 ? "Recommended" : `Source ${index + 1}`
-                        }
-                      />
-                    </button>
+                  sourceChoicesFor(
+                    selectedEpisode,
+                    selectedEpisodeSearch.sources,
+                  ).map((source, index) => (
+                    <div className="title-detail__source-row" key={source.id}>
+                      <button
+                        type="button"
+                        title={source.releaseName}
+                        onClick={() => {
+                          setOpenSourceFor(null);
+                          void play(
+                            selectedEpisode,
+                            episodeDetail?.title,
+                            source.id,
+                          );
+                        }}
+                      >
+                        <SourceOptionContent
+                          source={source}
+                          label={
+                            source.id === preferredSourceId
+                              ? "Default"
+                              : index === 0
+                                ? "Recommended"
+                                : `Source ${index + 1}`
+                          }
+                        />
+                      </button>
+                      {isDownloadableSource(source) && (
+                        <DownloadButton
+                          compact
+                          state={
+                            downloadStateFor(selectedEpisode, source).state
+                          }
+                          progress={
+                            downloadStateFor(selectedEpisode, source).progress
+                          }
+                          label={source.releaseName}
+                          onClick={() => void download(selectedEpisode, source)}
+                        />
+                      )}
+                    </div>
                   ))}
               </div>
             )}
@@ -812,61 +1119,73 @@ export function TitleDetail({
                               ? "Ready"
                               : "Unavailable"}
                         </span>
-                        <button
-                          data-episode-details={key}
-                          className="button button--secondary button--compact title-detail__episode-details-button"
-                          type="button"
-                          onClick={() => openEpisode(selection)}
-                          aria-label={`Details for ${current.title} S${String(episode.seasonNumber).padStart(2, "0")}E${String(episode.episodeNumber).padStart(2, "0")}`}
-                        >
-                          Details
-                        </button>
-                        {episode.availability === "available" &&
-                          playbackEnabled && (
-                            <button
-                              className={`button button--primary button--compact${playing === `${episode.seasonNumber}:${episode.episodeNumber}` ? "" : " button--play-action"}`}
-                              type="button"
-                              data-episode={`${episode.seasonNumber}:${episode.episodeNumber}`}
-                              disabled={playing !== null}
-                              onClick={() =>
-                                void play(
-                                  {
-                                    seasonNumber: episode.seasonNumber,
-                                    episodeNumber: episode.episodeNumber,
-                                  },
-                                  episode.title,
-                                )
-                              }
-                            >
-                              {playing ===
-                              `${episode.seasonNumber}:${episode.episodeNumber}` ? (
-                                "Starting…"
-                              ) : current.progressPercent !== null &&
-                                current.progressPercent >= 2 &&
-                                current.resumeEpisode?.seasonNumber ===
-                                  episode.seasonNumber &&
-                                current.resumeEpisode?.episodeNumber ===
-                                  episode.episodeNumber ? (
-                                <PlayActionContent label="Continue" />
-                              ) : (
-                                <PlayActionContent label="Play" />
-                              )}
-                            </button>
-                          )}
-                        <button
-                          className={`title-detail__force-search title-detail__episode-search${search?.status === "searching" ? " is-searching" : ""}`}
-                          type="button"
-                          aria-label={`Search sources for episode ${episode.episodeNumber}`}
-                          aria-expanded={openSourceFor === key}
-                          aria-busy={search?.status === "searching"}
-                          title="Force a new search for this episode"
-                          disabled={
-                            !playbackEnabled || search?.status === "searching"
-                          }
-                          onClick={() => void searchEpisode(selection)}
-                        >
-                          <span aria-hidden="true">⋮</span>
-                        </button>
+                        <div className="title-detail__episode-actions">
+                          <button
+                            data-episode-details={key}
+                            className="button button--secondary button--compact title-detail__episode-details-button"
+                            type="button"
+                            onClick={() => openEpisode(selection)}
+                            aria-label={`Details for ${current.title} S${String(episode.seasonNumber).padStart(2, "0")}E${String(episode.episodeNumber).padStart(2, "0")}`}
+                          >
+                            Details
+                          </button>
+                          {episode.availability === "available" &&
+                            playbackEnabled && (
+                              <button
+                                className={`button button--primary button--compact${playing === `${episode.seasonNumber}:${episode.episodeNumber}` ? "" : " button--play-action"}`}
+                                type="button"
+                                data-episode={`${episode.seasonNumber}:${episode.episodeNumber}`}
+                                disabled={playing !== null}
+                                onClick={() =>
+                                  void play(
+                                    {
+                                      seasonNumber: episode.seasonNumber,
+                                      episodeNumber: episode.episodeNumber,
+                                    },
+                                    episode.title,
+                                  )
+                                }
+                              >
+                                {playing ===
+                                `${episode.seasonNumber}:${episode.episodeNumber}` ? (
+                                  "Starting…"
+                                ) : current.progressPercent !== null &&
+                                  current.progressPercent >= 2 &&
+                                  current.resumeEpisode?.seasonNumber ===
+                                    episode.seasonNumber &&
+                                  current.resumeEpisode?.episodeNumber ===
+                                    episode.episodeNumber ? (
+                                  <PlayActionContent label="Continue" />
+                                ) : (
+                                  <PlayActionContent label="Play" />
+                                )}
+                              </button>
+                            )}
+                          {episode.availability === "available" &&
+                            playbackEnabled && (
+                              <DownloadButton
+                                compact
+                                state={downloadStateFor(selection).state}
+                                progress={downloadStateFor(selection).progress}
+                                label={`${current.title} S${String(episode.seasonNumber).padStart(2, "0")}E${String(episode.episodeNumber).padStart(2, "0")}`}
+                                onClick={() => void download(selection)}
+                              />
+                            )}
+                          <button
+                            className={`title-detail__force-search title-detail__episode-search${search?.status === "searching" ? " is-searching" : ""}`}
+                            type="button"
+                            aria-label={`Search sources for episode ${episode.episodeNumber}`}
+                            aria-expanded={openSourceFor === key}
+                            aria-busy={search?.status === "searching"}
+                            title="Force a new search for this episode"
+                            disabled={
+                              !playbackEnabled || search?.status === "searching"
+                            }
+                            onClick={() => void searchEpisode(selection)}
+                          >
+                            <span aria-hidden="true">⋮</span>
+                          </button>
+                        </div>
                         {openSourceFor === key && (
                           <div
                             className="title-detail__source-menu"
@@ -896,30 +1215,55 @@ export function TitleDetail({
                                     : null}
                             </small>
                             {search?.status === "done" &&
-                              search.sources.map((source, index) => (
-                                <button
-                                  key={source.id}
-                                  type="button"
-                                  title={source.releaseName}
-                                  onClick={() => {
-                                    setOpenSourceFor(null);
-                                    void play(
-                                      selection,
-                                      episode.title,
-                                      source.id,
-                                    );
-                                  }}
-                                >
-                                  <SourceOptionContent
-                                    source={source}
-                                    label={
-                                      index === 0
-                                        ? "Recommended"
-                                        : `Source ${index + 1}`
-                                    }
-                                  />
-                                </button>
-                              ))}
+                              sourceChoicesFor(selection, search.sources).map(
+                                (source, index) => (
+                                  <div
+                                    className="title-detail__source-row"
+                                    key={source.id}
+                                  >
+                                    <button
+                                      type="button"
+                                      title={source.releaseName}
+                                      onClick={() => {
+                                        setOpenSourceFor(null);
+                                        void play(
+                                          selection,
+                                          episode.title,
+                                          source.id,
+                                        );
+                                      }}
+                                    >
+                                      <SourceOptionContent
+                                        source={source}
+                                        label={
+                                          source.id === preferredSourceId
+                                            ? "Default"
+                                            : index === 0
+                                              ? "Recommended"
+                                              : `Source ${index + 1}`
+                                        }
+                                      />
+                                    </button>
+                                    {isDownloadableSource(source) && (
+                                      <DownloadButton
+                                        compact
+                                        state={
+                                          downloadStateFor(selection, source)
+                                            .state
+                                        }
+                                        progress={
+                                          downloadStateFor(selection, source)
+                                            .progress
+                                        }
+                                        label={source.releaseName}
+                                        onClick={() =>
+                                          void download(selection, source)
+                                        }
+                                      />
+                                    )}
+                                  </div>
+                                ),
+                              )}
                           </div>
                         )}
                       </li>
@@ -964,6 +1308,78 @@ export function TitleDetail({
                 ))}
               </div>
             )}
+          </div>
+        )}
+        {confirmDownload && (
+          <div
+            className="title-detail__download-confirm"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Replace offline copy"
+          >
+            <strong>Download again?</strong>
+            <p>
+              This will replace the offline copy of {confirmDownload.label}.
+            </p>
+            <div>
+              <button type="button" onClick={() => setConfirmDownload(null)}>
+                Keep existing
+              </button>
+              <button
+                type="button"
+                className="button button--primary"
+                onClick={() => {
+                  const choice = confirmDownload;
+                  setConfirmDownload(null);
+                  void launchDownload(choice.sourceId, choice.rootId, true);
+                }}
+              >
+                Replace and download
+              </button>
+            </div>
+          </div>
+        )}
+        {chooseRoot && (
+          <div
+            className="title-detail__download-confirm"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Choose download folder"
+          >
+            <strong>Save {chooseRoot.label} offline</strong>
+            <label>
+              Folder
+              <select
+                value={chooseRoot.rootId}
+                onChange={(event) =>
+                  setChooseRoot((choice) =>
+                    choice ? { ...choice, rootId: event.target.value } : null,
+                  )
+                }
+              >
+                {localRoots.map((root) => (
+                  <option key={root.id} value={root.id}>
+                    {root.path}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div>
+              <button type="button" onClick={() => setChooseRoot(null)}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="button button--primary"
+                onClick={() => {
+                  const choice = chooseRoot;
+                  setChooseRoot(null);
+                  void launchDownload(choice.sourceId, choice.rootId);
+                }}
+              >
+                Start download
+              </button>
+            </div>
           </div>
         )}
       </section>
