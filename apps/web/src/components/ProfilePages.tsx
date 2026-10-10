@@ -9,6 +9,7 @@ import { safeErrorMessage } from "../api/client";
 import { PlaybackLanguageFields } from "./PlaybackLanguageFields";
 import { AudioOutputPicker } from "./AudioOutputPicker";
 import { useToasts } from "./ToastProvider";
+import { IntegrationManager } from "./IntegrationManager";
 
 export type ProfilePage = "settings" | "preferences" | "account" | "statistics";
 
@@ -21,6 +22,7 @@ interface ProfilePagesProps {
   onSwitchAccount: () => void;
   onDeleteProfile: () => Promise<void>;
   onBackHome: () => void;
+  onIntegrationsChanged: () => void;
 }
 
 const genres = [
@@ -41,6 +43,7 @@ export function ProfilePages({
   onSwitchAccount,
   onDeleteProfile,
   onBackHome,
+  onIntegrationsChanged,
 }: ProfilePagesProps) {
   const [playback, setPlayback] = useState<PlaybackPreferences>(
     profile.playback,
@@ -215,9 +218,14 @@ export function ProfilePages({
             <p className="eyebrow">05 / Integrations</p>
             <h2>Connected services</h2>
             <p>
-              Placeholder: API credentials and connection status will live here.
-              Existing connections remain unchanged.
+              Manage your movie databases, streaming sources and subtitle
+              services in one place.
             </p>
+            <IntegrationManager
+              api={api}
+              context="settings"
+              onConnectionChange={onIntegrationsChanged}
+            />
           </section>
           <div className="profile-page__actions">
             <button

@@ -13,7 +13,9 @@ import type {
   PlaybackTicketRecord,
   PlaybackTicketStore,
 } from "../services/playback-ticket-store.js";
+import { validatePlaybackSourceUrl } from "../services/playback-ticket-store.js";
 import type { StreamerCore } from "../services/streamer-core.js";
+import type { MultiSourceExternalSubtitleService } from "../services/multi-source-subtitle-service.js";
 
 export interface ExternalSubtitleSource {
   discover(
@@ -40,12 +42,14 @@ export function registerPlaybackRoutes(
   mediaEngine: PlaybackMediaEngine,
   refreshSource: (ticket: PlaybackTicketRecord) => Promise<string>,
   externalSubtitleSource?: ExternalSubtitleSource,
+  multiSourceSubtitles?: MultiSourceExternalSubtitleService,
 ): void {
   const mediaInfo = new Map<string, Promise<PlaybackMediaInfo>>();
   const thumbnails = new Map<string, Buffer>();
   const thumbnailJobs = new Map<string, Promise<Buffer>>();
   const subtitleService = new SubtitleService();
   const externalTracks = new Map<string, Promise<ExternalSubtitleTrack[]>>();
+  const externalAbort = new Map<string, AbortController>();
   let activeMedia: { grantId: string; stop: () => void } | null = null;
   const sources = new Map<string, { url: string; validUntil: number }>();
   const sourceFor = async (
@@ -55,38 +59,56 @@ export function registerPlaybackRoutes(
     const cached = sources.get(ticket.grantId);
     if (!forceRefresh && cached && cached.validUntil > Date.now())
       return cached.url;
-    const url =
+    const url = validatePlaybackSourceUrl(
       cached !== undefined || forceRefresh
         ? await refreshSource(ticket)
-        : ticket.directUrl;
+        : ticket.directUrl,
+    );
     sources.clear();
-    sources.set(ticket.grantId, { url, validUntil: Date.now() + 60_000 });
+    // Third-party adapters may issue URLs with very short lifetimes. Their
+    // refresh method is called on each subsequent media request.
+    sources.set(ticket.grantId, {
+      url,
+      validUntil: ticket.providerId === "webshare" ? Date.now() + 60_000 : 0,
+    });
     return url;
   };
   app.addHook("onClose", async () => {
     activeMedia?.stop();
+    for (const controller of externalAbort.values()) controller.abort();
     subtitleService.close();
   });
   const externalFor = (ticket: PlaybackTicketRecord) => {
     if (
-      ticket.providerId !== "webshare" ||
-      !ticket.sourceFilename ||
-      !externalSubtitleSource
+      !multiSourceSubtitles &&
+      (ticket.providerId !== "webshare" ||
+        !ticket.sourceFilename ||
+        !externalSubtitleSource)
     )
       return Promise.resolve([]);
     const cached = externalTracks.get(ticket.grantId);
     if (cached) return cached;
-    const job = externalSubtitleSource
-      .discover(ticket.variantId, ticket.sourceFilename)
-      .catch(() => {
-        externalTracks.delete(ticket.grantId);
-        app.log.warn(
-          { code: "PLAYBACK_EXTERNAL_SUBTITLE_DISCOVERY_FAILED" },
-          "External subtitle discovery unavailable",
-        );
-        return [] as ExternalSubtitleTrack[];
-      });
+    for (const controller of externalAbort.values()) controller.abort();
+    externalAbort.clear();
     externalTracks.clear();
+    const controller = new AbortController();
+    const job = (
+      multiSourceSubtitles
+        ? multiSourceSubtitles.discover(ticket, controller.signal)
+        : externalSubtitleSource!.discover(
+            ticket.variantId,
+            ticket.sourceFilename!,
+          )
+    ).catch(() => {
+      externalTracks.delete(ticket.grantId);
+      externalAbort.delete(ticket.grantId);
+      app.log.warn(
+        { code: "PLAYBACK_EXTERNAL_SUBTITLE_DISCOVERY_FAILED" },
+        "External subtitle discovery unavailable",
+      );
+      return [] as ExternalSubtitleTrack[];
+    });
+    externalAbort.set(ticket.grantId, controller);
     externalTracks.set(ticket.grantId, job);
     return job;
   };
@@ -609,7 +631,7 @@ export function registerPlaybackRoutes(
         fileId: string;
       };
       const ticket = ticketStore.get(grantId);
-      if (!ticket || !externalSubtitleSource)
+      if (!ticket || (!externalSubtitleSource && !multiSourceSubtitles))
         return reply.code(404).send(expiredResponse);
       const { startMs, durationMs } = request.query as {
         startMs: string;
@@ -640,7 +662,9 @@ export function registerPlaybackRoutes(
           movieDurationMs:
             info.durationSeconds === null ? null : info.durationSeconds * 1000,
           load: async (signal) => {
-            const loaded = await externalSubtitleSource.load(fileId, signal);
+            const loaded = multiSourceSubtitles
+              ? await multiSourceSubtitles.load(ticket, candidate, signal)
+              : await externalSubtitleSource!.load(fileId, signal);
             if (loaded.filename !== candidate.filename) {
               throw new SubtitleServiceError("INVALID_SUBTITLE", 502);
             }
@@ -683,7 +707,10 @@ export function registerPlaybackRoutes(
       if (ticket) subtitleService.cancelMedia(subtitleMediaIdentity(ticket));
       sources.delete(grantId);
       mediaInfo.delete(grantId);
+      externalAbort.get(grantId)?.abort();
+      externalAbort.delete(grantId);
       externalTracks.delete(grantId);
+      multiSourceSubtitles?.forget(grantId);
       for (const key of thumbnails.keys()) {
         if (key.startsWith(`${grantId}:`)) thumbnails.delete(key);
       }

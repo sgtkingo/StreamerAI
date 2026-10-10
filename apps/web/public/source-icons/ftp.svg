@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="FTP">
+  <rect width="32" height="32" rx="9" fill="#67508e"/>
+  <path d="M8 11h16m-4-4 4 4-4 4M24 21H8m4-4-4 4 4 4" fill="none" stroke="#efe5ff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

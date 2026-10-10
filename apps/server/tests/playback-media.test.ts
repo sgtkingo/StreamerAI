@@ -81,6 +81,72 @@ describe("in-app media gateway", () => {
     await app.close();
   });
 
+  it("refreshes a community source on seek and rejects an unsafe replacement URL", async () => {
+    const tickets = new InMemoryPlaybackTicketStore();
+    tickets.issue({
+      grantId: "nas-grant",
+      profileId: "default",
+      providerId: "nas",
+      titleId: "sai:tmdb:movie:42",
+      candidateId: "share-item-42",
+      variantId: "nas-variant-42",
+      directUrl: "https://media.example/first",
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    });
+    const refreshSource = vi
+      .fn()
+      .mockResolvedValueOnce("https://media.example/second")
+      .mockResolvedValueOnce("file:///private/share/movie.mkv");
+    const media: PlaybackMediaEngine = {
+      probe: vi.fn().mockResolvedValue({
+        durationSeconds: 120,
+        videoCodec: "h264",
+        videoPixelFormat: "yuv420p",
+        audioTracks: [],
+        subtitleTracks: [],
+      }),
+      stream: vi.fn().mockImplementation(() => ({
+        body: Readable.from([Buffer.from("mp4")]),
+        stop: vi.fn(),
+      })),
+      thumbnail: vi.fn(),
+      subtitle: vi.fn(),
+    };
+    const core = { recordPlaybackStart: vi.fn() } as unknown as StreamerCore;
+    const app = Fastify({ logger: false });
+    registerPlaybackRoutes(app, tickets, core, media, refreshSource);
+    const path = "/api/v1/playback/grants/nas-grant/media";
+
+    expect((await app.inject({ method: "GET", url: path })).statusCode).toBe(
+      200,
+    );
+    expect(refreshSource).not.toHaveBeenCalled();
+    expect(media.stream).toHaveBeenLastCalledWith(
+      "https://media.example/first",
+      expect.anything(),
+      null,
+      0,
+    );
+
+    expect(
+      (await app.inject({ method: "GET", url: `${path}?start=12` })).statusCode,
+    ).toBe(200);
+    expect(refreshSource).toHaveBeenCalledTimes(1);
+    expect(media.stream).toHaveBeenLastCalledWith(
+      "https://media.example/second",
+      expect.anything(),
+      null,
+      12,
+    );
+
+    expect(
+      (await app.inject({ method: "GET", url: `${path}?start=14` })).statusCode,
+    ).toBe(502);
+    expect(refreshSource).toHaveBeenCalledTimes(2);
+    expect(media.stream).toHaveBeenCalledTimes(2);
+    await app.close();
+  });
+
   it("authorizes discovered external subtitles and caches their parsed cues", async () => {
     const tickets = new InMemoryPlaybackTicketStore();
     tickets.issue({
@@ -147,7 +213,11 @@ describe("in-app media gateway", () => {
       sourceSizeBytes: 123456,
       sourceVersion: "media-file",
     });
-    expect(discover).toHaveBeenCalledWith("media-file", "Movie.2020.mkv");
+    expect(discover).toHaveBeenCalledWith(
+      "media-file",
+      "Movie.2020.mkv",
+      expect.any(AbortSignal),
+    );
     const unknown = await app.inject({
       method: "GET",
       url: "/api/v1/playback/grants/external-grant/subtitles/external/other-file/window?startMs=0",

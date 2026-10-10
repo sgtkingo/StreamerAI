@@ -13,6 +13,45 @@ export const PROVIDER_FAMILIES = [
 export const ProviderFamilySchema = z.enum(PROVIDER_FAMILIES);
 export type ProviderFamily = z.infer<typeof ProviderFamilySchema>;
 
+/** Major version of the normalized adapter contract, independent of adapter releases. */
+export const CONNECTOR_CONTRACT_VERSION = 1 as const;
+
+/** Stable capability names understood by the StreamerAI coordinator. */
+export const SOURCE_CONNECTOR_CAPABILITIES = {
+  metadata: [
+    "movies",
+    "series",
+    "series-structure",
+    "ratings",
+    "artwork",
+    "discovery-feeds",
+  ],
+  media: [
+    "movie-search",
+    "episode-search",
+    "direct-play",
+    "http-range",
+    "https",
+    "embedded-subtitles",
+    "local-files",
+  ],
+  subtitle: [
+    "movie-search",
+    "episode-search",
+    "hash-search",
+    "release-match",
+    "hearing-impaired",
+    "srt",
+    "vtt",
+    "ass",
+    "ssa",
+  ],
+} as const;
+
+export type SourceConnectorFamily = keyof typeof SOURCE_CONNECTOR_CAPABILITIES;
+export type SourceConnectorCapability<TFamily extends SourceConnectorFamily> =
+  (typeof SOURCE_CONNECTOR_CAPABILITIES)[TFamily][number];
+
 export const PROVIDER_ERROR_CATEGORIES = [
   "INVALID_CREDENTIALS",
   "PERMISSION_MISSING",
@@ -92,6 +131,8 @@ export const ProviderDescriptorSchema = z
     id: z.string().trim().min(1).max(80),
     family: ProviderFamilySchema,
     displayName: z.string().trim().min(1).max(120),
+    /** Omission is accepted for built-in adapters created before contract v1. */
+    contractVersion: z.literal(CONNECTOR_CONTRACT_VERSION).optional(),
     connectorVersion: z.string().trim().min(1).max(80),
     capabilities: z.array(z.string().trim().min(1).max(120)).max(80),
     supportedLocales: z.array(SupportedLocaleSchema).max(30),
@@ -105,6 +146,15 @@ export const ProviderDescriptorSchema = z
   })
   .strict()
   .superRefine((descriptor, context) => {
+    if (
+      new Set(descriptor.capabilities).size !== descriptor.capabilities.length
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["capabilities"],
+        message: "Provider capabilities must be unique.",
+      });
+    }
     const ids = descriptor.credentialFields.map((field) => field.id);
     if (new Set(ids).size !== ids.length) {
       context.addIssue({

@@ -206,27 +206,29 @@ export const PlaybackRequestSchema = z
   .strict();
 export type PlaybackRequest = z.infer<typeof PlaybackRequestSchema>;
 
+/** Server-only request to renew an expired direct source behind an active grant. */
+export const PlaybackSourceRefreshRequestSchema = z
+  .object({
+    candidate: MediaCandidateRefSchema,
+    variantId: z.string().trim().min(1).max(240),
+  })
+  .strict();
+export type PlaybackSourceRefreshRequest = z.infer<
+  typeof PlaybackSourceRefreshRequestSchema
+>;
+
 export const PlaybackGrantSchema = z
   .object({
     grantId: z.string().trim().min(1).max(160),
     titleId: z.string().trim().min(1).max(160),
     providerId: z.string().trim().min(1).max(80),
     variantId: z.string().trim().min(1).max(240),
-    url: z.string().refine((value) => {
-      if (/^\/api\/v1\/playback\/grants\/[A-Za-z0-9_-]+$/.test(value)) {
-        return true;
-      }
-      try {
-        const parsed = new URL(value);
-        return (
-          parsed.protocol === "https:" ||
-          (parsed.protocol === "http:" &&
-            ["127.0.0.1", "localhost", "::1"].includes(parsed.hostname))
-        );
-      } catch {
-        return false;
-      }
-    }, "Expected a secure URL or a same-origin playback grant path"),
+    url: z
+      .string()
+      .regex(
+        /^\/api\/v1\/playback\/grants\/[A-Za-z0-9_-]{1,160}$/,
+        "Expected a same-origin playback grant path",
+      ),
     supportsHttpRange: z.boolean(),
     expiresAt: z.string().datetime({ offset: true }),
     embeddedSubtitles: z.array(EmbeddedSubtitleTrackSchema).max(100),
@@ -557,6 +559,14 @@ export interface MediaProvider {
     request: PlaybackRequest,
     context: ProviderContext,
   ): Promise<PlaybackGrant>;
+  /**
+   * Renew the selected source behind an existing grant. The direct URL is
+   * server-only and must pass the playback route's scheme/host policy.
+   */
+  refreshPlaybackSource?(
+    request: PlaybackSourceRefreshRequest,
+    context: ProviderContext,
+  ): Promise<string>;
 }
 
 export interface SubtitleProvider {
@@ -571,6 +581,10 @@ export interface SubtitleProvider {
     context: ProviderContext,
   ): Promise<SubtitleAsset>;
 }
+
+/** The source families a multi-source coordinator can compose. */
+export type SourceConnector =
+  MetadataProvider | MediaProvider | SubtitleProvider;
 
 export interface SearchProvider {
   descriptor(): SearchProviderDescriptor;

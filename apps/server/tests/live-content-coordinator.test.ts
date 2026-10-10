@@ -3,6 +3,7 @@ import type {
   CanonicalTitlePayload,
   MediaProvider,
   MetadataProvider,
+  ProviderRegistry,
 } from "@streamer-ai/contracts";
 import { describe, expect, it, vi } from "vitest";
 import { LiveContentCoordinator } from "../src/services/live-content-coordinator.js";
@@ -43,9 +44,11 @@ function metadataPayload(id: string, title: string): CanonicalTitlePayload {
   };
 }
 
-async function connectedStateStore() {
+async function connectedStateStore(
+  ids: readonly string[] = ["tmdb", "webshare", "ollama"],
+) {
   const store = new NonPersistentMemoryIntegrationStateStore();
-  for (const integrationId of ["tmdb", "webshare", "ollama"]) {
+  for (const integrationId of ids) {
     await store.set({
       integrationId,
       status: "connected",
@@ -55,6 +58,23 @@ async function connectedStateStore() {
     });
   }
   return store;
+}
+
+function registry<T extends { descriptor(): { id: string } }>(
+  providers: readonly T[],
+): ProviderRegistry<T> {
+  const byId = new Map(
+    providers.map((provider) => [provider.descriptor().id, provider]),
+  );
+  return {
+    list: () => providers,
+    get: (id) => byId.get(id) ?? null,
+    require: (id) => {
+      const provider = byId.get(id);
+      if (!provider) throw new Error(`Provider '${id}' is not registered.`);
+      return provider;
+    },
+  };
 }
 
 function coordinatorDependencies() {
@@ -228,6 +248,283 @@ function numberedSeriesStructure() {
 }
 
 describe("LiveContentCoordinator", () => {
+  it("keeps mirrors from different media connectors and falls back across them", async () => {
+    const dependencies = coordinatorDependencies();
+    dependencies.media.descriptor = () =>
+      ({
+        id: "webshare",
+        connectorVersion: "test",
+      }) as ReturnType<MediaProvider["descriptor"]>;
+    const websharePlayback = vi
+      .fn()
+      .mockRejectedValue(new Error("Webshare is unavailable"));
+    dependencies.media.createPlayback = websharePlayback;
+    const nasPlayback = vi.fn().mockResolvedValue({
+      grantId: "nas-grant",
+      titleId: "sai:tmdb:movie:1",
+      providerId: "nas",
+      variantId: "nas-file",
+      url: "/api/v1/playback/grants/nas-grant",
+      supportsHttpRange: true,
+      expiresAt: "2026-09-29T21:00:00.000Z",
+      embeddedSubtitles: [],
+    });
+    const nas = {
+      descriptor: () => ({ id: "nas", connectorVersion: "test" }),
+      search: vi.fn().mockImplementation(async (request) =>
+        request.title.includes("One")
+          ? [
+              {
+                ref: { providerId: "nas", candidateId: "nas-file" },
+                releaseName: "Canonical.One.2001.720p.mkv",
+                sizeBytes: 15,
+                seasonNumber: null,
+                episodeNumber: null,
+                confidence: 0.8,
+                provenance: { ...provenance, providerId: "nas" },
+              },
+            ]
+          : [],
+      ),
+      inspect: vi.fn().mockImplementation(async (ref) => ({
+        ref,
+        variantId: ref.candidateId,
+        format: {
+          label: "720p · H.264",
+          container: "mkv",
+          resolution: "720p",
+          videoCodec: "H.264",
+          audioLanguages: ["en"],
+          subtitleLanguages: [],
+        },
+        directPlay: true,
+        supportsHttpRange: true,
+        embeddedSubtitles: [],
+        provenance: { ...provenance, providerId: "nas" },
+        expiresAt: null,
+      })),
+      createPlayback: nasPlayback,
+    } as unknown as MediaProvider;
+    const coordinator = new LiveContentCoordinator({
+      ...dependencies,
+      media: registry([dependencies.media, nas]),
+      integrationStateStore: await connectedStateStore([
+        "tmdb",
+        "webshare",
+        "nas",
+        "ollama",
+      ]),
+      inference: {
+        provider: "ollama",
+        baseUrl: "http://127.0.0.1:11434",
+        model: "qwen3.5:4b",
+        minimumVersion: "0.5.0",
+        contextTokens: 4096,
+        maxOutputTokens: 512,
+        timeoutMs: 60_000,
+      },
+      localeForProfile: () => "en",
+      now: () => new Date(NOW),
+    });
+
+    const response = await coordinator.discover(
+      {
+        profileId: "default",
+        sessionId: "multi-source",
+        message: "Find two films",
+        idempotencyKey: "multi-source-request",
+      },
+      NOW,
+    );
+    const title = response.bestMatch!.title;
+    expect(title.sources?.map((source) => source.providerId)).toEqual([
+      "webshare",
+      "nas",
+    ]);
+    expect(new Set(title.sources?.map((source) => source.id)).size).toBe(2);
+    const grant = await coordinator.preparePlayback("default", title);
+    expect(websharePlayback).toHaveBeenCalledOnce();
+    expect(nasPlayback).toHaveBeenCalledOnce();
+    expect(grant.providerId).toBe("nas");
+    await expect(
+      coordinator.preparePlayback(
+        "default",
+        title,
+        undefined,
+        title.sources![0]!.id,
+      ),
+    ).rejects.toThrow("Webshare is unavailable");
+    expect(nasPlayback).toHaveBeenCalledOnce();
+  });
+
+  it("continues metadata lookup when another registered connector fails", async () => {
+    const dependencies = coordinatorDependencies();
+    const broken = {
+      descriptor: () => ({ id: "tmdb" }),
+      search: vi.fn().mockRejectedValue(new Error("TMDB offline")),
+    } as unknown as MetadataProvider;
+    const csfdProvenance = { ...provenance, providerId: "csfd" };
+    const csfd = {
+      descriptor: () => ({ id: "csfd" }),
+      search: vi.fn().mockResolvedValue([
+        {
+          ref: { providerId: "csfd", externalId: "1", entityType: "movie" },
+          kind: "movie",
+          title: "Agent title one",
+          originalTitle: "Agent title one",
+          year: 2001,
+          confidence: 1,
+          provenance: csfdProvenance,
+        },
+      ]),
+      getTitle: vi.fn().mockImplementation(async () => {
+        const payload = metadataPayload("1", "Canonical One");
+        return {
+          ...payload,
+          ref: { providerId: "csfd", externalId: "1", entityType: "movie" },
+          localizedTitles: [
+            {
+              locale: "en",
+              value: "Canonical One",
+              provenance: csfdProvenance,
+            },
+          ],
+          fieldProvenance: Object.fromEntries(
+            Object.keys(payload.fieldProvenance).map((field) => [
+              field,
+              csfdProvenance,
+            ]),
+          ),
+        };
+      }),
+      getRatings: vi.fn().mockResolvedValue([]),
+    } as unknown as MetadataProvider;
+    const coordinator = new LiveContentCoordinator({
+      ...dependencies,
+      metadata: registry([broken, csfd]),
+      integrationStateStore: await connectedStateStore([
+        "tmdb",
+        "csfd",
+        "webshare",
+      ]),
+      inference: {
+        provider: "ollama",
+        baseUrl: "http://127.0.0.1:11434",
+        model: "qwen3.5:4b",
+        minimumVersion: "0.5.0",
+        contextTokens: 4096,
+        maxOutputTokens: 512,
+        timeoutMs: 60_000,
+      },
+      localeForProfile: () => "en",
+      now: () => new Date(NOW),
+    });
+    const response = await coordinator.discoverFast(
+      {
+        profileId: "default",
+        sessionId: "metadata-fallback",
+        message: "Agent title one",
+        idempotencyKey: "metadata-fallback-request",
+      },
+      NOW,
+    );
+    expect(response.stage).toBe("completed");
+    expect(response.bestMatch?.title.id).toBe("sai:csfd:movie:1");
+    expect(response.bestMatch?.title.metadataProvider).toBe("csfd");
+    expect(response.bestMatch?.title.sources?.[0]?.providerId).toBe("webshare");
+  });
+
+  it("tries another metadata source when the first resolves without playable media", async () => {
+    const dependencies = coordinatorDependencies();
+    dependencies.metadata.descriptor = () =>
+      ({ id: "tmdb", connectorVersion: "test" }) as ReturnType<
+        MetadataProvider["descriptor"]
+      >;
+    const tmdbCandidate = {
+      ref: { providerId: "tmdb", externalId: "1", entityType: "movie" },
+      kind: "movie",
+      title: "Agent title one",
+      originalTitle: "Agent title one",
+      year: 2001,
+      confidence: 1,
+      provenance,
+    };
+    vi.mocked(dependencies.metadata.search).mockImplementation(async (query) =>
+      query.query.includes("one") ? [tmdbCandidate] : [],
+    );
+    vi.mocked(dependencies.metadata.getTitle).mockResolvedValue(
+      metadataPayload("1", "Unplayable One"),
+    );
+    const csfdProvenance = { ...provenance, providerId: "csfd" };
+    const csfdPayload = metadataPayload("1", "Canonical One");
+    const csfd = {
+      descriptor: () => ({ id: "csfd", connectorVersion: "test" }),
+      search: vi.fn().mockImplementation(async (query) =>
+        query.query.includes("one")
+          ? [
+              {
+                ...tmdbCandidate,
+                ref: { ...tmdbCandidate.ref, providerId: "csfd" },
+                confidence: 0.9,
+                provenance: csfdProvenance,
+              },
+            ]
+          : [],
+      ),
+      getTitle: vi.fn().mockResolvedValue({
+        ...csfdPayload,
+        ref: { ...csfdPayload.ref, providerId: "csfd" },
+        localizedTitles: [
+          { locale: "en", value: "Canonical One", provenance: csfdProvenance },
+        ],
+        fieldProvenance: Object.fromEntries(
+          Object.keys(csfdPayload.fieldProvenance).map((field) => [
+            field,
+            csfdProvenance,
+          ]),
+        ),
+      }),
+      getRatings: vi.fn().mockResolvedValue([]),
+    } as unknown as MetadataProvider;
+    const coordinator = new LiveContentCoordinator({
+      ...dependencies,
+      metadata: registry([dependencies.metadata, csfd]),
+      integrationStateStore: await connectedStateStore([
+        "tmdb",
+        "csfd",
+        "webshare",
+        "ollama",
+      ]),
+      inference: {
+        provider: "ollama",
+        baseUrl: "http://127.0.0.1:11434",
+        model: "qwen3.5:4b",
+        minimumVersion: "0.5.0",
+        contextTokens: 4096,
+        maxOutputTokens: 512,
+        timeoutMs: 60_000,
+      },
+      localeForProfile: () => "en",
+      now: () => new Date(NOW),
+    });
+
+    const request = {
+      profileId: "default",
+      sessionId: "metadata-playability-fallback",
+      message: "Agent title one",
+      idempotencyKey: "metadata-playability-request",
+    };
+    const quick = await coordinator.discoverFast(request, NOW);
+    expect(quick.bestMatch?.title.metadataProvider).toBe("csfd");
+    expect(quick.bestMatch?.title.sources?.[0]?.providerId).toBe("webshare");
+
+    const agent = await coordinator.discover(request, NOW);
+    expect(agent.bestMatch?.title.metadataProvider).toBe("csfd");
+    expect(agent.bestMatch?.title.sources?.[0]?.providerId).toBe("webshare");
+    expect(dependencies.metadata.getTitle).toHaveBeenCalledTimes(2);
+    expect(csfd.getTitle).toHaveBeenCalledTimes(2);
+  });
+
   it("finds a single requested episode by its cumulative part number", async () => {
     const dependencies = coordinatorDependencies();
     const panTau = {
@@ -1050,13 +1347,13 @@ describe("LiveContentCoordinator", () => {
         expect.objectContaining({
           role: "assistant",
           content: expect.stringContaining(
-            "Deterministic TMDB quick search found these title candidates: Pan Tau",
+            "Deterministic metadata search found these title candidates: Pan Tau",
           ),
         }),
       ]),
     );
     expect(input.messages[0]?.content).toContain(
-      "A quick-search note, if present, lists deterministic TMDB title candidates",
+      "A quick-search note, if present, lists deterministic metadata title candidates",
     );
   });
 

@@ -196,6 +196,29 @@ describe("public contracts", () => {
       progressPercent: null,
     };
     expect(CatalogTitleSchema.parse(title).sources).toEqual([source]);
+    const withMetadataRef = {
+      ...title,
+      metadataRef: {
+        providerId: "tmdb",
+        externalId: "x".repeat(160),
+        entityType: "movie",
+      },
+    };
+    expect(CatalogTitleSchema.parse(withMetadataRef).metadataRef).toEqual(
+      withMetadataRef.metadataRef,
+    );
+    expect(
+      CatalogTitleSchema.safeParse({
+        ...withMetadataRef,
+        metadataRef: { ...withMetadataRef.metadataRef, providerId: "csfd" },
+      }).success,
+    ).toBe(false);
+    expect(
+      CatalogTitleSchema.safeParse({
+        ...withMetadataRef,
+        metadataRef: { ...withMetadataRef.metadataRef, entityType: "series" },
+      }).success,
+    ).toBe(false);
     expect(
       CatalogTitleSchema.safeParse({ ...title, sources: undefined }).success,
     ).toBe(true);

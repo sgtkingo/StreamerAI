@@ -322,8 +322,14 @@ function profileFromRow(row: ProfileRow): Profile {
 
 function credentialState(row: IntegrationConnectionRow): CredentialState {
   const descriptor =
-    INTEGRATION_DESCRIPTORS[IntegrationIdSchema.parse(row.integration_id)];
+    INTEGRATION_DESCRIPTORS[
+      row.integration_id as keyof typeof INTEGRATION_DESCRIPTORS
+    ];
+  if (descriptor === undefined) {
+    return row.secret_ref === null ? "missing" : "stored";
+  }
   if (
+    descriptor.setupMode === "none" ||
     descriptor.setupMode === "local-runtime" ||
     descriptor.setupMode === "informed-consent"
   ) {
@@ -622,6 +628,7 @@ export class CatalogTitlesRepository {
             genres: existingData.genres,
             ratings: existingData.ratings,
             metadataProvider: existingData.metadataProvider,
+            metadataRef: existingData.metadataRef,
             metadataValidatedAt: existingData.metadataValidatedAt,
             metadataProvenance: existingData.metadataProvenance,
           }),

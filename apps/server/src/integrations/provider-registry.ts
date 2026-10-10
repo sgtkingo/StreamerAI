@@ -1,5 +1,5 @@
 import {
-  ProviderDescriptorSchema,
+  assertConnectorDescriptor,
   type ProviderDescriptor,
   type ProviderFamily,
   type ProviderRegistry,
@@ -21,12 +21,10 @@ export class AdapterRegistry<
   constructor(family: ProviderFamily, providers: readonly TProvider[]) {
     const registered = new Map<string, TProvider>();
     for (const provider of providers) {
-      const descriptor = ProviderDescriptorSchema.parse(provider.descriptor());
-      if (descriptor.family !== family) {
-        throw new Error(
-          `Provider '${descriptor.id}' belongs to '${descriptor.family}', expected '${family}'.`,
-        );
-      }
+      const descriptor = assertConnectorDescriptor(
+        provider.descriptor(),
+        family,
+      );
       if (registered.has(descriptor.id)) {
         throw new Error(
           `Provider '${descriptor.id}' is registered more than once.`,

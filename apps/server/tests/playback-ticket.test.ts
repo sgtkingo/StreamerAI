@@ -1,7 +1,28 @@
 import { describe, expect, it } from "vitest";
 import { createApp, InMemoryPlaybackTicketStore } from "../src/index.js";
+import { validatePlaybackSourceUrl } from "../src/services/playback-ticket-store.js";
 
 describe("ephemeral playback tickets", () => {
+  it("allows secure media URLs and loopback HTTP but rejects other schemes", () => {
+    expect(validatePlaybackSourceUrl("https://media.example/video.mp4")).toBe(
+      "https://media.example/video.mp4",
+    );
+    expect(validatePlaybackSourceUrl("http://127.0.0.1:8080/video.mp4")).toBe(
+      "http://127.0.0.1:8080/video.mp4",
+    );
+    expect(() =>
+      validatePlaybackSourceUrl("ftp://127.0.0.1/video.mp4"),
+    ).toThrow();
+    expect(() =>
+      validatePlaybackSourceUrl("file:///private/video.mp4"),
+    ).toThrow();
+    expect(() =>
+      validatePlaybackSourceUrl(
+        "https://user:password@media.example/video.mp4",
+      ),
+    ).toThrow();
+  });
+
   it("keeps exactly one direct URL in memory without exposing it through the grant path", async () => {
     const now = () => new Date("2026-09-28T12:00:00.000Z");
     const store = new InMemoryPlaybackTicketStore(now);

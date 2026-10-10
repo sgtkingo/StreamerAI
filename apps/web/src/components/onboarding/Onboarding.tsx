@@ -161,6 +161,8 @@ export function Onboarding({
               initialWebshareState={webshareState}
               onTmdbConnected={() => setTmdbState("connected")}
               onWebshareConnected={() => setWebshareState("connected")}
+              onTmdbDisconnected={() => setTmdbState("not-configured")}
+              onWebshareDisconnected={() => setWebshareState("not-configured")}
             />
           )}
           {step === 3 && (

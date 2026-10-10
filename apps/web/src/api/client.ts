@@ -44,6 +44,29 @@ export interface LocalAiResult {
   runtime?: string;
 }
 
+export interface IntegrationCatalogItem {
+  id: string;
+  name: string;
+  description: string;
+  category:
+    | "metadata"
+    | "media"
+    | "subtitle"
+    | "inference"
+    | "enrichment"
+    | "search"
+    | "sync";
+  planned: boolean;
+  selected: boolean;
+  configured: boolean;
+  status?: string;
+  setup: {
+    documentationUrl: string | null;
+    mode?: string;
+    supportsDisconnect?: boolean;
+  };
+}
+
 export interface PlaybackStartResult {
   ok: true;
   eventId: string;
@@ -63,6 +86,12 @@ export interface PlaybackCheckResult {
 }
 
 export interface StreamerApi {
+  getIntegrations(): Promise<{ items: IntegrationCatalogItem[] }>;
+  setIntegrationSelected(
+    id: string,
+    selected: boolean,
+  ): Promise<IntegrationCatalogItem>;
+  disconnectIntegration(id: string): Promise<void>;
   getSetupStatus(): Promise<SetupStatus>;
   connectTmdb(token: string): Promise<ConnectionResult>;
   connectWebshare(
@@ -389,6 +418,20 @@ function readProfile(value: unknown): ProfileDraft | undefined {
 }
 
 export const apiClient: StreamerApi = {
+  getIntegrations: () =>
+    request<{ items: IntegrationCatalogItem[] }>("/integrations"),
+  setIntegrationSelected: (id, selected) =>
+    request<IntegrationCatalogItem>(
+      `/integrations/${encodeURIComponent(id)}/selection`,
+      {
+        method: "PUT",
+        body: JSON.stringify({ selected }),
+      },
+    ),
+  disconnectIntegration: (id) =>
+    request<void>(`/integrations/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    }),
   getSetupStatus: async () => {
     const status = await request<SetupStatusResponse>("/setup/status");
     const complete = status.complete;
@@ -396,7 +439,9 @@ export const apiClient: StreamerApi = {
     const tmdbConnected =
       tmdbIntegration?.configured === true ||
       tmdbIntegration?.status === "connected" ||
-      (!status.requiredSteps.includes("connect_tmdb") && complete);
+      (tmdbIntegration === undefined &&
+        !status.requiredSteps.includes("connect_tmdb") &&
+        complete);
     const localAi = status.integrations.localAi;
     const webshare = status.integrations.webshare;
     const localAiConnected =

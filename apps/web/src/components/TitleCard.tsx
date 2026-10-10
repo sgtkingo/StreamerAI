@@ -5,6 +5,7 @@ import {
   titleLanguageBadges,
   titleLanguageLabel,
 } from "../title-language-label";
+import { SourceOriginStack, titleSourceProviderIds } from "./SourceIcon";
 import type { PlaybackCheckState } from "./usePlaybackChecks";
 
 let cardHoverAudioContext: AudioContext | null = null;
@@ -190,6 +191,7 @@ export function TitleCard({
         source.episodeNumber === defaultEpisode.episodeNumber
       : source.seasonNumber === null && source.episodeNumber === null,
   );
+  const sourceProviderIds = titleSourceProviderIds(item, episode);
   const canShowPlayback = playbackEnabled || playable;
   const displayAvailability = playbackEnabled
     ? item.kind === "series"
@@ -316,45 +318,53 @@ export function TitleCard({
         </div>
       )}
       <div className="title-card__content">
-        {hero && <p className="eyebrow title-card__label">Best match</p>}
-        {episodeCode && (
-          <p className="title-card__episode-label">
-            {item.title} · {episodeCode}
-          </p>
-        )}
-        <div className="title-card__chips">
-          <span>
-            {episodeCode
-              ? "Episode"
-              : item.kind === "series"
-                ? "Series"
-                : "Movie"}
-            {!episodeCode && item.year ? ` · ${item.year}` : ""}
-          </span>
-          {!episodeCode && (
-            <span
-              className={`title-card__rating ${ratingBadgeClass}`}
-              aria-label={
-                score !== null && score < 60
-                  ? `${ratingLabel(item)}, low rating`
-                  : undefined
-              }
-            >
-              {ratingLabel(item)}
-              {score !== null && score < 60 && (
-                <b className="title-card__rating-warning" aria-hidden="true">
-                  !
-                </b>
+        <div className="title-card__topline">
+          <div className="title-card__topline-copy">
+            {hero && <p className="eyebrow title-card__label">Best match</p>}
+            {episodeCode && (
+              <p className="title-card__episode-label">
+                {item.title} · {episodeCode}
+              </p>
+            )}
+            <div className="title-card__chips">
+              <span>
+                {episodeCode
+                  ? "Episode"
+                  : item.kind === "series"
+                    ? "Series"
+                    : "Movie"}
+                {!episodeCode && item.year ? ` · ${item.year}` : ""}
+              </span>
+              {!episodeCode && (
+                <span
+                  className={`title-card__rating ${ratingBadgeClass}`}
+                  aria-label={
+                    score !== null && score < 60
+                      ? `${ratingLabel(item)}, low rating`
+                      : undefined
+                  }
+                >
+                  {ratingLabel(item)}
+                  {score !== null && score < 60 && (
+                    <b
+                      className="title-card__rating-warning"
+                      aria-hidden="true"
+                    >
+                      !
+                    </b>
+                  )}
+                </span>
               )}
-            </span>
-          )}
-          {item.matchPercent !== null && (
-            <span>Match {item.matchPercent}%</span>
-          )}
-          {/* Keep source selection in the detail view; tiles only show the source count. */}
-          {alternateSources.length > 1 && (
-            <span>{alternateSources.length} sources</span>
-          )}
+              {item.matchPercent !== null && (
+                <span>Match {item.matchPercent}%</span>
+              )}
+              {/* Keep source selection in the detail view; tiles only show the source count. */}
+              {alternateSources.length > 1 && (
+                <span>{alternateSources.length} sources</span>
+              )}
+            </div>
+          </div>
+          <SourceOriginStack providerIds={sourceProviderIds} />
         </div>
         <h3>
           {onOpen ? (

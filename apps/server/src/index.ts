@@ -51,7 +51,6 @@ export {
 export { md5Crypt } from "./integrations/md5-crypt.js";
 export {
   WebshareMediaProvider,
-  type PlaybackTicketInput,
   type WebshareMediaProviderOptions,
 } from "./integrations/webshare-media-provider.js";
 export {
@@ -102,6 +101,7 @@ export {
 } from "./runtime-config.js";
 export {
   InMemoryPlaybackTicketStore,
+  type PlaybackTicketInput,
   type PlaybackTicketRecord,
   type PlaybackTicketStore,
 } from "./services/playback-ticket-store.js";

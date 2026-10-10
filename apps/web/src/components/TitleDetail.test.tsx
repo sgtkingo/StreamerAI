@@ -236,9 +236,10 @@ describe("TitleDetail", () => {
   });
 
   it("shows a separate forced search control for each series episode", async () => {
+    const user = userEvent.setup();
     const sources = ["source-a", "source-b"].map((candidateId, index) => ({
       id: String(index + 1).repeat(32),
-      providerId: "webshare",
+      providerId: index ? "local-files" : "webshare",
       candidateId,
       releaseName: `Sample.Show.S01E01.${index ? "720p" : "1080p"}.mkv`,
       sizeBytes: 100 + index,
@@ -272,6 +273,7 @@ describe("TitleDetail", () => {
     };
     const api = {
       getTitleDetail: vi.fn().mockResolvedValue(detail),
+      forceEpisodeSearch: vi.fn().mockResolvedValue({ detail, sources }),
     } as unknown as StreamerApi;
     render(
       <TitleDetail
@@ -298,6 +300,22 @@ describe("TitleDetail", () => {
         name: "Search sources for episode 1",
       }),
     ).toBeEnabled();
+    await user.click(
+      within(episode).getByRole("button", {
+        name: "Search sources for episode 1",
+      }),
+    );
+    const menu = await within(episode).findByRole("group", {
+      name: "Search results for episode 1",
+    });
+    const localSource = await within(menu).findByRole("button", {
+      name: /Source 2/,
+    });
+    expect(within(localSource).getByText("Local files")).toBeInTheDocument();
+    expect(localSource.querySelector("img")).toHaveAttribute(
+      "src",
+      "/source-icons/local-files.svg",
+    );
   });
 
   it("shows movie genres already present in validated metadata", async () => {
@@ -343,7 +361,7 @@ describe("TitleDetail", () => {
     const user = userEvent.setup();
     const sources = ["source-a", "source-b"].map((candidateId, index) => ({
       id: String(index + 1).repeat(32),
-      providerId: "webshare",
+      providerId: index ? "ftp" : "webshare",
       candidateId,
       releaseName: `Sample.Movie.${index ? "720p" : "1080p"}.mkv`,
       sizeBytes: 100 + index,
@@ -396,6 +414,12 @@ describe("TitleDetail", () => {
     expect(
       within(menu).getAllByRole("button", { name: /Recommended|Source 2/ }),
     ).toHaveLength(2);
+    const alternate = within(menu).getByRole("button", { name: /Source 2/ });
+    expect(within(alternate).getByText("FTP")).toBeInTheDocument();
+    expect(alternate.querySelector("img")).toHaveAttribute(
+      "src",
+      "/source-icons/ftp.svg",
+    );
     await user.click(within(menu).getByRole("button", { name: /Source 2/ }));
     expect(onPlay).toHaveBeenCalledWith(
       movie,

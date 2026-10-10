@@ -1,6 +1,9 @@
 import { z } from "zod";
 
-import { FieldProvenanceSchema } from "./provider-common.js";
+import {
+  ExternalEntityRefSchema,
+  FieldProvenanceSchema,
+} from "./provider-common.js";
 
 export const MEDIA_KINDS = ["movie", "series"] as const;
 export const MediaKindSchema = z.enum(MEDIA_KINDS);
@@ -138,6 +141,8 @@ export const CatalogTitleSchema = z
     sources: z.array(TitleSourceSchema).max(24).optional(),
     seriesCoverage: SeriesCoverageSchema.nullable(),
     metadataProvider: z.string().trim().min(1).max(80),
+    /** Stable source reference when the provider-backed title ID is shortened. */
+    metadataRef: ExternalEntityRefSchema.optional(),
     metadataValidatedAt: z.string().datetime({ offset: true }),
     /** Rich provenance is mandatory when a containing response is in live mode. */
     metadataProvenance: FieldProvenanceSchema.optional(),
@@ -268,6 +273,18 @@ export const CatalogTitleSchema = z
         code: z.ZodIssueCode.custom,
         path: ["metadataProvenance", "providerId"],
         message: "Metadata provenance must identify the metadata provider.",
+      });
+    }
+    if (
+      title.metadataRef !== undefined &&
+      (title.metadataRef.providerId !== title.metadataProvider ||
+        title.metadataRef.entityType !== title.kind)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["metadataRef"],
+        message:
+          "Metadata reference must identify the title and its metadata provider.",
       });
     }
     if (

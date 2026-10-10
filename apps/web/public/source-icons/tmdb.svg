@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="TMDB">
+  <rect width="32" height="32" rx="9" fill="#073b43"/>
+  <path d="M5 23h22" stroke="#43e3c5" stroke-width="2" stroke-linecap="round" opacity=".55"/>
+  <path d="M7 10h8m-4 0v11m7 0V10l4 6 4-6v11" fill="none" stroke="#8af4cf" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

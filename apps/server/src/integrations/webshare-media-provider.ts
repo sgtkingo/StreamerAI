@@ -2,6 +2,7 @@ import {
   MediaCandidateRefSchema,
   MediaSearchRequestSchema,
   PlaybackGrantSchema,
+  PlaybackSourceRefreshRequestSchema,
   PlaybackRequestSchema,
   ProviderHealthSchema,
   type MediaCandidate,
@@ -21,23 +22,9 @@ import {
 import { randomUUID } from "node:crypto";
 import { ProviderRequestError } from "./provider-http.js";
 import { WebshareClient, type WebshareFileInfo } from "./webshare-client.js";
+import type { PlaybackTicketInput } from "../services/playback-ticket-store.js";
 
 const CONNECTOR_VERSION = "0.1.0";
-
-export interface PlaybackTicketInput {
-  grantId: string;
-  profileId: string;
-  providerId: string;
-  titleId: string;
-  seasonNumber?: number | null;
-  episodeNumber?: number | null;
-  variantId: string;
-  directUrl: string;
-  expiresAt: string;
-  supportsHttpRange?: boolean;
-  sourceSizeBytes?: number | null;
-  sourceFilename?: string | null;
-}
 
 export interface WebshareMediaProviderOptions {
   client: WebshareClient;
@@ -285,6 +272,7 @@ export class WebshareMediaProvider implements MediaProvider {
       titleId: request.titleId,
       seasonNumber: request.seasonNumber ?? null,
       episodeNumber: request.episodeNumber ?? null,
+      candidateId: request.variant.candidateId,
       variantId: variant.variantId,
       directUrl,
       expiresAt,
@@ -302,6 +290,18 @@ export class WebshareMediaProvider implements MediaProvider {
       expiresAt,
       embeddedSubtitles: variant.embeddedSubtitles,
     });
+  }
+
+  async refreshPlaybackSource(
+    rawRequest: Parameters<
+      NonNullable<MediaProvider["refreshPlaybackSource"]>
+    >[0],
+  ): Promise<string> {
+    const request = PlaybackSourceRefreshRequestSchema.parse(rawRequest);
+    if (request.candidate.providerId !== "webshare") {
+      throw new ProviderRequestError("webshare", "invalid-response", false);
+    }
+    return this.#client.createVideoLink(request.candidate.candidateId);
   }
 
   async checkPlayback(

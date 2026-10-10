@@ -1,13 +1,21 @@
-import { INTEGRATION_DESCRIPTORS } from "@streamer-ai/contracts";
+import {
+  INTEGRATION_DESCRIPTORS,
+  type ProviderDescriptor,
+  type IntegrationDescriptor,
+} from "@streamer-ai/contracts";
 import type { FastifyInstance } from "fastify";
 import type { StreamerDatabase } from "@streamer-ai/database";
-import { integrationCatalogItem } from "../integrations/catalog.js";
+import {
+  integrationCatalogItem,
+  providerIntegrationDescriptor,
+} from "../integrations/catalog.js";
 import { TMDB_READ_TOKEN_SECRET_KEY } from "../integrations/tmdb-client.js";
 import { WEBSHARE_WST_SECRET_KEY } from "../integrations/webshare-client.js";
 import type { IntegrationStateStore } from "../stores/integration-state-store.js";
 import type { SecretStore } from "../stores/secret-store.js";
 
 export interface SystemRouteDependencies {
+  providerDescriptors?: readonly ProviderDescriptor[];
   secretStore: SecretStore;
   integrationStateStore: IntegrationStateStore;
   database: StreamerDatabase;
@@ -101,11 +109,33 @@ export function registerSystemRoutes(
   });
 
   app.get("/api/v1/setup/status", async () => {
-    const [tmdb, webshare, ollama] = await Promise.all([
+    const [tmdb, webshare, ollama, states] = await Promise.all([
       getTmdbStatus(dependencies),
       getWebshareStatus(dependencies),
       getOllamaStatus(dependencies),
+      dependencies.integrationStateStore.list(),
     ]);
+    const connectedIds = new Set(
+      states
+        .filter((state) => state.configured)
+        .map((state) => state.integrationId),
+    );
+    const metadataAvailable =
+      tmdb.configured ||
+      (dependencies.providerDescriptors ?? []).some(
+        (provider) =>
+          provider.family === "metadata" &&
+          provider.id !== "tmdb" &&
+          connectedIds.has(provider.id),
+      );
+    const playbackAvailable =
+      webshare.configured ||
+      (dependencies.providerDescriptors ?? []).some(
+        (provider) =>
+          provider.family === "media" &&
+          provider.id !== "webshare" &&
+          connectedIds.has(provider.id),
+      );
     const profile = dependencies.database.profiles.get("default");
     const completionRecorded =
       dependencies.database.settings.get<boolean>("setup.completed") === true;
@@ -113,11 +143,10 @@ export function registerSystemRoutes(
       dependencies.database.settings.get<boolean>("setup.localAiEnabled") ===
       true;
     const complete = completionRecorded;
-    const playbackAvailable = webshare.configured;
     const requiredSteps = [
       ...(!complete ? ["complete_profile"] : []),
-      ...(!tmdb.configured ? ["connect_tmdb"] : []),
-      ...(!webshare.configured ? ["connect_webshare"] : []),
+      ...(!metadataAvailable ? ["connect_tmdb"] : []),
+      ...(!playbackAvailable ? ["connect_webshare"] : []),
       ...(localAiEnabled && !ollama.configured ? ["configure_local_ai"] : []),
     ];
     const durable =
@@ -164,6 +193,7 @@ export function registerSystemRoutes(
         },
       },
       capabilities: {
+        metadata: metadataAvailable,
         playback: playbackAvailable,
       },
       storage: {
@@ -180,6 +210,25 @@ export function registerSystemRoutes(
     const tmdb = await getTmdbStatus(dependencies);
     const states = await dependencies.integrationStateStore.list();
     const byId = new Map(states.map((state) => [state.integrationId, state]));
+    const descriptors = new Map<string, IntegrationDescriptor>(
+      Object.values(INTEGRATION_DESCRIPTORS).map((descriptor) => [
+        descriptor.id,
+        descriptor,
+      ]),
+    );
+    for (const provider of dependencies.providerDescriptors ?? []) {
+      const builtIn = descriptors.get(provider.id);
+      descriptors.set(
+        provider.id,
+        builtIn?.planned
+          ? {
+              ...builtIn,
+              planned: false,
+              automatedChecks: provider.supportsRecheck,
+            }
+          : (builtIn ?? providerIntegrationDescriptor(provider)),
+      );
+    }
 
     return {
       persistence:
@@ -187,7 +236,7 @@ export function registerSystemRoutes(
         dependencies.integrationStateStore.persistence === "memory"
           ? "memory"
           : "persistent",
-      items: Object.values(INTEGRATION_DESCRIPTORS).map((descriptor) => {
+      items: [...descriptors.values()].map((descriptor) => {
         const state = byId.get(descriptor.id);
         const status =
           descriptor.id === "tmdb"
@@ -201,4 +250,56 @@ export function registerSystemRoutes(
       }),
     };
   });
+
+  app.put(
+    "/api/v1/integrations/:integrationId/selection",
+    async (request, reply) => {
+      const params = request.params as { integrationId?: unknown };
+      const body = request.body as { selected?: unknown } | null;
+      if (
+        typeof params.integrationId !== "string" ||
+        typeof body?.selected !== "boolean"
+      ) {
+        return reply.code(400).send({
+          error: {
+            code: "INVALID_REQUEST",
+            message: "Choose a valid integration selection.",
+          },
+        });
+      }
+      const descriptor =
+        INTEGRATION_DESCRIPTORS[
+          params.integrationId as keyof typeof INTEGRATION_DESCRIPTORS
+        ];
+      if (
+        !descriptor ||
+        descriptor.planned !== true ||
+        dependencies.providerDescriptors?.some(
+          (provider) => provider.id === descriptor.id,
+        )
+      ) {
+        return reply.code(404).send({
+          error: {
+            code: "INTEGRATION_NOT_FOUND",
+            message: "This planned integration is unavailable.",
+          },
+        });
+      }
+      if (body.selected) {
+        await dependencies.integrationStateStore.set({
+          integrationId: descriptor.id,
+          status: "action_required",
+          configured: false,
+          updatedAt: dependencies.now().toISOString(),
+        });
+      } else {
+        await dependencies.integrationStateStore.delete(descriptor.id);
+      }
+      return integrationCatalogItem(
+        descriptor,
+        body.selected ? "action_required" : "not_configured",
+        false,
+      );
+    },
+  );
 }

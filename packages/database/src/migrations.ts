@@ -259,6 +259,48 @@ export const MIGRATIONS: readonly Migration[] = [
         ON playback_positions (profile_id, title_id, updated_at DESC);
     `,
   },
+  {
+    version: 7,
+    name: "extensible_integration_ids",
+    sql: `
+      CREATE TABLE integration_connections_next (
+        integration_id TEXT PRIMARY KEY NOT NULL CHECK (
+          length(integration_id) BETWEEN 1 AND 80
+          AND integration_id NOT GLOB '*[^a-z0-9-]*'
+          AND substr(integration_id, 1, 1) GLOB '[a-z]'
+        ),
+        enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+        setup_status TEXT NOT NULL CHECK (
+          setup_status IN (
+            'not-configured', 'needs-user-action', 'checking', 'ready', 'degraded', 'failed', 'disabled'
+          )
+        ),
+        health_status TEXT NOT NULL CHECK (
+          health_status IN ('unknown', 'healthy', 'degraded', 'unavailable', 'disabled')
+        ),
+        secret_ref TEXT CHECK (secret_ref IS NULL OR length(secret_ref) BETWEEN 1 AND 512),
+        health_code TEXT CHECK (health_code IS NULL OR length(health_code) BETWEEN 1 AND 80),
+        last_checked_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      ) STRICT;
+
+      INSERT INTO integration_connections_next
+      SELECT * FROM integration_connections;
+      DROP TABLE integration_connections;
+      ALTER TABLE integration_connections_next RENAME TO integration_connections;
+
+      INSERT INTO integration_connections (
+        integration_id, enabled, setup_status, health_status, created_at, updated_at
+      ) VALUES
+        ('local-files', 0, 'disabled', 'disabled', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+        ('ftp', 0, 'disabled', 'disabled', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+        ('ftps', 0, 'disabled', 'disabled', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+        ('nas', 0, 'disabled', 'disabled', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+        ('opensubtitles', 0, 'disabled', 'disabled', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+        ('titulky-com', 0, 'disabled', 'disabled', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+    `,
+  },
 ] as const;
 
 export function applyMigrations(

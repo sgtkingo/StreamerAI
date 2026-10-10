@@ -40,13 +40,28 @@ DONE: Seriály by měli mít po kliknuí detail a rozdělení do sérií a episo
 
 - DONE: přehrávač by měl dostat šipky "Next" a "Preview" které dovolí u sérií přehrát další, či předchozí díl.  
 
-- Proč vyhledávání "Naruto" nic nenajde, když na TMDB i Websharu je? 
+- DONE: Proč vyhledávání "Naruto" nic nenajde, když na TMDB i Websharu je? 
 
-- Pokud uživatel zadá např. "Něco co jsem neviděl" tak by si agent měl zažádat o seznam filmů které už uživatel viděl a vyhnout se jim. Pokud je konktextové okno malé, komprimovat. Má agent SOUL.md, SKILLS.md apod? 
+- Pokud uživatel zadá např. "Něco co jsem neviděl" tak by si agent měl zažádat o seznam filmů které už uživatel viděl a vyhnout se jim. Pokud je konktextové okno malé, komprimovat. Má agent SOUL.md, SKILLS, MEMORY.md apod? 
 
-- Měli bychom uživatelům umožnit stahovat obsah do své offline knihovny 
+- Připrav architekturu tak, aby bylo možné přidávat libovolné konektory zdrojů pro DB, streamy i titulky. Musíme mít pevně daný univerzální konktrakt na straně Streamer AI, který se bude přes adaptéry párovat na konkterétní zdroj. Takový adapter musí být dokonale zdokumentován a navržen čistě, aby mohla komunikata tvořit své vlastní a mergovat. Uzpůsob také workflow dohledávání a vyhledávání tak aby uměl pracovat z multi-source zdroji, a vybírál tedy z více zdrojů to nejlepší + stavěl alternativní streamy ze všeho co má k dispozici. Na to také navážeme malým UI prvkem - mimiaturní ikonou umístěnou v pravém horním rohu dláždice - v sekci s popisem, která bude symbolizovat původ zdroje - v případěš že jich bude více, tak se ikony budou překrývat za sebou s malým offsetem doleva, ale max 3 ikony zdrojů, pak do ztracena. Ikona zdroje by měla být i v rámci výběru zdroje přes tři tečky - u každého zdroje zvlášt v seznamu. Vizuál ikony získej z loga služby nebo jej vygeneruj, ikona by měla být jako soubor v repu který se načte. V návaznosti na to připrav PLACEHOLDERY na několik nových integrací, a uprav také onboarding a Settings tak aby je bylo možné vybrat:
+Pro DB:
+-- https://www.csfd.cz/ (ČSFD)
 
-- Každý profil by měl mít oddělené data, i v rámci onboardingu
+Pro streamy:
+-- Lokální složka / disk 
+-- FTP / FTPs
+-- NAS připojení 
+
+Pro titulky:
+-- https://www.opensubtitles.org/ (opensubtitles)
+-- https://www.titulky.com/ (Titulky.com)
+
+
+
+- Měli bychom uživatelům umožnit stahovat obsah do své offline knihovny. Tato knihovna by pak mohla být dalším offline zdrojem, tzn další konektor. 
+
+- Každý profil by měl mít oddělené data, i v rámci onboardingu - hlavně api konektory
 
 - DONE: Přehrávač nezobrazuje titulky, pro titulky přuprav napoj také nastavení v rámci 03 / Subtitles (velikost, barva, font). U přehrávače neslyším zvuk, dodělej funční Audio output v 02 / Audio a napoj ho na přehrávač.  Seriály by na konci měli automaticky začít odpočítávat přehrání dalšího dílu (5 sekund?), 
 

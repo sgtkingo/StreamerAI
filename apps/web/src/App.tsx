@@ -152,6 +152,12 @@ export function App({ api = apiClient, forceOnboarding = false }: AppProps) {
         window.history.pushState({}, "", "/");
       }}
       onRerunOnboarding={() => setRerunProfile(activeProfile)}
+      onIntegrationsChanged={() => {
+        void api
+          .getSetupStatus()
+          .then((status) => setPlaybackEnabled(status.playback))
+          .catch(() => undefined);
+      }}
       playbackEnabled={playbackEnabled}
     />
   );

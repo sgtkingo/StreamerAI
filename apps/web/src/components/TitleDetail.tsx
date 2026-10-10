@@ -8,6 +8,7 @@ import type {
 import type { StreamerApi } from "../api/client";
 import { safeErrorMessage } from "../api/client";
 import { sourceLabel } from "../source-label";
+import { SourceIcon, sourceName } from "./SourceIcon";
 import { useToasts } from "./ToastProvider";
 import { playCardHoverTick } from "./TitleCard";
 
@@ -36,6 +37,29 @@ function PlayActionContent({ label }: { label: string }) {
         ▶
       </span>
       <span className="play-action__label">{label}</span>
+    </>
+  );
+}
+
+function SourceOptionContent({
+  source,
+  label,
+}: {
+  source: TitleSource;
+  label: string;
+}) {
+  return (
+    <>
+      <span className="title-detail__source-option-main">
+        <SourceIcon providerId={source.providerId} />
+        <span>
+          <span>{label}</span>
+          <small>{sourceName(source.providerId)}</small>
+        </span>
+      </span>
+      <small className="title-detail__source-option-quality">
+        {sourceLabel(source)}
+      </small>
     </>
   );
 }
@@ -625,10 +649,12 @@ export function TitleDetail({
                         void play(undefined, undefined, source.id);
                       }}
                     >
-                      <span>
-                        {index === 0 ? "Recommended" : `Source ${index + 1}`}
-                      </span>
-                      <small>{sourceLabel(source)}</small>
+                      <SourceOptionContent
+                        source={source}
+                        label={
+                          index === 0 ? "Recommended" : `Source ${index + 1}`
+                        }
+                      />
                     </button>
                   ))}
               </div>
@@ -697,10 +723,12 @@ export function TitleDetail({
                         );
                       }}
                     >
-                      <span>
-                        {index === 0 ? "Recommended" : `Source ${index + 1}`}
-                      </span>
-                      <small>{sourceLabel(source)}</small>
+                      <SourceOptionContent
+                        source={source}
+                        label={
+                          index === 0 ? "Recommended" : `Source ${index + 1}`
+                        }
+                      />
                     </button>
                   ))}
               </div>
@@ -882,12 +910,14 @@ export function TitleDetail({
                                     );
                                   }}
                                 >
-                                  <span>
-                                    {index === 0
-                                      ? "Recommended"
-                                      : `Source ${index + 1}`}
-                                  </span>
-                                  <small>{sourceLabel(source)}</small>
+                                  <SourceOptionContent
+                                    source={source}
+                                    label={
+                                      index === 0
+                                        ? "Recommended"
+                                        : `Source ${index + 1}`
+                                    }
+                                  />
                                 </button>
                               ))}
                           </div>

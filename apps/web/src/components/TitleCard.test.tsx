@@ -130,4 +130,56 @@ describe("TitleCard sources", () => {
     await user.click(screen.getByRole("button", { name: /Play/i }));
     expect(onPlay).toHaveBeenLastCalledWith(movie);
   });
+
+  it("stacks at most three distinct stream providers and fades overflow", () => {
+    const providers = ["webshare", "local-files", "ftp", "nas"];
+    render(
+      <TitleCard
+        item={{
+          ...movie,
+          sources: providers.map((providerId, index) => ({
+            ...sources[0]!,
+            id: String(index + 1).repeat(32),
+            providerId,
+          })),
+        }}
+        preferences={DEFAULT_PLAYBACK_PREFERENCES}
+        playbackCheck={{ status: "ready" }}
+        onPlay={vi.fn()}
+        onAdd={vi.fn()}
+      />,
+    );
+
+    const origin = screen.getByRole("img", {
+      name: "Sources: Webshare, Local files, FTP, and 1 more",
+    });
+    expect(origin).toHaveClass("source-origin--overflow");
+    expect(origin.querySelectorAll("img")).toHaveLength(3);
+    expect(origin.querySelectorAll("img")[0]).toHaveAttribute(
+      "src",
+      "/source-icons/webshare.svg",
+    );
+    expect(origin.querySelector(".source-origin__item--2")).toBeInTheDocument();
+  });
+
+  it("uses the metadata provider when no playable source is known", () => {
+    render(
+      <TitleCard
+        item={{
+          ...movie,
+          availability: "unavailable",
+          sources: [],
+        }}
+        preferences={DEFAULT_PLAYBACK_PREFERENCES}
+        playbackEnabled={false}
+        onPlay={vi.fn()}
+        onAdd={vi.fn()}
+      />,
+    );
+    const origin = screen.getByRole("img", { name: "Sources: TMDB" });
+    expect(origin.querySelector("img")).toHaveAttribute(
+      "src",
+      "/source-icons/tmdb.svg",
+    );
+  });
 });

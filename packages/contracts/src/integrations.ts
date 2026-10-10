@@ -7,17 +7,28 @@ export const INTEGRATION_IDS = [
   "webshare",
   "ollama",
   "csfd",
+  "local-files",
+  "ftp",
+  "ftps",
+  "nas",
+  "opensubtitles",
+  "titulky-com",
   "brave-search",
   "cloudflare-sync",
 ] as const;
 
-export const IntegrationIdSchema = z.enum(INTEGRATION_IDS);
+export const BuiltinIntegrationIdSchema = z.enum(INTEGRATION_IDS);
+export type BuiltinIntegrationId = z.infer<typeof BuiltinIntegrationIdSchema>;
+
+/** Community adapters use the same stable, lowercase ID format as built-ins. */
+export const IntegrationIdSchema = z.string().regex(/^[a-z][a-z0-9-]{0,79}$/);
 
 export type IntegrationId = z.infer<typeof IntegrationIdSchema>;
 
 export const INTEGRATION_KINDS = [
   "metadata",
   "media",
+  "subtitle",
   "inference",
   "enrichment",
   "search",
@@ -29,6 +40,7 @@ export const IntegrationKindSchema = z.enum(INTEGRATION_KINDS);
 export type IntegrationKind = z.infer<typeof IntegrationKindSchema>;
 
 export const INTEGRATION_SETUP_MODES = [
+  "none",
   "api-key",
   "credentials",
   "local-runtime",
@@ -114,6 +126,8 @@ export const IntegrationDescriptorSchema = z
     name: LocalizedTextSchema,
     description: LocalizedTextSchema,
     setupMode: IntegrationSetupModeSchema,
+    /** A visible setup choice without an executable adapter yet. */
+    planned: z.boolean().optional(),
     optional: z.boolean(),
     canAutoDetect: z.boolean(),
     automatedChecks: z.boolean(),
@@ -203,19 +217,122 @@ export const INTEGRATION_DESCRIPTORS = {
   }),
   csfd: descriptor({
     id: "csfd",
-    kind: "enrichment",
-    name: text("ČSFD enrichment", "Obohacení z ČSFD", "ČSFD-Anreicherung"),
+    kind: "metadata",
+    name: text("ČSFD", "ČSFD", "ČSFD"),
     description: text(
       "Optional Czech and Slovak title enrichment with source-specific limitations.",
       "Volitelné české a slovenské obohacení titulů s omezeními daného zdroje.",
       "Optionale tschechische und slowakische Titelanreicherung mit Quellenbeschränkungen.",
     ),
     setupMode: "informed-consent",
+    planned: true,
     optional: true,
     canAutoDetect: false,
-    automatedChecks: true,
+    automatedChecks: false,
     supportsDisconnect: true,
     documentationUrl: "https://www.csfd.cz/",
+  }),
+  "local-files": descriptor({
+    id: "local-files",
+    kind: "media",
+    name: text(
+      "Local folder or drive",
+      "Místní složka nebo disk",
+      "Lokaler Ordner oder Datenträger",
+    ),
+    description: text(
+      "Play files from a folder or drive you choose.",
+      "Přehrávání souborů z vybrané složky nebo disku.",
+      "Dateien aus einem ausgewählten Ordner oder Datenträger abspielen.",
+    ),
+    setupMode: "informed-consent",
+    planned: true,
+    optional: true,
+    canAutoDetect: false,
+    automatedChecks: false,
+    supportsDisconnect: true,
+  }),
+  ftp: descriptor({
+    id: "ftp",
+    kind: "media",
+    name: text("FTP", "FTP", "FTP"),
+    description: text(
+      "Browse a configured FTP media server.",
+      "Procházení nastaveného FTP serveru s médii.",
+      "Einen konfigurierten FTP Medienserver durchsuchen.",
+    ),
+    setupMode: "credentials",
+    planned: true,
+    optional: true,
+    canAutoDetect: false,
+    automatedChecks: false,
+    supportsDisconnect: true,
+  }),
+  ftps: descriptor({
+    id: "ftps",
+    kind: "media",
+    name: text("FTPS", "FTPS", "FTPS"),
+    description: text(
+      "Browse a configured FTP server with TLS.",
+      "Procházení nastaveného FTP serveru se šifrováním TLS.",
+      "Einen konfigurierten FTP Server mit TLS durchsuchen.",
+    ),
+    setupMode: "credentials",
+    planned: true,
+    optional: true,
+    canAutoDetect: false,
+    automatedChecks: false,
+    supportsDisconnect: true,
+  }),
+  nas: descriptor({
+    id: "nas",
+    kind: "media",
+    name: text("NAS", "NAS", "NAS"),
+    description: text(
+      "Play media from a network storage connection.",
+      "Přehrávání médií ze síťového úložiště.",
+      "Medien von einem Netzwerkspeicher abspielen.",
+    ),
+    setupMode: "credentials",
+    planned: true,
+    optional: true,
+    canAutoDetect: false,
+    automatedChecks: false,
+    supportsDisconnect: true,
+  }),
+  opensubtitles: descriptor({
+    id: "opensubtitles",
+    kind: "subtitle",
+    name: text("OpenSubtitles", "OpenSubtitles", "OpenSubtitles"),
+    description: text(
+      "Find matching external subtitles.",
+      "Vyhledávání odpovídajících externích titulků.",
+      "Passende externe Untertitel finden.",
+    ),
+    setupMode: "api-key",
+    planned: true,
+    optional: true,
+    canAutoDetect: false,
+    automatedChecks: false,
+    supportsDisconnect: true,
+    documentationUrl: "https://www.opensubtitles.org/",
+  }),
+  "titulky-com": descriptor({
+    id: "titulky-com",
+    kind: "subtitle",
+    name: text("Titulky.com", "Titulky.com", "Titulky.com"),
+    description: text(
+      "Find Czech and Slovak external subtitles.",
+      "Vyhledávání českých a slovenských externích titulků.",
+      "Tschechische und slowakische externe Untertitel finden.",
+    ),
+    setupMode: "informed-consent",
+    planned: true,
+    optional: true,
+    canAutoDetect: false,
+    automatedChecks: false,
+    supportsDisconnect: true,
+    documentationUrl: "https://www.titulky.com/",
   }),
   "brave-search": descriptor({
     id: "brave-search",
@@ -252,4 +369,4 @@ export const INTEGRATION_DESCRIPTORS = {
     automatedChecks: true,
     supportsDisconnect: true,
   }),
-} as const satisfies Record<IntegrationId, IntegrationDescriptor>;
+} as const satisfies Record<BuiltinIntegrationId, IntegrationDescriptor>;

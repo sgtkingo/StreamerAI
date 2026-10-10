@@ -1,4 +1,20 @@
-import type { PlaybackTicketInput } from "../integrations/webshare-media-provider.js";
+/** Server-only source details shared by all media adapters behind a grant. */
+export interface PlaybackTicketInput {
+  grantId: string;
+  profileId: string;
+  providerId: string;
+  titleId: string;
+  seasonNumber?: number | null;
+  episodeNumber?: number | null;
+  /** Stable provider candidate, which may differ from the playable variant. */
+  candidateId?: string;
+  variantId: string;
+  directUrl: string;
+  expiresAt: string;
+  supportsHttpRange?: boolean;
+  sourceSizeBytes?: number | null;
+  sourceFilename?: string | null;
+}
 
 export interface PlaybackTicketRecord extends PlaybackTicketInput {
   readonly createdAt: string;
@@ -11,6 +27,23 @@ export interface PlaybackTicketStore {
   markStarted(grantId: string): boolean;
   revoke(grantId: string): boolean;
   revokeActive(): void;
+}
+
+/** Validate server-only source URLs when issued and after every refresh. */
+export function validatePlaybackSourceUrl(value: string): string {
+  const directUrl = new URL(value);
+  const loopback = ["127.0.0.1", "localhost", "::1"].includes(
+    directUrl.hostname,
+  );
+  if (
+    (directUrl.protocol !== "https:" &&
+      !(directUrl.protocol === "http:" && loopback)) ||
+    directUrl.username !== "" ||
+    directUrl.password !== ""
+  ) {
+    throw new Error("Playback direct URL must be secure and credential-free.");
+  }
+  return value;
 }
 
 /**
@@ -26,19 +59,7 @@ export class InMemoryPlaybackTicketStore implements PlaybackTicketStore {
     if (!/^[A-Za-z0-9_-]{1,160}$/.test(input.grantId)) {
       throw new Error("Playback grant id is invalid.");
     }
-    const directUrl = new URL(input.directUrl);
-    const loopback = ["127.0.0.1", "localhost", "::1"].includes(
-      directUrl.hostname,
-    );
-    if (
-      (directUrl.protocol !== "https:" && !loopback) ||
-      directUrl.username !== "" ||
-      directUrl.password !== ""
-    ) {
-      throw new Error(
-        "Playback direct URL must be secure and credential-free.",
-      );
-    }
+    validatePlaybackSourceUrl(input.directUrl);
     if (Date.parse(input.expiresAt) <= this.now().getTime()) {
       throw new Error("Playback ticket must expire in the future.");
     }

@@ -41,7 +41,7 @@ describe("database migrations", () => {
     expect(database.getAppliedMigrationVersions()).toEqual(
       MIGRATIONS.map(({ version }) => version),
     );
-    expect(database.integrations.list()).toHaveLength(6);
+    expect(database.integrations.list()).toHaveLength(12);
 
     database.close();
     const reopened = openStreamerDatabase({ filename, clock: fixedClock });
@@ -49,7 +49,25 @@ describe("database migrations", () => {
     expect(reopened.getAppliedMigrationVersions()).toEqual(
       MIGRATIONS.map(({ version }) => version),
     );
-    expect(reopened.integrations.list()).toHaveLength(6);
+    expect(reopened.integrations.list()).toHaveLength(12);
+  });
+
+  it("stores selections for new and community connector IDs across restarts", () => {
+    const { database, filename } = createDatabase();
+    database.integrations.upsert({
+      id: "community-media",
+      enabled: true,
+      setupStatus: "needs-user-action",
+      healthStatus: "unknown",
+    });
+    database.close();
+    const reopened = openStreamerDatabase({ filename, clock: fixedClock });
+    databaseInstances.push(reopened);
+    expect(reopened.integrations.get("community-media")).toMatchObject({
+      enabled: true,
+      setupStatus: "needs-user-action",
+    });
+    expect(reopened.integrations.get("local-files")?.enabled).toBe(false);
   });
 });
 
@@ -174,6 +192,11 @@ describe("on-demand catalog, Library and History", () => {
       ],
       seriesCoverage: null,
       metadataProvider: "metadata-fixture",
+      metadataRef: {
+        providerId: "metadata-fixture",
+        externalId: "external-42",
+        entityType: "movie",
+      },
       metadataValidatedAt: "2026-09-27T10:00:00.000Z",
     });
     database.titles.mapExternalEntity({
@@ -200,6 +223,10 @@ describe("on-demand catalog, Library and History", () => {
     expect(database.titles.get(stored.id)).toMatchObject({
       id: "sai:title:1",
       metadataProvider: "metadata-fixture",
+      metadataRef: {
+        providerId: "metadata-fixture",
+        externalId: "external-42",
+      },
     });
     expect(database.library.list("profile-1")).toMatchObject([
       { titleId: "sai:title:1", state: "saved" },

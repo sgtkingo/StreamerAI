@@ -35,6 +35,7 @@ export function AppShell({
   onSwitchAccount,
   onDeleteProfile,
   onRerunOnboarding,
+  onIntegrationsChanged,
   playbackEnabled = false,
 }: {
   api: StreamerApi;
@@ -43,6 +44,7 @@ export function AppShell({
   onSwitchAccount: () => void;
   onDeleteProfile: () => Promise<void>;
   onRerunOnboarding: () => void;
+  onIntegrationsChanged: () => void;
   playbackEnabled?: boolean;
 }) {
   const [route, setRoute] = useState<Route>(routeFromLocation);
@@ -258,6 +260,7 @@ export function AppShell({
           profile={profile}
           onProfileUpdated={onProfileUpdated}
           onRerunOnboarding={onRerunOnboarding}
+          onIntegrationsChanged={onIntegrationsChanged}
           onSwitchAccount={onSwitchAccount}
           onDeleteProfile={onDeleteProfile}
           onBackHome={() => navigate("home")}

@@ -10,11 +10,51 @@ import userEvent from "@testing-library/user-event";
 import { StrictMode } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { App } from "./App";
-import type { StreamerApi } from "./api/client";
+import type { IntegrationCatalogItem, StreamerApi } from "./api/client";
 import { DEFAULT_PLAYBACK_PREFERENCES } from "./playback-preferences";
 
 function createApi(): StreamerApi {
+  const integrations: IntegrationCatalogItem[] = [
+    {
+      id: "tmdb",
+      name: "TMDB",
+      description: "Movie and series details.",
+      category: "metadata",
+      planned: false,
+      selected: false,
+      configured: false,
+      setup: { documentationUrl: null, supportsDisconnect: true },
+    },
+    {
+      id: "webshare",
+      name: "Webshare",
+      description: "Find playable video.",
+      category: "media",
+      planned: false,
+      selected: false,
+      configured: false,
+      setup: { documentationUrl: null, supportsDisconnect: true },
+    },
+    {
+      id: "opensubtitles",
+      name: "OpenSubtitles",
+      description: "Find matching subtitles.",
+      category: "subtitle",
+      planned: true,
+      selected: false,
+      configured: false,
+      setup: { documentationUrl: null, supportsDisconnect: true },
+    },
+  ];
   return {
+    getIntegrations: vi.fn().mockResolvedValue({ items: integrations }),
+    setIntegrationSelected: vi
+      .fn()
+      .mockImplementation(async (id, selected) => ({
+        ...integrations.find((item) => item.id === id),
+        selected,
+      })),
+    disconnectIntegration: vi.fn().mockResolvedValue(undefined),
     getSetupStatus: vi.fn().mockResolvedValue({
       complete: true,
       tmdb: "not-configured",
@@ -256,6 +296,10 @@ describe("onboarding", () => {
     await user.type(screen.getByLabelText(/display name/i), "Alex");
     await user.click(screen.getByRole("button", { name: /continue/i }));
 
+    await user.click(
+      screen.getByRole("button", { name: /choose a movie database/i }),
+    );
+    await user.click(screen.getByRole("button", { name: /TMDB/i }));
     const secret = "secret-read-access-token-123";
     const tokenInput = screen.getByLabelText(/tmdb read access token/i);
     await user.type(tokenInput, secret);
@@ -283,6 +327,10 @@ describe("onboarding", () => {
     await user.type(screen.getByLabelText(/display name/i), "Alex");
     await user.click(screen.getByRole("button", { name: /continue/i }));
 
+    await user.click(
+      screen.getByRole("button", { name: /choose a stream source/i }),
+    );
+    await user.click(screen.getByRole("button", { name: /Webshare/i }));
     await user.type(screen.getByLabelText(/username or email/i), "viewer");
     const password = "webshare-password-sentinel";
     const passwordInput = screen.getByLabelText(/^password$/i);
@@ -321,6 +369,10 @@ describe("onboarding", () => {
     await user.click(screen.getByRole("button", { name: /start setup/i }));
     await user.type(screen.getByLabelText(/display name/i), "Alex");
     await user.click(screen.getByRole("button", { name: /continue/i }));
+    await user.click(
+      screen.getByRole("button", { name: /choose a movie database/i }),
+    );
+    await user.click(screen.getByRole("button", { name: /TMDB/i }));
     await user.type(
       screen.getByLabelText(/tmdb read access token/i),
       "development-token-long-enough",
@@ -334,6 +386,36 @@ describe("onboarding", () => {
 });
 
 describe("profile navigation", () => {
+  it("shows already connected TMDB and Webshare in Settings", async () => {
+    const user = userEvent.setup();
+    const api = createApi();
+    const catalog = await api.getIntegrations();
+    vi.mocked(api.getIntegrations).mockResolvedValue({
+      items: catalog.items.map((item) =>
+        item.id === "tmdb" || item.id === "webshare"
+          ? { ...item, configured: true }
+          : item,
+      ),
+    });
+    render(<App api={api} />);
+    await user.click(await screen.findByRole("button", { name: /alex/i }));
+    await user.click(
+      screen.getByRole("button", { name: /profile menu for alex/i }),
+    );
+    await user.click(screen.getByRole("menuitem", { name: "Settings" }));
+
+    const databases = screen.getByRole("region", { name: "Movie databases" });
+    const streams = screen.getByRole("region", { name: "Stream sources" });
+    expect(
+      await within(databases).findByRole("heading", { name: "TMDB" }),
+    ).toBeInTheDocument();
+    expect(
+      within(streams).getByRole("heading", { name: "Webshare" }),
+    ).toBeInTheDocument();
+    expect(within(databases).getByText("Connected")).toBeInTheDocument();
+    expect(within(streams).getByText("Connected")).toBeInTheDocument();
+  });
+
   it("opens profile pages, saves playback languages, and returns to the profile chooser", async () => {
     const user = userEvent.setup();
     const api = createApi();
