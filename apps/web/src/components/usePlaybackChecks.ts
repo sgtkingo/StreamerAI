@@ -93,6 +93,7 @@ export function usePlaybackChecks(api: StreamerApi, profileId: string) {
     [],
   );
 
-  const stateFor = (title: CatalogTitle) => states.get(checkKey(title));
+  const stateFor = (title: CatalogTitle, episode?: EpisodeSelection) =>
+    states.get(checkKey(title, episode));
   return { check, markFailed, stateFor };
 }

@@ -49,6 +49,112 @@ const title = {
 } satisfies CatalogTitle;
 
 describe("TitleDetail", () => {
+  it("opens an episode detail with its database synopsis and navigates back", async () => {
+    const user = userEvent.setup();
+    const onPlay = vi.fn().mockResolvedValue(undefined);
+    const detail: Detail = {
+      title,
+      related: [],
+      series: {
+        status: "complete",
+        seasons: [
+          {
+            seasonNumber: 1,
+            title: "Season One",
+            episodes: [
+              {
+                seasonNumber: 1,
+                episodeNumber: 1,
+                title: "Pilot",
+                synopsis: "The story begins.",
+                airDate: null,
+                availability: "available",
+              },
+            ],
+          },
+          {
+            seasonNumber: 2,
+            title: "Season Two",
+            episodes: [
+              {
+                seasonNumber: 2,
+                episodeNumber: 3,
+                title: "The Return",
+                synopsis: "The hero returns home.",
+                airDate: "2021-02-01",
+                availability: "available",
+              },
+            ],
+          },
+        ],
+      },
+    };
+    const api = {
+      getTitleDetail: vi.fn().mockResolvedValue(detail),
+    } as unknown as StreamerApi;
+    render(
+      <TitleDetail
+        api={api}
+        profileId="default"
+        title={title}
+        initialEpisode={{ seasonNumber: 2, episodeNumber: 3 }}
+        playbackEnabled
+        onClose={vi.fn()}
+        onOpenRelated={vi.fn()}
+        onPlay={onPlay}
+        onAdded={vi.fn()}
+      />,
+    );
+    const dialog = await screen.findByRole("dialog", {
+      name: "Details for Sample Show S02E03",
+    });
+    expect(
+      await within(dialog).findByRole("heading", { name: "The Return" }),
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).getByText("The hero returns home."),
+    ).toBeInTheDocument();
+    await user.click(
+      within(dialog).getByRole("button", { name: "Play episode" }),
+    );
+    expect(onPlay).toHaveBeenCalledWith(
+      title,
+      { seasonNumber: 2, episodeNumber: 3 },
+      "The Return",
+    );
+    await user.click(
+      within(dialog).getByRole("button", { name: "Back to season 2" }),
+    );
+    expect(
+      within(dialog).getByRole("button", { name: "Season 2" }),
+    ).toHaveClass("is-active");
+    expect(
+      within(dialog).getByRole("button", {
+        name: "Details for Sample Show S02E03",
+      }),
+    ).toHaveFocus();
+    await user.click(
+      within(dialog).getByRole("button", {
+        name: "Details for Sample Show S02E03",
+      }),
+    );
+    expect(
+      within(dialog).getByRole("button", { name: "Back to season 2" }),
+    ).toHaveFocus();
+    await user.click(
+      within(dialog).getByRole("button", { name: "More episodes" }),
+    );
+    expect(
+      within(dialog).getByRole("heading", { name: "Seasons & episodes" }),
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).getByRole("button", { name: "Season 1" }),
+    ).toHaveClass("is-active");
+    expect(
+      within(dialog).getByRole("button", { name: "Season 1" }),
+    ).toHaveFocus();
+  });
+
   it("lets a verified episode play while later episodes are still searching", async () => {
     const user = userEvent.setup();
     const onPlay = vi.fn().mockResolvedValue(undefined);

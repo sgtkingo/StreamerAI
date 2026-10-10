@@ -183,7 +183,7 @@ export class WebshareMediaProvider implements MediaProvider {
     const request = MediaSearchRequestSchema.parse(rawRequest);
     const episode =
       request.seasonNumber !== null && request.episodeNumber !== null
-        ? ` S${String(request.seasonNumber).padStart(2, "0")}E${String(request.episodeNumber).padStart(2, "0")}`
+        ? ` ${request.episodeSearchTerm ?? `S${String(request.seasonNumber).padStart(2, "0")}E${String(request.episodeNumber).padStart(2, "0")}`}`
         : "";
     // Episode release names frequently omit the series premiere year. Keeping
     // it in the deep-search query would hide otherwise valid SxxEyy files.

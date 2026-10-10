@@ -700,6 +700,119 @@ describe("conversational Home", () => {
     ).toBeInTheDocument();
   });
 
+  it("opens and plays the exact episode returned by search", async () => {
+    const user = userEvent.setup();
+    const api = createApi();
+    const show = {
+      ...title,
+      id: "sai:tmdb:series:42",
+      kind: "series" as const,
+      title: "Naruto",
+      availability: "partial" as const,
+      seriesCoverage: {
+        seasonsAvailable: 1,
+        seasonsTotal: 1,
+        episodesAvailable: 1,
+        episodesTotal: 1,
+        complete: false,
+        nextEpisodeLabel: "S01 E01",
+      },
+    };
+    vi.mocked(api.getSetupStatus).mockResolvedValue({
+      complete: true,
+      tmdb: "connected",
+      webshare: "connected",
+      localAi: "connected",
+      playback: true,
+    });
+    vi.mocked(api.getHome).mockResolvedValue({
+      profileId: "default",
+      mode: "live",
+      generatedAt: "2026-09-27T12:00:00.000Z",
+      sections: [],
+    });
+    vi.mocked(api.getTitleDetail).mockResolvedValue({
+      title: show,
+      related: [],
+      series: {
+        status: "complete",
+        seasons: [
+          {
+            seasonNumber: 1,
+            title: "Season One",
+            episodes: [
+              {
+                seasonNumber: 1,
+                episodeNumber: 1,
+                title: "Enter: Naruto Uzumaki!",
+                synopsis: "Naruto begins his journey.",
+                airDate: null,
+                availability: "available",
+              },
+            ],
+          },
+        ],
+      },
+    });
+    const response = {
+      sessionId: "naruto-episode",
+      mode: "live" as const,
+      stage: "completed" as const,
+      reply: "Episode found.",
+      bestMatch: {
+        title: show,
+        reason: "Exact episode match.",
+        episode: { seasonNumber: 1, episodeNumber: 1 },
+        episodeTitle: "Enter: Naruto Uzumaki!",
+        episodeSynopsis: "Naruto begins his journey.",
+      },
+      available: [],
+      unavailable: [],
+      unverified: [],
+      warnings: [],
+      completedAt: "2026-09-27T12:00:00.000Z",
+    };
+    api.discoverFast = vi.fn().mockResolvedValue(response);
+    vi.mocked(api.discover).mockResolvedValue(response);
+    window.history.replaceState({}, "", "/");
+    render(<App api={api} />);
+    await user.click(await screen.findByRole("button", { name: /alex/i }));
+    await user.type(screen.getByLabelText(/ask streamerai/i), "Naruto S01E01");
+    await user.click(screen.getByRole("button", { name: "Find something" }));
+    const results = await screen.findByRole("region", {
+      name: /a considered shortlist/i,
+    });
+    expect(
+      await within(results).findByRole("heading", {
+        name: "Enter: Naruto Uzumaki!",
+      }),
+    ).toBeInTheDocument();
+    expect(within(results).getByText("Naruto · S01E01")).toBeInTheDocument();
+    expect(
+      within(results).getByText("Naruto begins his journey."),
+    ).toBeInTheDocument();
+    expect(
+      within(results).queryByRole("heading", { name: "Naruto" }),
+    ).not.toBeInTheDocument();
+    await user.click(within(results).getByRole("button", { name: "Details" }));
+    const dialog = await screen.findByRole("dialog", {
+      name: "Details for Naruto S01E01",
+    });
+    expect(
+      await within(dialog).findByText("Naruto begins his journey."),
+    ).toBeInTheDocument();
+    await user.click(
+      within(dialog).getByRole("button", { name: "Close details" }),
+    );
+    await user.click(within(results).getByRole("button", { name: "Play" }));
+    await waitFor(() =>
+      expect(api.preparePlayback).toHaveBeenCalledWith("default", show.id, {
+        seasonNumber: 1,
+        episodeNumber: 1,
+      }),
+    );
+  });
+
   it("submits a natural-language request and renders the validated best match actions", async () => {
     const user = userEvent.setup();
     const api = createApi();
@@ -811,17 +924,28 @@ describe("conversational Home", () => {
       createSession: true,
     });
 
-    const second = {
+    const moreTitles = [
+      "Second Film",
+      "Third Film",
+      "Fourth Film",
+      "Fifth Film",
+      "Sixth Film",
+      "Seventh Film",
+      "Eighth Film",
+    ].map((name, index) => ({
       ...title,
-      id: "sai:title:second",
-      title: "Second Film",
-      matchPercent: 81,
-    };
+      id: `sai:title:option-${index}`,
+      title: name,
+      matchPercent: 81 - index * 2,
+    }));
     finishDeep({
       ...quick,
       reply: "I found a richer shortlist. Is this what you had in mind?",
       bestMatch: { title, reason: "Contextual match." },
-      available: [{ title: second, reason: "Another validated option." }],
+      available: moreTitles.map((candidate) => ({
+        title: candidate,
+        reason: "Another validated option.",
+      })),
     });
     expect(await screen.findByText("Contextual match.")).toBeInTheDocument();
     const results = screen.getByRole("region", {
@@ -833,6 +957,83 @@ describe("conversational Home", () => {
     expect(
       within(results).getByRole("heading", { name: "Second Film" }),
     ).toBeInTheDocument();
+    const alternatives = within(results).getByRole("group", {
+      name: "More matches",
+    });
+    expect(within(alternatives).getAllByRole("article")).toHaveLength(3);
+    for (const name of ["Second Film", "Third Film", "Fourth Film"])
+      expect(
+        within(alternatives).getByRole("heading", { name }),
+      ).toBeInTheDocument();
+    expect(
+      within(alternatives).queryByRole("heading", { name: "Fifth Film" }),
+    ).not.toBeInTheDocument();
+    expect(
+      within(results).queryByRole("heading", { name: "Fifth Film" }),
+    ).not.toBeInTheDocument();
+    expect(
+      within(results).getByRole("button", { name: "Show More" }),
+    ).toBeInTheDocument();
+    await user.click(
+      within(results).getByRole("button", { name: "Show More" }),
+    );
+    expect(within(alternatives).getAllByRole("article")).toHaveLength(6);
+    for (const name of ["Fifth Film", "Sixth Film", "Seventh Film"])
+      expect(
+        within(alternatives).getByRole("heading", { name }),
+      ).toBeInTheDocument();
+    expect(
+      within(results).queryByRole("heading", { name: "Eighth Film" }),
+    ).not.toBeInTheDocument();
+    await user.click(
+      within(results).getByRole("button", { name: "Show More" }),
+    );
+    expect(within(alternatives).getAllByRole("article")).toHaveLength(7);
+    expect(
+      within(alternatives).getByRole("heading", { name: "Eighth Film" }),
+    ).toBeInTheDocument();
+    expect(
+      within(results).queryByRole("button", { name: "Show More" }),
+    ).not.toBeInTheDocument();
+    expect(
+      await within(results).findByText(
+        "Sorry, there are no more suggestions for this search.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("shows the featured tile placeholder as soon as searching starts", async () => {
+    const user = userEvent.setup();
+    const api = createApi();
+    vi.mocked(api.getHome).mockResolvedValue({
+      profileId: "default",
+      mode: "live",
+      generatedAt: "2026-09-27T12:00:00.000Z",
+      sections: [],
+    });
+    api.discoverFast = vi.fn().mockImplementation(() => new Promise(() => {}));
+    vi.mocked(api.discover).mockImplementationOnce(() => new Promise(() => {}));
+    window.history.replaceState({}, "", "/");
+    render(<App api={api} />);
+    await user.click(await screen.findByRole("button", { name: /alex/i }));
+    await user.type(screen.getByLabelText(/ask streamerai/i), "a mystery film");
+    await user.click(screen.getByRole("button", { name: "Find something" }));
+
+    const progress = screen.getByRole("region", { name: "Discovery progress" });
+    expect(within(progress).getByText("Thinking so hard…")).toBeInTheDocument();
+    expect(progress.querySelectorAll(".pipeline__dots > span")).toHaveLength(3);
+    const results = screen.getByRole("region", {
+      name: /a considered shortlist/i,
+    });
+    expect(
+      within(results).getByText("Finding your best match…"),
+    ).toBeInTheDocument();
+    expect(results.querySelector(".shortlist-placeholder")).not.toBeNull();
+    expect(
+      within(results).queryByText(
+        "Sorry, there are no more suggestions for this search.",
+      ),
+    ).not.toBeInTheDocument();
   });
 
   it("checks a provisional fast match and promotes it when the streaming source succeeds", async () => {
@@ -897,12 +1098,9 @@ describe("conversational Home", () => {
         undefined,
       ),
     );
-    const checkingGroup = screen
-      .getByRole("heading", { name: "Checking availability" })
-      .closest(".result-group");
-    expect(checkingGroup).not.toBeNull();
+    const checkingGroup = screen.getByRole("group", { name: "More matches" });
     expect(
-      within(checkingGroup as HTMLElement).getByRole("heading", {
+      within(checkingGroup).getByRole("heading", {
         name: "The Lake House",
       }),
     ).toBeInTheDocument();
@@ -914,11 +1112,7 @@ describe("conversational Home", () => {
         .getByRole("heading", { name: "The Lake House" })
         .closest("article");
       expect(card).not.toBeNull();
-      expect(
-        card?.classList.contains("title-card--hero") ||
-          card?.closest(".result-group")?.querySelector("h3")?.textContent ===
-            "Available to stream",
-      ).toBe(true);
+      expect(card).toHaveClass("title-card--hero");
       expect(
         within(card as HTMLElement).getByRole("button", { name: "Play" }),
       ).toBeEnabled();
@@ -1258,6 +1452,9 @@ describe("conversational Home", () => {
       sessionId: "session-one",
       message: "Less spooky, please",
     });
+    expect(screen.getByText(/Best suggestion for/)).toHaveTextContent(
+      "an autumn film",
+    );
 
     await user.clear(screen.getByLabelText(/ask streamerai/i));
     await user.type(screen.getByLabelText(/ask streamerai/i), "a space comedy");
@@ -1271,6 +1468,9 @@ describe("conversational Home", () => {
         name: /is this what you had in mind/i,
       }),
     ).toBeInTheDocument();
+    expect(screen.getByText(/Best suggestion for/)).toHaveTextContent(
+      "a space comedy",
+    );
     await user.click(
       screen.getByRole("button", { name: /is this what you had in mind/i }),
     );
@@ -1315,7 +1515,7 @@ describe("conversational Home", () => {
         await screen.findByRole("region", { name: /a considered shortlist/i }),
       ).toBeInTheDocument();
       expect(
-        screen.getByRole("complementary", { name: "StreamerAI chat" }),
+        await screen.findByRole("complementary", { name: "StreamerAI chat" }),
       ).toBeInTheDocument();
 
       await user.click(screen.getByRole("button", { name: buttonName }));
@@ -1408,8 +1608,8 @@ describe("conversational Home", () => {
     await new Promise((resolve) => setTimeout(resolve, 800));
     const progress = screen.getByRole("region", { name: "Discovery progress" });
     expect(
-      within(progress).getByText("Ranking verified matches"),
-    ).not.toHaveClass("is-active");
+      within(progress).getByText("Waking up StreamerAI…"),
+    ).toBeInTheDocument();
 
     resolveDiscovery?.({
       sessionId: "cold-session",

@@ -27,7 +27,22 @@ function normalizeTitle(value: string): string {
 
 /** A direct title lookup is stronger evidence than an agent's thematic score. */
 export function isDirectTitleMatch(query: string, item: RankedTitle): boolean {
-  const normalizedQuery = normalizeTitle(query);
+  const normalizedInput = normalizeTitle(query);
+  const episodeMatch = / (?:s(\d{1,2})e(\d{1,3})|(\d{1,2})x(\d{1,3}))$/.exec(
+    normalizedInput,
+  );
+  if (
+    episodeMatch &&
+    (!item.episode ||
+      item.episode.seasonNumber !==
+        Number(episodeMatch[1] ?? episodeMatch[3]) ||
+      item.episode.episodeNumber !== Number(episodeMatch[2] ?? episodeMatch[4]))
+  )
+    return false;
+  const normalizedQuery = normalizedInput.replace(
+    / (?:s\d{1,2}e\d{1,3}|\d{1,2}x\d{1,3})$/,
+    "",
+  );
   if (!normalizedQuery) return false;
   const possibleTitles = [item.title.title, item.title.originalTitle]
     .filter((title): title is string => Boolean(title))
@@ -48,6 +63,16 @@ export function mergeDiscoveryResults(
 ): DiscoveryResponse {
   const quickIds = new Set(entries(quick).map((item) => item.title.id));
   const deepIds = new Set(entries(deep).map((item) => item.title.id));
+  const episodeMatch =
+    /(?:^| )(?:s(\d{1,2})e(\d{1,3})|(\d{1,2})x(\d{1,3}))$/.exec(
+      normalizeTitle(query),
+    );
+  const requestedEpisode = episodeMatch
+    ? {
+        seasonNumber: Number(episodeMatch[1] ?? episodeMatch[3]),
+        episodeNumber: Number(episodeMatch[2] ?? episodeMatch[4]),
+      }
+    : null;
   const byId = new Map<string, RankedTitle>();
   for (const item of entries(quick)) byId.set(item.title.id, item);
   for (const item of entries(deep)) {
@@ -58,6 +83,19 @@ export function mergeDiscoveryResults(
     }
     const chosen = streamable(item) || !streamable(prior) ? item : prior;
     const other = chosen === item ? prior : item;
+    const episodeResult =
+      [chosen, other].find(
+        (candidate) =>
+          requestedEpisode &&
+          candidate.episode?.seasonNumber === requestedEpisode.seasonNumber &&
+          candidate.episode.episodeNumber === requestedEpisode.episodeNumber,
+      ) ?? (chosen.episode ? chosen : other);
+    const remainingResult = episodeResult === chosen ? other : chosen;
+    const sameEpisode =
+      episodeResult.episode?.seasonNumber ===
+        remainingResult.episode?.seasonNumber &&
+      episodeResult.episode?.episodeNumber ===
+        remainingResult.episode?.episodeNumber;
     const sources = [
       ...(chosen.title.sources ?? []),
       ...(other.title.sources ?? []),
@@ -70,6 +108,13 @@ export function mergeDiscoveryResults(
     byId.set(item.title.id, {
       ...chosen,
       reason: item.reason,
+      episode: episodeResult.episode,
+      episodeTitle:
+        episodeResult.episodeTitle ??
+        (sameEpisode ? remainingResult.episodeTitle : undefined),
+      episodeSynopsis:
+        episodeResult.episodeSynopsis ??
+        (sameEpisode ? remainingResult.episodeSynopsis : undefined),
       title: {
         ...chosen.title,
         ...(chosen.title.sources || other.title.sources ? { sources } : {}),

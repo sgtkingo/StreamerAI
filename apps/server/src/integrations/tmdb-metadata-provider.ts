@@ -395,6 +395,10 @@ export class TmdbMetadataProvider implements MetadataProvider {
                 },
                 episodeNumber: Number(episode.episode_number),
                 title: requiredString(episode.name),
+                synopsis: (optionalString(episode.overview) ?? "").slice(
+                  0,
+                  1_500,
+                ),
                 airDate: date(episode.air_date),
                 runtimeMinutes:
                   Number.isInteger(episode.runtime) &&

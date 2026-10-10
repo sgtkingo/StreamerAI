@@ -54,8 +54,8 @@ DONE: Seriály by měli mít po kliknuí detail a rozdělení do sérií a episo
 
 - Je třeba připravit integrace na více zdrojů obsahu - zavést kontratky atd. 
 
-- U serálů (i filmů) budeme potřebovat multivariatní vyhledávání, např hledat díle sérii ne jen podle S01E01, 1 + název ale i jen 1. / 1 Problém může být že řeba S01E05 bude v databázi jako díl 15. Také bychom měli připustit nalezení a hledání jen konkterétního dílu seriálu,  třeba S01E05.
+- U serálů (i filmů) budeme potřebovat multivariatní vyhledávání, např hledat díly sérii ne jen podle S01E01, 1 + název ale i jen 1. / 1 Problém může být že řeba S02E05 bude v databázi jako díl 15. Také bychom měli připustit nalezení a hledání jen konkterétního dílu seriálu,  třeba S02E05. Uprav vyhledávání tak aby tohle fungovalo.
 
-- Subtitles vyvolávájí Loading subtitles - to není UI přívětívé a navíc se titulky nenačtou v některých případech. Nechápu jaktože titulk dělají takvý problém. Přijde mi že po seek se zase načítají odznovu a zas  časují. Jaktože to ve VLC jde bez problému a okamžitě?  
+DONE: Subtitles vyvolávájí Loading subtitles - to není UI přívětívé a navíc se titulky nenačtou v některých případech. Nechápu jaktože titulk dělají takvý problém. Přijde mi že po seek se zase načítají odznovu a zas  časují. Jaktože to ve VLC jde bez problému a okamžitě?  
 
 - Dláždice při Checking se skokově zvětšuje a zmenšuje, asi to bude periodických updatem

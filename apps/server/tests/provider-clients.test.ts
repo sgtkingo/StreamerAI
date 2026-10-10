@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   TmdbApiClient,
   type ProviderFetch,
@@ -34,6 +34,91 @@ function response(
 }
 
 describe("provider HTTP clients", () => {
+  it("keeps the TMDB episode overview in the series guide", async () => {
+    const provider = new TmdbMetadataProvider({
+      client: {
+        getSeries: vi
+          .fn()
+          .mockResolvedValue({ seasons: [{ season_number: 1 }] }),
+        getSeason: vi.fn().mockResolvedValue({
+          id: 43,
+          name: "Season One",
+          episodes: [
+            {
+              id: 44,
+              episode_number: 1,
+              name: "Enter: Naruto Uzumaki!",
+              overview: "Naruto begins his journey.",
+              air_date: "2002-10-03",
+              runtime: 24,
+            },
+          ],
+        }),
+      } as unknown as TmdbApiClient,
+    });
+    const structure = await provider.getSeriesStructure(
+      { providerId: "tmdb", externalId: "42", entityType: "series" },
+      {
+        requestId: "episode-overview",
+        profileId: "default",
+        locale: "en",
+        deadlineAt: "2099-01-01T00:00:00.000Z",
+        secretRef: null,
+      },
+    );
+    expect(structure.seasons[0]?.episodes[0]).toMatchObject({
+      title: "Enter: Naruto Uzumaki!",
+      synopsis: "Naruto begins his journey.",
+    });
+  });
+
+  it("uses alternate episode terms while preserving movie title and year queries", async () => {
+    const search = vi.fn().mockResolvedValue({ total: 0, items: [] });
+    const provider = new WebshareMediaProvider({
+      client: { search } as unknown as WebshareClient,
+      issuePlaybackTicket: () => "/playback/test",
+    });
+    const context = {
+      requestId: "query-test",
+      profileId: "default",
+      locale: "en",
+      deadlineAt: "2099-01-01T00:00:00.000Z",
+      secretRef: null,
+    };
+    const request = {
+      titleId: "sai:tmdb:series:42",
+      kind: "series" as const,
+      title: "Pan Tau",
+      originalTitle: "Pan Tau",
+      year: 1970,
+      seasonNumber: 1,
+      episodeNumber: 5,
+      externalRefs: [],
+      limit: 20,
+    };
+    await provider.search({ ...request, episodeSearchTerm: "15" }, context);
+    expect(search).toHaveBeenLastCalledWith(
+      { query: "Pan Tau 15", limit: 20 },
+      undefined,
+    );
+    await provider.search(
+      {
+        ...request,
+        titleId: "sai:tmdb:movie:43",
+        kind: "movie",
+        year: 2024,
+        seasonNumber: null,
+        episodeNumber: null,
+        episodeSearchTerm: undefined,
+      },
+      context,
+    );
+    expect(search).toHaveBeenLastCalledWith(
+      { query: "Pan Tau 2024", limit: 20 },
+      undefined,
+    );
+  });
+
   it("implements the standard md5-crypt vector used by Webshare login", () => {
     expect(md5Crypt("password", "salt")).toBe("$1$salt$qJH7.N4xYta3aEG/dfqo/0");
   });

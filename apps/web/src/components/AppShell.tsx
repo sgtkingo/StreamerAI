@@ -56,13 +56,24 @@ export function AppShell({
   } | null>(null);
   const [playbackClosing, setPlaybackClosing] = useState(false);
   const [detailTitle, setDetailTitle] = useState<CatalogTitle | null>(null);
+  const [detailEpisode, setDetailEpisode] = useState<EpisodeSelection | null>(
+    null,
+  );
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const profileMenuRef = useRef<HTMLDivElement>(null);
   const profileId = profile.id;
   const closeDetail = useCallback(() => {
     setDetailTitle(null);
+    setDetailEpisode(null);
     setLibraryVersion((value) => value + 1);
   }, []);
+  const openDetail = useCallback(
+    (title: CatalogTitle, episode?: EpisodeSelection) => {
+      setDetailTitle(title);
+      setDetailEpisode(episode ?? null);
+    },
+    [],
+  );
   const playFromDetail = useCallback(
     async (
       title: CatalogTitle,
@@ -221,7 +232,7 @@ export function AppShell({
           playbackPreferences={profile.playback}
           version={libraryVersion}
           onLibraryChanged={() => setLibraryVersion((value) => value + 1)}
-          onOpenTitle={setDetailTitle}
+          onOpenTitle={openDetail}
           onPlaybackReady={(title, grant, episode) =>
             setActivePlayback({ title, grant, episode })
           }
@@ -233,7 +244,7 @@ export function AppShell({
           playbackPreferences={profile.playback}
           version={libraryVersion}
           onBackHome={() => navigate("home")}
-          onOpenTitle={setDetailTitle}
+          onOpenTitle={openDetail}
           playbackEnabled={playbackEnabled}
           onPlaybackReady={(title, grant, episode) =>
             setActivePlayback({ title, grant, episode })
@@ -254,14 +265,15 @@ export function AppShell({
       )}
       {detailTitle && (
         <TitleDetail
-          key={detailTitle.id}
+          key={`${detailTitle.id}:${detailEpisode?.seasonNumber ?? "series"}:${detailEpisode?.episodeNumber ?? "all"}`}
           api={api}
           profileId={profileId}
           title={detailTitle}
+          initialEpisode={detailEpisode ?? undefined}
           playbackEnabled={playbackEnabled}
           suspended={activePlayback !== null && !playbackClosing}
           onClose={closeDetail}
-          onOpenRelated={setDetailTitle}
+          onOpenRelated={openDetail}
           onPlay={playFromDetail}
           onAdded={() => setLibraryVersion((value) => value + 1)}
         />

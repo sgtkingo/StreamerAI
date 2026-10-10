@@ -54,6 +54,63 @@ const movie: CatalogTitle = {
 };
 
 describe("TitleCard sources", () => {
+  it("opens and plays the episode attached to a search result", async () => {
+    const user = userEvent.setup();
+    const episode = { seasonNumber: 1, episodeNumber: 5 };
+    const series: CatalogTitle = {
+      ...movie,
+      id: "sai:tmdb:series:42",
+      kind: "series",
+      title: "Naruto",
+      availability: "partial",
+      seriesCoverage: {
+        seasonsAvailable: 1,
+        seasonsTotal: 1,
+        episodesAvailable: 1,
+        episodesTotal: 5,
+        complete: false,
+        nextEpisodeLabel: "S01 E05",
+      },
+      sources: [
+        {
+          ...sources[0]!,
+          seasonNumber: 1,
+          episodeNumber: 5,
+        },
+      ],
+    };
+    const onOpen = vi.fn();
+    const onPlay = vi.fn();
+    const onCheck = vi.fn();
+    render(
+      <TitleCard
+        item={series}
+        episode={episode}
+        episodeTitle="The Fifth Episode"
+        episodeSynopsis="The fifth episode has its own story."
+        preferences={DEFAULT_PLAYBACK_PREFERENCES}
+        playbackCheck={{ status: "ready" }}
+        onOpen={onOpen}
+        onPlay={onPlay}
+        onCheck={onCheck}
+        onAdd={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByRole("heading", { name: "The Fifth Episode" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Naruto · S01E05")).toBeInTheDocument();
+    expect(
+      screen.getByText("The fifth episode has its own story."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("A movie.")).not.toBeInTheDocument();
+    expect(onCheck).toHaveBeenCalledWith(series, episode);
+    await user.click(screen.getByRole("button", { name: "Play" }));
+    expect(onPlay).toHaveBeenCalledWith(series, episode);
+    await user.click(screen.getByRole("button", { name: "Details" }));
+    expect(onOpen).toHaveBeenCalledWith(series, episode);
+  });
+
   it("shows the source count without a source picker", async () => {
     const user = userEvent.setup();
     const onPlay = vi.fn();

@@ -6,6 +6,7 @@ import type {
 } from "@streamer-ai/contracts";
 import {
   groupDiscoveryResults,
+  isDirectTitleMatch,
   mergeDiscoveryResults,
 } from "./discovery-merge";
 
@@ -68,6 +69,80 @@ const response = (
 });
 
 describe("parallel discovery merge", () => {
+  it("preserves the requested episode when quick and deep title results merge", () => {
+    const series = {
+      ...title,
+      id: "sai:tmdb:series:42",
+      kind: "series" as const,
+      title: "Naruto",
+      seriesCoverage: {
+        seasonsAvailable: 1,
+        seasonsTotal: 1,
+        episodesAvailable: 1,
+        episodesTotal: 1,
+        complete: true,
+        nextEpisodeLabel: "S01 E01",
+      },
+    };
+    const quick = response({
+      title: series,
+      reason: "Episode found.",
+      episode: { seasonNumber: 1, episodeNumber: 1 },
+      episodeTitle: "Enter: Naruto Uzumaki!",
+      episodeSynopsis: "Naruto begins his journey.",
+    });
+    const merged = mergeDiscoveryResults(
+      quick,
+      response({ title: series, reason: "Series found." }),
+      "Naruto S01E01",
+    );
+    expect(merged.bestMatch?.episode).toEqual({
+      seasonNumber: 1,
+      episodeNumber: 1,
+    });
+    expect(merged.bestMatch?.episodeSynopsis).toBe(
+      "Naruto begins his journey.",
+    );
+    expect(isDirectTitleMatch("Naruto S01E01", merged.bestMatch!)).toBe(true);
+    expect(isDirectTitleMatch("Naruto S01E02", merged.bestMatch!)).toBe(false);
+    expect(
+      isDirectTitleMatch("Naruto S01E01", {
+        title: series,
+        reason: "Series found.",
+      }),
+    ).toBe(false);
+  });
+
+  it("keeps the requested episode and its synopsis together when another episode merges", () => {
+    const series = {
+      ...title,
+      id: "sai:tmdb:series:42",
+      kind: "series" as const,
+      title: "Naruto",
+    };
+    const quick = response({
+      title: series,
+      reason: "Requested episode.",
+      episode: { seasonNumber: 1, episodeNumber: 1 },
+      episodeTitle: "Episode One",
+      episodeSynopsis: "Story for episode one.",
+    });
+    const deep = response({
+      title: series,
+      reason: "Another episode.",
+      episode: { seasonNumber: 1, episodeNumber: 2 },
+      episodeTitle: "Episode Two",
+      episodeSynopsis: "Story for episode two.",
+    });
+    const merged = mergeDiscoveryResults(quick, deep, "Naruto S01E01");
+    expect(merged.bestMatch?.episode).toEqual({
+      seasonNumber: 1,
+      episodeNumber: 1,
+    });
+    expect(merged.bestMatch?.episodeTitle).toBe("Episode One");
+    expect(merged.bestMatch?.episodeSynopsis).toBe("Story for episode one.");
+  });
+
   it("keeps a verified quick stream when deep availability is weaker", () => {
     const quick = response({ title, reason: "Quick" });
     const deep: DiscoveryResponse = {

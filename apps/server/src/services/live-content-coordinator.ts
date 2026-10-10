@@ -30,6 +30,11 @@ import type {
   HomeFeedInput,
   StreamerContentProvider,
 } from "./content-provider.js";
+import {
+  episodeSearchTerms,
+  explicitEpisodeNumber,
+  releaseEpisode,
+} from "./episode-release.js";
 
 const AGENT_SCHEMA = {
   type: "object",
@@ -235,6 +240,23 @@ function words(value: string): string[] {
     .filter((word) => word.length > 1);
 }
 
+function directEpisodeRequest(
+  message: string,
+): { episode: EpisodeSelection; titleQuery: string } | null {
+  const match =
+    /(?:^|[^a-z0-9])s\d{1,2}[ ._-]*e\d{1,3}(?:[^a-z0-9]|$)/i.exec(message) ??
+    /(?:^|[^a-z0-9])\d{1,2}x\d{1,3}(?:[^a-z0-9]|$)/i.exec(message);
+  if (!match) return null;
+  const episode = explicitEpisodeNumber(match[0]);
+  const titleQuery = message
+    .replace(match[0], " ")
+    .replace(/^(?:find|play|watch|najdi|pusť|pust|chci|hledám|hledam)\s+/i, "")
+    .replace(/^[\s.,:;-]+|[\s.,:;-]+$/g, "");
+  return episode && words(titleQuery).length > 0
+    ? { episode, titleQuery }
+    : null;
+}
+
 function titleMatchesRelease(
   candidate: MediaCandidate,
   title: string,
@@ -378,15 +400,20 @@ function sourceId(titleId: string, ref: MediaCandidateRef): string {
 
 function episodeNumber(
   releaseName: string,
+  seriesTitle = "",
+  originalTitle: string | null = null,
+  structure?: SeriesStructure,
 ): { season: number; episode: number } | null {
-  const match =
-    /(?:^|[^a-z0-9])s(\d{1,2})[ ._-]*e(\d{1,3})(?:[^a-z0-9]|$)/i.exec(
-      releaseName,
-    ) ?? /(?:^|[^a-z0-9])(\d{1,2})x(\d{1,3})(?:[^a-z0-9]|$)/i.exec(releaseName);
-  if (match?.[1] === undefined || match[2] === undefined) return null;
-  const episode = Number(match[2]);
-  if (episode < 1) return null;
-  return { season: Number(match[1]), episode };
+  const selected = releaseEpisode(
+    releaseName,
+    [seriesTitle, originalTitle].filter((value): value is string =>
+      Boolean(value),
+    ),
+    structure,
+  );
+  return selected
+    ? { season: selected.seasonNumber, episode: selected.episodeNumber }
+    : null;
 }
 
 function mediaSearchVariants(
@@ -394,11 +421,28 @@ function mediaSearchVariants(
   originalTitle: string | null,
   year: number | null,
   episode?: EpisodeSelection,
-): { originalTitle: string | null; year: number | null }[] {
+  structure?: SeriesStructure,
+): {
+  originalTitle: string | null;
+  year: number | null;
+  episodeSearchTerm?: string;
+}[] {
   const distinctLocalizedTitle =
     originalTitle !== null && normalize(originalTitle) !== normalize(title);
   // Webshare's episode query already omits the premiere year.
   const searchYear = episode ? null : year;
+  if (episode) {
+    const titles = distinctLocalizedTitle
+      ? [originalTitle, null]
+      : [originalTitle];
+    return episodeSearchTerms(episode, structure).flatMap((episodeSearchTerm) =>
+      titles.map((name) => ({
+        originalTitle: name,
+        year: null,
+        episodeSearchTerm,
+      })),
+    );
+  }
   return [
     { originalTitle, year: searchYear },
     ...(distinctLocalizedTitle
@@ -529,6 +573,9 @@ export class LiveContentCoordinator implements StreamerContentProvider {
     conversation?: DiscoveryConversationContext,
   ): Promise<DiscoveryResponse> {
     conversation?.signal?.throwIfAborted();
+    const directEpisode = directEpisodeRequest(request.message);
+    if (directEpisode)
+      return this.discoverFast(request, completedAt, conversation);
     const missing = await this.missingRequiredIntegrations(true);
     conversation?.signal?.throwIfAborted();
     if (missing.length > 0) {
@@ -685,6 +732,7 @@ export class LiveContentCoordinator implements StreamerContentProvider {
     conversation?: DiscoveryConversationContext,
   ): Promise<DiscoveryResponse> {
     conversation?.signal?.throwIfAborted();
+    const directEpisode = directEpisodeRequest(request.message);
     const missing = await this.missingRequiredIntegrations(false);
     if (missing.length > 0) {
       return DiscoveryResponseSchema.parse({
@@ -711,8 +759,8 @@ export class LiveContentCoordinator implements StreamerContentProvider {
     try {
       matches = await this.#metadata.search(
         {
-          query: request.message.slice(0, 500),
-          kind: null,
+          query: (directEpisode?.titleQuery ?? request.message).slice(0, 500),
+          kind: directEpisode ? "series" : null,
           year: null,
           person: null,
           locale,
@@ -745,11 +793,19 @@ export class LiveContentCoordinator implements StreamerContentProvider {
     const ranked = matches
       .map((candidate, position) => ({
         candidate,
-        score: fastSimilarity(request.message, candidate, position),
+        score: fastSimilarity(
+          directEpisode?.titleQuery ?? request.message,
+          candidate,
+          position,
+        ),
       }))
       // Even a provider hit (and especially a trending fallback) can be
       // unrelated to a conversational request. Let the agent handle those.
-      .filter((item) => item.score >= 55)
+      .filter(
+        (item) =>
+          item.score >= 55 &&
+          (!directEpisode || item.candidate.kind === "series"),
+      )
       .sort((a, b) => b.score - a.score)
       .filter(
         (item, index, items) =>
@@ -778,6 +834,8 @@ export class LiveContentCoordinator implements StreamerContentProvider {
               context,
               12,
               3,
+              false,
+              directEpisode?.episode,
             );
           } catch {
             context.signal?.throwIfAborted();
@@ -1014,6 +1072,7 @@ export class LiveContentCoordinator implements StreamerContentProvider {
           seasonNumber: season.seasonNumber,
           episodeNumber: episode.episodeNumber,
           title: episode.title,
+          synopsis: episode.synopsis ?? "",
           airDate: episode.airDate,
           availability: job.candidates.has(
             episodeKey(title.id, {
@@ -1099,6 +1158,20 @@ export class LiveContentCoordinator implements StreamerContentProvider {
     if (title.kind !== "series")
       throw new Error("Episode search requires a series.");
     const context = this.playbackContext(profileId, title);
+    let structure = this.#seriesJobs.get(title.id)?.structure;
+    if (!structure) {
+      const externalId = /^sai:tmdb:series:(\d+)$/.exec(title.id)?.[1];
+      if (externalId) {
+        try {
+          structure = await this.#metadata.getSeriesStructure(
+            { providerId: "tmdb", entityType: "series", externalId },
+            context,
+          );
+        } catch {
+          // Canonical SxxEyy releases can still be checked without a guide.
+        }
+      }
+    }
     const storedSources = (title.sources ?? []).filter(
       (source) =>
         source.seasonNumber === episode.seasonNumber &&
@@ -1115,6 +1188,7 @@ export class LiveContentCoordinator implements StreamerContentProvider {
       title.originalTitle,
       title.year,
       episode,
+      structure,
     )) {
       if (sources.length >= 8 || inspected >= 20) break;
       let candidates: MediaCandidate[];
@@ -1128,6 +1202,7 @@ export class LiveContentCoordinator implements StreamerContentProvider {
             year: variant.year,
             seasonNumber: episode.seasonNumber,
             episodeNumber: episode.episodeNumber,
+            episodeSearchTerm: variant.episodeSearchTerm,
             externalRefs: [],
             limit: 50,
           },
@@ -1140,7 +1215,12 @@ export class LiveContentCoordinator implements StreamerContentProvider {
       }
       for (const candidate of candidates) {
         if (sources.length >= 8 || inspected >= 20) break;
-        const parsed = episodeNumber(candidate.releaseName);
+        const parsed = episodeNumber(
+          candidate.releaseName,
+          title.title,
+          title.originalTitle,
+          structure,
+        );
         if (
           parsed?.season !== episode.seasonNumber ||
           parsed.episode !== episode.episodeNumber ||
@@ -1246,6 +1326,7 @@ export class LiveContentCoordinator implements StreamerContentProvider {
           title.originalTitle,
           title.year,
           selection,
+          job.structure,
         )) {
           let results: MediaCandidate[];
           try {
@@ -1258,6 +1339,7 @@ export class LiveContentCoordinator implements StreamerContentProvider {
                 year: variant.year,
                 seasonNumber: selection.seasonNumber,
                 episodeNumber: selection.episodeNumber,
+                episodeSearchTerm: variant.episodeSearchTerm,
                 externalRefs: [],
                 limit: 50,
               },
@@ -1268,7 +1350,12 @@ export class LiveContentCoordinator implements StreamerContentProvider {
             continue;
           }
           for (const candidate of results) {
-            const parsed = episodeNumber(candidate.releaseName);
+            const parsed = episodeNumber(
+              candidate.releaseName,
+              title.title,
+              title.originalTitle,
+              job.structure,
+            );
             if (
               parsed?.season !== selection.seasonNumber ||
               parsed.episode !== selection.episodeNumber ||
@@ -1401,12 +1488,29 @@ export class LiveContentCoordinator implements StreamerContentProvider {
       for (const candidate of candidates) yield { candidate, context };
       return;
     }
+    let structure = episode
+      ? this.#seriesJobs.get(title.id)?.structure
+      : undefined;
+    if (episode && !structure) {
+      const externalId = /^sai:tmdb:series:(\d+)$/.exec(title.id)?.[1];
+      if (externalId) {
+        try {
+          structure = await this.#metadata.getSeriesStructure(
+            { providerId: "tmdb", entityType: "series", externalId },
+            context,
+          );
+        } catch {
+          // Explicit release identifiers remain usable without a guide.
+        }
+      }
+    }
     const seenRefs = new Set<string>();
     for (const search of mediaSearchVariants(
       title.title,
       title.originalTitle,
       title.year,
       episode,
+      structure,
     )) {
       const results = await this.#media.search(
         {
@@ -1417,6 +1521,7 @@ export class LiveContentCoordinator implements StreamerContentProvider {
           year: search.year,
           seasonNumber: episode?.seasonNumber ?? null,
           episodeNumber: episode?.episodeNumber ?? null,
+          episodeSearchTerm: search.episodeSearchTerm,
           externalRefs: [],
           limit: 20,
         },
@@ -1434,7 +1539,14 @@ export class LiveContentCoordinator implements StreamerContentProvider {
         )
           continue;
         const parsed =
-          title.kind === "series" ? episodeNumber(item.releaseName) : null;
+          title.kind === "series"
+            ? episodeNumber(
+                item.releaseName,
+                title.title,
+                title.originalTitle,
+                structure,
+              )
+            : null;
         if (
           title.kind === "series" &&
           (parsed === null ||
@@ -1495,6 +1607,9 @@ export class LiveContentCoordinator implements StreamerContentProvider {
       agent.matchPercent,
       agent.reason,
       context,
+      12,
+      12,
+      false,
     );
   }
 
@@ -1506,6 +1621,7 @@ export class LiveContentCoordinator implements StreamerContentProvider {
     maxMediaCandidates = 12,
     desiredPlayableSources = maxMediaCandidates,
     searchAllVariants = false,
+    requestedEpisode?: EpisodeSelection,
   ): Promise<ValidatedCandidate> {
     const metadata = await this.#metadata.getTitle(selected.ref, context);
     const ratings = await this.#metadata.getRatings(selected.ref, context);
@@ -1526,6 +1642,16 @@ export class LiveContentCoordinator implements StreamerContentProvider {
     let playbackCandidates: MediaCandidateRef[] = [];
     let seriesStructure: SeriesStructure | undefined;
     const episodeCandidates = new Map<string, MediaCandidateRef[]>();
+    if (metadata.kind === "series") {
+      try {
+        seriesStructure = await this.#metadata.getSeriesStructure(
+          metadata.ref,
+          context,
+        );
+      } catch {
+        // An unavailable guide still permits explicitly numbered releases.
+      }
+    }
     try {
       // Search APIs often treat the year as a required term, while uploaded
       // releases (especially episodes) omit it. Try progressively broader,
@@ -1534,6 +1660,8 @@ export class LiveContentCoordinator implements StreamerContentProvider {
         metadata.title,
         metadata.originalTitle,
         metadata.year,
+        metadata.kind === "series" ? requestedEpisode : undefined,
+        seriesStructure,
       );
       const inspected: {
         candidate: MediaCandidate;
@@ -1551,25 +1679,39 @@ export class LiveContentCoordinator implements StreamerContentProvider {
             title: metadata.title,
             originalTitle: search.originalTitle,
             year: search.year,
-            seasonNumber: null,
-            episodeNumber: null,
+            seasonNumber: requestedEpisode?.seasonNumber ?? null,
+            episodeNumber: requestedEpisode?.episodeNumber ?? null,
+            episodeSearchTerm: search.episodeSearchTerm,
             externalRefs: [metadata.ref],
             limit: searchLimit,
           },
           context,
         );
         if (mediaCandidates.length >= searchLimit) searchExhausted = false;
-        const matching = mediaCandidates.filter(
-          (candidate) =>
-            titleMatchesRelease(
+        const matching = mediaCandidates.filter((candidate) => {
+          if (
+            !titleMatchesRelease(
               candidate,
               metadata.title,
               metadata.originalTitle,
               metadata.kind === "series" ? null : metadata.year,
-            ) &&
-            (metadata.kind !== "series" ||
-              episodeNumber(candidate.releaseName) !== null),
-        );
+            )
+          )
+            return false;
+          if (metadata.kind !== "series") return true;
+          const matched = episodeNumber(
+            candidate.releaseName,
+            metadata.title,
+            metadata.originalTitle,
+            seriesStructure,
+          );
+          return (
+            matched !== null &&
+            (!requestedEpisode ||
+              (matched.season === requestedEpisode.seasonNumber &&
+                matched.episode === requestedEpisode.episodeNumber))
+          );
+        });
         let attempted = 0;
         for (const candidate of matching) {
           context.signal?.throwIfAborted();
@@ -1610,7 +1752,12 @@ export class LiveContentCoordinator implements StreamerContentProvider {
           seenFiles.add(duplicateKey);
           const episode =
             metadata.kind === "series"
-              ? episodeNumber(item.candidate.releaseName)
+              ? episodeNumber(
+                  item.candidate.releaseName,
+                  metadata.title,
+                  metadata.originalTitle,
+                  seriesStructure,
+                )
               : null;
           return [
             {
@@ -1636,10 +1783,9 @@ export class LiveContentCoordinator implements StreamerContentProvider {
         if (metadata.kind === "movie") {
           availability = "available";
         } else {
-          const structure = await this.#metadata.getSeriesStructure(
-            metadata.ref,
-            context,
-          );
+          const structure =
+            seriesStructure ??
+            (await this.#metadata.getSeriesStructure(metadata.ref, context));
           seriesStructure = structure;
           const expectedEpisodes = structure.seasons.reduce(
             (count, season) => count + season.episodes.length,
@@ -1687,8 +1833,9 @@ export class LiveContentCoordinator implements StreamerContentProvider {
           availability = complete ? "available" : "partial";
         }
       } else {
-        availability = searchExhausted ? "unavailable" : "unknown";
-        if (searchExhausted) {
+        availability =
+          requestedEpisode || !searchExhausted ? "unknown" : "unavailable";
+        if (searchExhausted && !requestedEpisode) {
           availabilityProvenance = {
             ...availabilityProvenance,
             confidence: 1,
@@ -1736,8 +1883,28 @@ export class LiveContentCoordinator implements StreamerContentProvider {
       )
         ? "Similar title match."
         : reason;
+    const requestedEpisodeMetadata = requestedEpisode
+      ? seriesStructure?.seasons
+          .find(
+            (season) => season.seasonNumber === requestedEpisode.seasonNumber,
+          )
+          ?.episodes.find(
+            (episode) =>
+              episode.episodeNumber === requestedEpisode.episodeNumber,
+          )
+      : undefined;
     return {
-      ranked: { title, reason: groundedReason },
+      ranked: {
+        title,
+        reason: groundedReason,
+        ...(requestedEpisode
+          ? {
+              episode: requestedEpisode,
+              episodeTitle: requestedEpisodeMetadata?.title,
+              episodeSynopsis: requestedEpisodeMetadata?.synopsis || undefined,
+            }
+          : {}),
+      },
       playbackCandidates,
       seriesStructure,
       episodeCandidates,

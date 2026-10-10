@@ -54,13 +54,16 @@ interface TitleCardProps {
   item: CatalogTitle;
   preferences: PlaybackPreferences;
   reason?: string;
+  episode?: EpisodeSelection;
+  episodeTitle?: string;
+  episodeSynopsis?: string;
   hero?: boolean;
   onPlay: (
     item: CatalogTitle,
     episode?: EpisodeSelection,
     sourceId?: string,
   ) => void;
-  onOpen?: (item: CatalogTitle) => void;
+  onOpen?: (item: CatalogTitle, episode?: EpisodeSelection) => void;
   onCheck?: (item: CatalogTitle, episode?: EpisodeSelection) => void;
   onAdd: (item: CatalogTitle) => void;
   onRemove?: (item: CatalogTitle) => void;
@@ -107,6 +110,9 @@ export function TitleCard({
   item,
   preferences,
   reason,
+  episode,
+  episodeTitle,
+  episodeSynopsis,
   hero = false,
   onPlay,
   onOpen,
@@ -163,10 +169,21 @@ export function TitleCard({
   const defaultEpisode = useMemo(
     () =>
       item.kind === "series"
-        ? (item.resumeEpisode ?? { seasonNumber: 1, episodeNumber: 1 })
+        ? (episode ??
+          item.resumeEpisode ?? { seasonNumber: 1, episodeNumber: 1 })
         : undefined,
-    [item.kind, item.resumeEpisode],
+    [episode, item.kind, item.resumeEpisode],
   );
+  const episodeCode = episode
+    ? `S${String(episode.seasonNumber).padStart(2, "0")}E${String(episode.episodeNumber).padStart(2, "0")}`
+    : null;
+  const displayTitle = episodeCode
+    ? episodeTitle || `Episode ${episodeCode}`
+    : item.title;
+  const openDetails = () => {
+    if (episode) onOpen?.(item, episode);
+    else onOpen?.(item);
+  };
   const alternateSources = (item.sources ?? []).filter((source) =>
     defaultEpisode
       ? source.seasonNumber === defaultEpisode.seasonNumber &&
@@ -188,14 +205,16 @@ export function TitleCard({
   const availabilityText =
     playbackEnabled && item.kind === "series"
       ? checkStatus === "checking"
-        ? "Checking first episode…"
+        ? `Checking ${episodeCode ?? "first episode"}…`
         : checkStatus === "failed"
-          ? "First episode unavailable · see episodes"
+          ? `${episodeCode ?? "First episode"} unavailable · see episodes`
           : checkStatus === "ready"
             ? item.availability === "available" ||
               item.availability === "partial"
-              ? `First episode ready · ${availabilityLabel(item)}`
-              : "First episode ready on streaming source"
+              ? episodeCode
+                ? `${episodeCode} ready${item.formats[0]?.label ? ` · ${item.formats[0].label}` : ""}`
+                : `First episode ready · ${availabilityLabel(item)}`
+              : `${episodeCode ?? "First episode"} ready on streaming source`
             : availabilityLabel(item)
       : playbackEnabled
         ? checkStatus === "checking"
@@ -244,7 +263,8 @@ export function TitleCard({
     playbackEnabled && item.kind !== "series" && checkStatus === "failed"
       ? "title-card--playback-unavailable"
       : "",
-    item.kind === "series" ? "title-card--series" : "",
+    item.kind === "series" && !episodeCode ? "title-card--series" : "",
+    episodeCode ? "title-card--episode" : "",
     item.kind === "series" &&
     item.seriesCoverage &&
     !item.seriesCoverage.complete
@@ -278,15 +298,15 @@ export function TitleCard({
           )
         )
           return;
-        onOpen(item);
+        openDetails();
       }}
     >
       {onOpen ? (
         <button
           className="title-card__art title-card__art--button"
           type="button"
-          onClick={() => onOpen(item)}
-          aria-label={`Details for ${item.title}`}
+          onClick={openDetails}
+          aria-label={`Details for ${item.title}${episodeCode ? ` ${episodeCode}` : ""}`}
         >
           {artwork}
         </button>
@@ -297,26 +317,37 @@ export function TitleCard({
       )}
       <div className="title-card__content">
         {hero && <p className="eyebrow title-card__label">Best match</p>}
+        {episodeCode && (
+          <p className="title-card__episode-label">
+            {item.title} · {episodeCode}
+          </p>
+        )}
         <div className="title-card__chips">
           <span>
-            {item.kind === "series" ? "Series" : "Movie"}
-            {item.year ? ` · ${item.year}` : ""}
+            {episodeCode
+              ? "Episode"
+              : item.kind === "series"
+                ? "Series"
+                : "Movie"}
+            {!episodeCode && item.year ? ` · ${item.year}` : ""}
           </span>
-          <span
-            className={`title-card__rating ${ratingBadgeClass}`}
-            aria-label={
-              score !== null && score < 60
-                ? `${ratingLabel(item)}, low rating`
-                : undefined
-            }
-          >
-            {ratingLabel(item)}
-            {score !== null && score < 60 && (
-              <b className="title-card__rating-warning" aria-hidden="true">
-                !
-              </b>
-            )}
-          </span>
+          {!episodeCode && (
+            <span
+              className={`title-card__rating ${ratingBadgeClass}`}
+              aria-label={
+                score !== null && score < 60
+                  ? `${ratingLabel(item)}, low rating`
+                  : undefined
+              }
+            >
+              {ratingLabel(item)}
+              {score !== null && score < 60 && (
+                <b className="title-card__rating-warning" aria-hidden="true">
+                  !
+                </b>
+              )}
+            </span>
+          )}
           {item.matchPercent !== null && (
             <span>Match {item.matchPercent}%</span>
           )}
@@ -330,17 +361,23 @@ export function TitleCard({
             <button
               className="title-card__title-button"
               type="button"
-              onClick={() => onOpen(item)}
-              aria-label={`Details for ${item.title}`}
+              onClick={openDetails}
+              aria-label={`Details for ${item.title}${episodeCode ? ` ${episodeCode}` : ""}`}
             >
-              {item.title}
+              {displayTitle}
             </button>
           ) : (
-            item.title
+            displayTitle
           )}
         </h3>
-        {reason && <p className="title-card__reason">{reason}</p>}
-        {hero && <p className="title-card__synopsis">{item.synopsis}</p>}
+        {reason && !episodeCode && (
+          <p className="title-card__reason">{reason}</p>
+        )}
+        {(episodeCode ? episodeSynopsis : hero ? item.synopsis : null) && (
+          <p className="title-card__synopsis">
+            {episodeCode ? episodeSynopsis : item.synopsis}
+          </p>
+        )}
         <p className="title-card__availability">
           <span
             className={`availability-dot availability-dot--${playbackEnabled && item.kind !== "series" && checkStatus === "failed" ? "playback-failed" : playbackEnabled && checkStatus === "ready" ? "available" : displayAvailability}`}
@@ -372,7 +409,7 @@ export function TitleCard({
                 : "Sorry, this title is currently unavailable."}
             </p>
           )}
-        {item.seriesCoverage && (
+        {item.seriesCoverage && !episodeCode && (
           <p className="series-coverage">
             {item.seriesCoverage.seasonsAvailable}/
             {item.seriesCoverage.seasonsTotal} seasons ·{" "}
@@ -394,9 +431,18 @@ export function TitleCard({
             <button
               className="button button--secondary button--compact"
               type="button"
-              onClick={() => onOpen(item)}
+              onClick={openDetails}
             >
               Details
+            </button>
+          )}
+          {episodeCode && onOpen && (
+            <button
+              className="button button--secondary button--compact"
+              type="button"
+              onClick={() => onOpen(item)}
+            >
+              More episodes
             </button>
           )}
           {item.kind === "series" && onOpen ? (
@@ -412,7 +458,7 @@ export function TitleCard({
               onClick={() =>
                 checkStatus === "ready"
                   ? onPlay(item, defaultEpisode)
-                  : onOpen(item)
+                  : openDetails()
               }
             >
               {checkStatus === "checking"

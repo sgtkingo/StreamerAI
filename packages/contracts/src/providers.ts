@@ -87,6 +87,7 @@ export const EpisodeStructureSchema = z
     ref: ExternalEntityRefSchema,
     episodeNumber: z.number().int().positive(),
     title: z.string().trim().min(1).max(240),
+    synopsis: z.string().trim().max(1_500).optional(),
     airDate: z.string().date().nullable(),
     runtimeMinutes: z.number().int().positive().nullable(),
     provenance: FieldProvenanceSchema,
@@ -137,6 +138,7 @@ export const MediaSearchRequestSchema = z
     year: z.number().int().min(1870).max(2200).nullable(),
     seasonNumber: z.number().int().nonnegative().nullable(),
     episodeNumber: z.number().int().positive().nullable(),
+    episodeSearchTerm: z.string().trim().min(1).max(240).optional(),
     externalRefs: z.array(ExternalEntityRefSchema).max(20),
     limit: z.number().int().min(1).max(100),
   })

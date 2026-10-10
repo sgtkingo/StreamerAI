@@ -159,7 +159,192 @@ function coordinatorDependencies() {
   return { agent, generateStructured, metadata, media };
 }
 
+async function seriesCoordinator(
+  dependencies: ReturnType<typeof coordinatorDependencies>,
+) {
+  return new LiveContentCoordinator({
+    ...dependencies,
+    integrationStateStore: await connectedStateStore(),
+    inference: {
+      provider: "ollama",
+      baseUrl: "http://127.0.0.1:11434",
+      model: "qwen3.5:4b",
+      minimumVersion: "0.5.0",
+      contextTokens: 4096,
+      maxOutputTokens: 512,
+      timeoutMs: 60_000,
+    },
+    localeForProfile: () => "en",
+    now: () => new Date(NOW),
+  });
+}
+
+function numberedSeriesStructure() {
+  return {
+    seriesRef: { providerId: "tmdb", externalId: "42", entityType: "series" },
+    seasons: [
+      {
+        ref: { providerId: "tmdb", externalId: "43", entityType: "season" },
+        seasonNumber: 0,
+        title: "Specials",
+        provenance,
+        episodes: Array.from({ length: 10 }, (_, index) => ({
+          ref: {
+            providerId: "tmdb",
+            externalId: String(100 + index),
+            entityType: "episode",
+          },
+          episodeNumber: index + 1,
+          title: `Special ${index + 1}`,
+          airDate: null,
+          runtimeMinutes: 30,
+          provenance,
+        })),
+      },
+      {
+        ref: { providerId: "tmdb", externalId: "44", entityType: "season" },
+        seasonNumber: 1,
+        title: "Season 1",
+        provenance,
+        episodes: Array.from({ length: 5 }, (_, index) => ({
+          ref: {
+            providerId: "tmdb",
+            externalId: String(200 + index),
+            entityType: "episode",
+          },
+          episodeNumber: index + 1,
+          title:
+            index === 4 ? "The Heirs of the Dragon" : `Episode ${index + 1}`,
+          synopsis: index === 4 ? "The heir faces a difficult choice." : "",
+          airDate: null,
+          runtimeMinutes: 30,
+          provenance,
+        })),
+      },
+    ],
+    complete: true,
+    provenance,
+  };
+}
+
 describe("LiveContentCoordinator", () => {
+  it("finds a single requested episode by its cumulative part number", async () => {
+    const dependencies = coordinatorDependencies();
+    const panTau = {
+      ref: {
+        providerId: "tmdb",
+        externalId: "42",
+        entityType: "series" as const,
+      },
+      kind: "series" as const,
+      title: "Pan Tau",
+      originalTitle: "Pan Tau",
+      year: 1970,
+      confidence: 1,
+      provenance,
+    };
+    vi.mocked(dependencies.metadata.search).mockResolvedValue([panTau]);
+    vi.mocked(dependencies.metadata.getTitle).mockResolvedValue({
+      ...metadataPayload("42", "Pan Tau"),
+      ref: panTau.ref,
+      kind: "series",
+      year: 1970,
+    });
+    dependencies.metadata.getSeriesStructure = vi
+      .fn()
+      .mockResolvedValue(numberedSeriesStructure());
+    vi.mocked(dependencies.media.search).mockImplementation(async (request) =>
+      request.episodeSearchTerm === "15"
+        ? [
+            {
+              ref: { providerId: "webshare", candidateId: "wrong-episode" },
+              releaseName: "Pan.Tau.S02E05.mkv",
+              sizeBytes: 100,
+              seasonNumber: null,
+              episodeNumber: null,
+              confidence: 0.8,
+              provenance: { ...provenance, providerId: "webshare" },
+            },
+            {
+              ref: { providerId: "webshare", candidateId: "part-15" },
+              releaseName: "Pan.Tau.Part.15.mkv",
+              sizeBytes: 100,
+              seasonNumber: null,
+              episodeNumber: null,
+              confidence: 0.8,
+              provenance: { ...provenance, providerId: "webshare" },
+            },
+          ]
+        : [],
+    );
+    const coordinator = await seriesCoordinator(dependencies);
+    const result = await coordinator.discoverFast(
+      {
+        profileId: "default",
+        sessionId: "shared-session",
+        message: "Pan Tau S01E05",
+        idempotencyKey: "direct-episode",
+      },
+      NOW,
+    );
+    expect(dependencies.metadata.search).toHaveBeenCalledWith(
+      expect.objectContaining({ query: "Pan Tau", kind: "series" }),
+      expect.anything(),
+    );
+    expect(result.bestMatch?.title.sources?.[0]).toMatchObject({
+      candidateId: "part-15",
+      seasonNumber: 1,
+      episodeNumber: 5,
+    });
+    expect(result.bestMatch?.episode).toEqual({
+      seasonNumber: 1,
+      episodeNumber: 5,
+    });
+    expect(result.bestMatch?.episodeTitle).toBe("The Heirs of the Dragon");
+    expect(result.bestMatch?.episodeSynopsis).toBe(
+      "The heir faces a difficult choice.",
+    );
+    expect(dependencies.media.inspect).not.toHaveBeenCalledWith(
+      { providerId: "webshare", candidateId: "wrong-episode" },
+      expect.anything(),
+    );
+    expect(dependencies.media.search).toHaveBeenCalledWith(
+      expect.objectContaining({ episodeSearchTerm: "15" }),
+      expect.anything(),
+    );
+    const deepResult = await coordinator.discover(
+      {
+        profileId: "default",
+        sessionId: "shared-session",
+        message: "Pan Tau S01E05",
+        idempotencyKey: "deep-direct-episode",
+      },
+      NOW,
+    );
+    expect(deepResult.bestMatch?.title.sources?.[0]?.candidateId).toBe(
+      "part-15",
+    );
+    expect(dependencies.generateStructured).not.toHaveBeenCalled();
+
+    const title = {
+      ...new PreviewContentProvider()
+        .bootstrapTitles()
+        .find((item) => item.kind === "series")!,
+      id: "sai:tmdb:series:42",
+      title: "Pan Tau",
+      originalTitle: "Pan Tau",
+    };
+    const sources = await coordinator.forceSearchEpisode("default", title, {
+      seasonNumber: 1,
+      episodeNumber: 5,
+    });
+    expect(sources[0]).toMatchObject({
+      candidateId: "part-15",
+      seasonNumber: 1,
+      episodeNumber: 5,
+    });
+  });
+
   it("returns validated quick matches without starting the local agent", async () => {
     const dependencies = coordinatorDependencies();
     vi.mocked(dependencies.media.search).mockImplementation(async () =>
@@ -691,6 +876,7 @@ describe("LiveContentCoordinator", () => {
               },
               episodeNumber,
               title: `Episode ${episodeNumber}`,
+              synopsis: `Episode ${episodeNumber} description.`,
               airDate: "2021-01-01",
               runtimeMinutes: 42,
               provenance,
@@ -722,6 +908,9 @@ describe("LiveContentCoordinator", () => {
     await vi.waitFor(async () => {
       const detail = await coordinator.getSeriesDetail("default", title);
       expect(detail.seasons[0]?.episodes[0]?.availability).toBe("available");
+      expect(detail.seasons[0]?.episodes[0]?.synopsis).toBe(
+        "Episode 1 description.",
+      );
       expect(detail.seasons[0]?.episodes[1]?.availability).toBe("searching");
     });
     expect(media.search).toHaveBeenCalledWith(

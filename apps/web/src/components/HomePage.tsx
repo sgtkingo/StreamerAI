@@ -28,15 +28,14 @@ interface HomePageProps {
     grant: PlaybackGrant,
     episode?: EpisodeSelection,
   ) => void;
-  onOpenTitle: (item: CatalogTitle) => void;
+  onOpenTitle: (item: CatalogTitle, episode?: EpisodeSelection) => void;
 }
 
-const stageLabels = [
-  "Understanding your request",
-  "Finding possible titles",
-  "Validating metadata",
-  "Checking your streaming source",
-  "Ranking verified matches",
+const searchMessages = [
+  "Thinking so hard…",
+  "Looking for a good fit…",
+  "Checking the details…",
+  "Putting your shortlist together…",
 ];
 
 type DiscoveryUiResponse = DiscoveryResponse;
@@ -71,12 +70,13 @@ export function HomePage({
   const [chatError, setChatError] = useState("");
   const [result, setResult] = useState<DiscoveryUiResponse | null>(null);
   const [resultQuery, setResultQuery] = useState("");
+  const [primaryQuery, setPrimaryQuery] = useState("");
   const [resultPhase, setResultPhase] = useState<"quick" | "deep" | null>(null);
+  const [visibleCandidateCount, setVisibleCandidateCount] = useState(3);
   const [isSearching, setIsSearching] = useState(false);
-  const [fastPending, setFastPending] = useState(false);
   const [isStopping, setIsStopping] = useState(false);
   const [isWakingAgent, setIsWakingAgent] = useState(false);
-  const [activeStage, setActiveStage] = useState(0);
+  const [searchMessageIndex, setSearchMessageIndex] = useState(0);
   const [isLoadingFeed, setIsLoadingFeed] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -164,13 +164,13 @@ export function HomePage({
     if (!result)
       searchProgressRef.current?.scrollIntoView?.({
         behavior: "smooth",
-        block: "center",
+        block: "start",
       });
     const interval = window.setInterval(() => {
-      setActiveStage((stage) => Math.min(stage + 1, isWakingAgent ? 1 : 3));
-    }, 650);
+      setSearchMessageIndex((index) => (index + 1) % searchMessages.length);
+    }, 3_000);
     return () => window.clearInterval(interval);
-  }, [isSearching, isStopping, isWakingAgent, result]);
+  }, [isSearching, isStopping, result]);
 
   useEffect(() => {
     if (!isSearching || !isWakingAgent) return;
@@ -258,7 +258,6 @@ export function HomePage({
     const fastTicket = ++fastSerial.current;
     activeFast.current?.abort();
     activeFast.current = null;
-    setFastPending(false);
     dualSearchingRef.current = false;
     chatSerial.current += 1;
     if (activeChatKey.current) {
@@ -276,14 +275,16 @@ export function HomePage({
     setChatError("");
     setResult(null);
     setResultQuery(message);
+    setPrimaryQuery(message);
     setResultPhase(null);
+    setVisibleCandidateCount(3);
     setTurns([]);
     activeSearch.current = controller;
     activeSearchKey.current = idempotencyKey;
     setIsSearching(true);
     setIsStopping(false);
     setIsWakingAgent(false);
-    setActiveStage(0);
+    setSearchMessageIndex(0);
     setError("");
     setNotice("");
     setAnnouncement("StreamerAI is finding and validating titles.");
@@ -292,7 +293,6 @@ export function HomePage({
       dualSearchingRef.current = true;
       const fastController = new AbortController();
       activeFast.current = fastController;
-      setFastPending(true);
       const sessionId =
         globalThis.crypto?.randomUUID?.() ??
         `search-${Date.now()}-${turnId}-${Math.random().toString(36).slice(2, 10)}`;
@@ -354,7 +354,6 @@ export function HomePage({
           if (fastTicket !== fastSerial.current) return;
           quickDone = true;
           activeFast.current = null;
-          setFastPending(false);
         });
       void api
         .discover({ ...request, createSession: true }, controller.signal)
@@ -363,7 +362,6 @@ export function HomePage({
             return;
           deepResult = response;
           publish();
-          setActiveStage(stageLabels.length - 1);
           setAnnouncement("Deep search finished; results have been enriched.");
         })
         .catch((deepError: unknown) => {
@@ -392,7 +390,6 @@ export function HomePage({
             status.state === "unloaded"
           ) {
             setIsWakingAgent(true);
-            setActiveStage((stage) => Math.min(stage, 1));
           }
         })
         .catch(() => undefined);
@@ -409,7 +406,6 @@ export function HomePage({
             return;
           if (status.state === "unloaded") {
             setIsWakingAgent(true);
-            setActiveStage((stage) => Math.min(stage, 1));
             setAnnouncement("");
           }
         } catch {
@@ -427,9 +423,6 @@ export function HomePage({
         controller.signal,
       );
       setIsWakingAgent(false);
-      setActiveStage(stageLabels.length - 1);
-      // Let the final validation cue register before revealing a fast response.
-      await new Promise((resolve) => window.setTimeout(resolve, 450));
       if (serial !== searchSerial.current || controller.signal.aborted) return;
       scrollToNextResult.current = true;
       setResult(response as DiscoveryUiResponse);
@@ -473,7 +466,6 @@ export function HomePage({
     fastSerial.current += 1;
     activeFast.current?.abort();
     activeFast.current = null;
-    setFastPending(false);
     activeChat.current = controller;
     activeChatKey.current = idempotencyKey;
     setChatSearching(true);
@@ -495,6 +487,7 @@ export function HomePage({
       setResult(response);
       setResultQuery(message);
       setResultPhase("deep");
+      setVisibleCandidateCount(3);
       setTurns((current) => [
         ...current,
         {
@@ -573,13 +566,19 @@ export function HomePage({
   const displayGroups = result
     ? groupDiscoveryResults(
         result,
-        (item) => playbackChecks.stateFor(item.title)?.status,
+        (item) => playbackChecks.stateFor(item.title, item.episode)?.status,
         resultQuery,
       )
     : null;
   const availableResults = displayGroups?.available ?? [];
   const unavailableResults = displayGroups?.unavailable ?? [];
   const checkingResults = displayGroups?.checking ?? [];
+  const candidates = [
+    ...availableResults,
+    ...checkingResults,
+    ...unavailableResults,
+  ];
+  const visibleCandidates = candidates.slice(0, visibleCandidateCount);
   const wakeMessage =
     locale === "cs"
       ? "Ouč, agent usnul. Musím ho vzbudit, počkej chvíli…"
@@ -667,28 +666,18 @@ export function HomePage({
             aria-live="polite"
             aria-label="Discovery progress"
           >
-            {isStopping ? (
-              <span className="is-active">
-                <span className="pipeline__indicator" aria-hidden="true" />
-                Stopping search…
-              </span>
-            ) : (
-              stageLabels.map((label, index) => (
-                <span
-                  key={label}
-                  className={
-                    index === activeStage
-                      ? "is-active"
-                      : index < activeStage
-                        ? "is-done"
-                        : ""
-                  }
-                >
-                  <span className="pipeline__indicator" aria-hidden="true" />
-                  {label}
-                </span>
-              ))
-            )}
+            <span className="pipeline__dots" aria-hidden="true">
+              <span />
+              <span />
+              <span />
+            </span>
+            <span className="pipeline__message">
+              {isStopping
+                ? "Stopping search…"
+                : isWakingAgent
+                  ? "Waking up StreamerAI…"
+                  : searchMessages[searchMessageIndex]}
+            </span>
           </section>
           {isWakingAgent && (
             <p className="agent-wake-notice" role="status">
@@ -703,14 +692,12 @@ export function HomePage({
       <p className="sr-only" role="status" aria-live="polite">
         {announcement}
       </p>
-      {fastPending && (
-        <p className="preview-notice" role="status">
-          {isSearching
-            ? "Checking likely matches while StreamerAI explores your request."
-            : "Still checking likely matches."}
+      {result && !isSearching && !chatSearching && displayGroups?.bestMatch && (
+        <p className="best-suggestion-intro">
+          Best suggestion for <span>“{primaryQuery}”</span>
         </p>
       )}
-      {result && (
+      {(result || isSearching) && (
         <section
           className="discovery-results"
           aria-labelledby="results-heading"
@@ -718,19 +705,21 @@ export function HomePage({
           <div className="section-heading">
             <div>
               <p className="eyebrow">
-                {resultPhase === "quick"
-                  ? isSearching
-                    ? "Quick suggestions · deep search running"
-                    : "Quick suggestions"
-                  : "StreamerAI answer"}
+                {!result
+                  ? "Searching for your matches"
+                  : resultPhase === "quick"
+                    ? isSearching
+                      ? "Quick suggestions · deep search running"
+                      : "Quick suggestions"
+                    : "StreamerAI answer"}
               </p>
               <h2 id="results-heading" ref={resultsHeadingRef} tabIndex={-1}>
                 A considered shortlist
               </h2>
             </div>
-            {result.reply && <p>{result.reply}</p>}
+            {result?.reply && <p>{result.reply}</p>}
           </div>
-          {result.warnings.map((warning) => (
+          {result?.warnings.map((warning) => (
             <p className="preview-notice" key={warning}>
               {warning}
             </p>
@@ -738,6 +727,9 @@ export function HomePage({
           {displayGroups?.bestMatch && (
             <TitleCard
               item={displayGroups.bestMatch.title}
+              episode={displayGroups.bestMatch.episode}
+              episodeTitle={displayGroups.bestMatch.episodeTitle}
+              episodeSynopsis={displayGroups.bestMatch.episodeSynopsis}
               preferences={playbackPreferences}
               onOpen={onOpenTitle}
               reason={displayGroups.bestMatch.reason}
@@ -746,87 +738,78 @@ export function HomePage({
               onCheck={playbackChecks.check}
               playbackCheck={playbackChecks.stateFor(
                 displayGroups.bestMatch.title,
+                displayGroups.bestMatch.episode,
               )}
               onAdd={add}
               playbackEnabled={resultMode === "live"}
               pendingAction={pendingFor(displayGroups.bestMatch.title)}
             />
           )}
-          {availableResults.length > 0 && (
-            <div className="result-group">
-              <h3>Available to stream</h3>
-              <div className="title-grid">
-                {availableResults.map(({ title, reason }) => (
+          {!displayGroups?.bestMatch && isSearching && (
+            <div className="shortlist-placeholder" role="status">
+              <div className="shortlist-placeholder__art" aria-hidden="true" />
+              <div
+                className="shortlist-placeholder__content"
+                aria-hidden="true"
+              >
+                <span className="shortlist-placeholder__line shortlist-placeholder__line--eyebrow" />
+                <span className="shortlist-placeholder__line shortlist-placeholder__line--title" />
+                <span className="shortlist-placeholder__line shortlist-placeholder__line--title-short" />
+                <span className="shortlist-placeholder__line shortlist-placeholder__line--description" />
+                <span className="shortlist-placeholder__line shortlist-placeholder__line--description-short" />
+                <span className="shortlist-placeholder__line shortlist-placeholder__line--button" />
+              </div>
+              <span className="sr-only">Finding your best match…</span>
+            </div>
+          )}
+          {visibleCandidates.length > 0 && (
+            <div
+              className="shortlist-alternatives"
+              role="group"
+              aria-label="More matches"
+            >
+              {visibleCandidates.map(
+                ({ title, reason, episode, episodeTitle, episodeSynopsis }) => (
                   <TitleCard
                     key={title.id}
                     item={title}
+                    episode={episode}
+                    episodeTitle={episodeTitle}
+                    episodeSynopsis={episodeSynopsis}
                     preferences={playbackPreferences}
                     onOpen={onOpenTitle}
                     reason={reason}
                     onPlay={play}
                     onCheck={playbackChecks.check}
-                    playbackCheck={playbackChecks.stateFor(title)}
+                    playbackCheck={playbackChecks.stateFor(title, episode)}
                     onAdd={add}
                     playbackEnabled={resultMode === "live"}
                     pendingAction={pendingFor(title)}
                   />
-                ))}
-              </div>
+                ),
+              )}
             </div>
           )}
-          {unavailableResults.length > 0 && (
-            <div className="result-group result-group--unavailable">
-              <h3>Found, not currently available</h3>
-              <div className="title-grid">
-                {unavailableResults.map(({ title, reason }) => (
-                  <TitleCard
-                    key={title.id}
-                    item={title}
-                    preferences={playbackPreferences}
-                    onOpen={onOpenTitle}
-                    reason={reason}
-                    onPlay={play}
-                    onCheck={playbackChecks.check}
-                    playbackCheck={playbackChecks.stateFor(title)}
-                    onAdd={add}
-                    playbackEnabled={resultMode === "live"}
-                    pendingAction={pendingFor(title)}
-                  />
-                ))}
-              </div>
+          {result && candidates.length > visibleCandidateCount && (
+            <div className="shortlist-more">
+              <button
+                className="button button--secondary"
+                type="button"
+                onClick={() => setVisibleCandidateCount((count) => count + 3)}
+              >
+                Show More
+              </button>
             </div>
           )}
-          {checkingResults.length > 0 && (
-            <div className="result-group result-group--unknown">
-              <h3>
-                {resultMode === "live"
-                  ? "Checking availability"
-                  : "Availability not verified"}
-              </h3>
-              <p className="result-group__description">
-                {resultMode === "live"
-                  ? "Streaming sources are being verified. Play becomes available after a successful check."
-                  : "These titles need a connected streaming source before playback can be checked."}
+          {result &&
+            !isSearching &&
+            !chatSearching &&
+            candidates.length <= visibleCandidateCount &&
+            result.stage === "completed" && (
+              <p className="shortlist-end">
+                Sorry, there are no more suggestions for this search.
               </p>
-              <div className="title-grid">
-                {checkingResults.map(({ title, reason }) => (
-                  <TitleCard
-                    key={title.id}
-                    item={title}
-                    preferences={playbackPreferences}
-                    onOpen={onOpenTitle}
-                    reason={reason}
-                    onPlay={play}
-                    onCheck={playbackChecks.check}
-                    playbackCheck={playbackChecks.stateFor(title)}
-                    onAdd={add}
-                    playbackEnabled={resultMode === "live"}
-                    pendingAction={pendingFor(title)}
-                  />
-                ))}
-              </div>
-            </div>
-          )}
+            )}
         </section>
       )}
 

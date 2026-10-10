@@ -288,6 +288,7 @@ export const SeriesEpisodeDetailSchema = z.object({
   seasonNumber: z.number().int().nonnegative(),
   episodeNumber: z.number().int().positive(),
   title: z.string().min(1).max(240),
+  synopsis: z.string().trim().max(1_500).optional(),
   airDate: z.string().date().nullable(),
   availability: z.enum(["available", "searching", "unavailable"]),
 });
@@ -423,8 +424,25 @@ const RankedTitleSchema = z
   .object({
     title: CatalogTitleSchema,
     reason: z.string().trim().min(1).max(320),
+    episode: EpisodeSelectionSchema.optional(),
+    episodeTitle: z.string().trim().min(1).max(240).optional(),
+    episodeSynopsis: z.string().trim().min(1).max(1_500).optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((item, context) => {
+    if ((item.episodeTitle || item.episodeSynopsis) && !item.episode)
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["episode"],
+        message: "Episode metadata requires an episode selection.",
+      });
+    if (item.episode && item.title.kind !== "series")
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["episode"],
+        message: "An episode result requires a series title.",
+      });
+  });
 export type RankedTitle = z.infer<typeof RankedTitleSchema>;
 
 export const DiscoveryResponseSchema = z

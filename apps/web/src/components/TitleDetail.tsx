@@ -15,6 +15,7 @@ interface Props {
   api: StreamerApi;
   profileId: string;
   title: CatalogTitle;
+  initialEpisode?: EpisodeSelection;
   playbackEnabled: boolean;
   suspended?: boolean;
   onClose: () => void;
@@ -43,6 +44,7 @@ export function TitleDetail({
   api,
   profileId,
   title,
+  initialEpisode,
   playbackEnabled,
   suspended = false,
   onClose,
@@ -53,7 +55,11 @@ export function TitleDetail({
   const [detail, setDetail] = useState<Detail | null>(null);
   const [error, setError] = useState("");
   const { showToast } = useToasts();
-  const [selectedSeason, setSelectedSeason] = useState<number | null>(null);
+  const [selectedSeason, setSelectedSeason] = useState<number | null>(
+    initialEpisode?.seasonNumber ?? null,
+  );
+  const [selectedEpisode, setSelectedEpisode] =
+    useState<EpisodeSelection | null>(initialEpisode ?? null);
   const [playing, setPlaying] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [openSourceFor, setOpenSourceFor] = useState<string | null>(null);
@@ -70,6 +76,10 @@ export function TitleDetail({
   >({});
   const openSourceForRef = useRef(openSourceFor);
   openSourceForRef.current = openSourceFor;
+  const selectedEpisodeRef = useRef(selectedEpisode);
+  selectedEpisodeRef.current = selectedEpisode;
+  const initialSeasonNumber = initialEpisode?.seasonNumber;
+  const initialEpisodeNumber = initialEpisode?.episodeNumber;
 
   useEffect(() => {
     if (error) showToast(error, "error");
@@ -78,7 +88,12 @@ export function TitleDetail({
     "checking" | "ready" | "unavailable"
   >("checking");
   const closeRef = useRef<HTMLButtonElement>(null);
+  const backRef = useRef<HTMLButtonElement>(null);
   const dialogRef = useRef<HTMLElement>(null);
+  const navigationFocusRef = useRef<"back" | "episode" | "seasons" | null>(
+    null,
+  );
+  const navigationEpisodeRef = useRef<string | null>(null);
   const scrollTopRef = useRef(0);
   const lastPlayedEpisodeRef = useRef<string | null>(null);
   const wasSuspendedRef = useRef(false);
@@ -87,7 +102,15 @@ export function TitleDetail({
     let active = true;
     setDetail(null);
     setError("");
-    setSelectedSeason(null);
+    setSelectedSeason(initialSeasonNumber ?? null);
+    setSelectedEpisode(
+      initialSeasonNumber !== undefined && initialEpisodeNumber !== undefined
+        ? {
+            seasonNumber: initialSeasonNumber,
+            episodeNumber: initialEpisodeNumber,
+          }
+        : null,
+    );
     setMovieStatus("checking");
     setOpenSourceFor(null);
     setForceSearch(null);
@@ -104,7 +127,7 @@ export function TitleDetail({
     return () => {
       active = false;
     };
-  }, [api, profileId, title.id]);
+  }, [api, profileId, title.id, initialSeasonNumber, initialEpisodeNumber]);
 
   useEffect(() => {
     const status = detail?.series?.status;
@@ -181,7 +204,13 @@ export function TitleDetail({
       if (event.key === "Escape") {
         event.preventDefault();
         if (openSourceForRef.current !== null) setOpenSourceFor(null);
-        else onClose();
+        else if (selectedEpisodeRef.current !== null) {
+          const episode = selectedEpisodeRef.current;
+          navigationFocusRef.current = "episode";
+          navigationEpisodeRef.current = `${episode.seasonNumber}:${episode.episodeNumber}`;
+          setSelectedSeason(episode.seasonNumber);
+          setSelectedEpisode(null);
+        } else onClose();
         return;
       }
       if (event.key !== "Tab" || !dialogRef.current) return;
@@ -216,11 +245,42 @@ export function TitleDetail({
     }
   }, [suspended]);
 
+  useLayoutEffect(() => {
+    if (suspended || !dialogRef.current) return;
+    const target = navigationFocusRef.current;
+    const button =
+      target === "back"
+        ? backRef.current
+        : target === "episode" && navigationEpisodeRef.current
+          ? dialogRef.current.querySelector<HTMLButtonElement>(
+              `button[data-episode-details="${navigationEpisodeRef.current}"]`,
+            )
+          : target === "seasons"
+            ? dialogRef.current.querySelector<HTMLButtonElement>(
+                ".title-detail__seasons button",
+              )
+            : null;
+    if (button) {
+      button.focus({ preventScroll: true });
+      navigationFocusRef.current = null;
+    }
+  }, [selectedEpisode, selectedSeason, detail?.series, suspended]);
+
   const current = detail?.title ?? title;
   const seasons = detail?.series?.seasons ?? [];
   const shownSeason =
     seasons.find((season) => season.seasonNumber === selectedSeason) ??
     seasons[0];
+  const episodeCode = selectedEpisode
+    ? `S${String(selectedEpisode.seasonNumber).padStart(2, "0")}E${String(selectedEpisode.episodeNumber).padStart(2, "0")}`
+    : null;
+  const episodeDetail = selectedEpisode
+    ? seasons
+        .find((season) => season.seasonNumber === selectedEpisode.seasonNumber)
+        ?.episodes.find(
+          (episode) => episode.episodeNumber === selectedEpisode.episodeNumber,
+        )
+    : null;
   const sourcesFor = (episode?: EpisodeSelection) =>
     (current.sources ?? []).filter((source) =>
       episode
@@ -228,6 +288,30 @@ export function TitleDetail({
           source.episodeNumber === episode.episodeNumber
         : source.seasonNumber === null && source.episodeNumber === null,
     );
+  const selectedEpisodeKey = selectedEpisode
+    ? `${selectedEpisode.seasonNumber}:${selectedEpisode.episodeNumber}`
+    : null;
+  const selectedEpisodeSearch = selectedEpisodeKey
+    ? episodeSearches[selectedEpisodeKey]
+    : undefined;
+  const episodePlayable =
+    episodeDetail?.availability === "available" ||
+    (selectedEpisode !== null && sourcesFor(selectedEpisode).length > 0);
+  const openEpisode = (episode: EpisodeSelection) => {
+    navigationFocusRef.current = "back";
+    setSelectedSeason(episode.seasonNumber);
+    setSelectedEpisode(episode);
+    setOpenSourceFor(null);
+    if (dialogRef.current) dialogRef.current.scrollTop = 0;
+  };
+  const showSeries = (seasonNumber: number | null) => {
+    navigationFocusRef.current = seasonNumber === null ? "seasons" : "episode";
+    navigationEpisodeRef.current = selectedEpisodeKey;
+    setSelectedSeason(seasonNumber);
+    setSelectedEpisode(null);
+    setOpenSourceFor(null);
+    if (dialogRef.current) dialogRef.current.scrollTop = 0;
+  };
   const play = async (
     episode?: EpisodeSelection,
     episodeTitle?: string,
@@ -349,7 +433,7 @@ export function TitleDetail({
         className="title-detail"
         role="dialog"
         aria-modal="true"
-        aria-label={`Details for ${title.title}`}
+        aria-label={`Details for ${title.title}${episodeCode ? ` ${episodeCode}` : ""}`}
       >
         <div
           className="title-detail__hero"
@@ -370,28 +454,100 @@ export function TitleDetail({
           >
             ×
           </button>
+          {selectedEpisode && (
+            <button
+              ref={backRef}
+              className="title-detail__back"
+              type="button"
+              onClick={() => showSeries(selectedEpisode.seasonNumber)}
+              aria-label={`Back to season ${selectedEpisode.seasonNumber}`}
+            >
+              <span aria-hidden="true">←</span> Season{" "}
+              {selectedEpisode.seasonNumber}
+            </button>
+          )}
           <p className="eyebrow">
-            {current.kind === "series" ? "Series" : "Movie"}
-            {current.year ? ` · ${current.year}` : ""}
+            {selectedEpisode
+              ? `${current.title} · ${episodeCode}`
+              : current.kind === "series"
+                ? "Series"
+                : "Movie"}
+            {!selectedEpisode && current.year ? ` · ${current.year}` : ""}
           </p>
-          <h2>{current.title}</h2>
-          {current.genres.length > 0 && (
+          <h2>
+            {selectedEpisode
+              ? (episodeDetail?.title ??
+                `Episode ${selectedEpisode.episodeNumber}`)
+              : current.title}
+          </h2>
+          {!selectedEpisode && current.genres.length > 0 && (
             <ul className="title-detail__genres" aria-label="Genres">
               {current.genres.map((genre) => (
                 <li key={genre}>{genre}</li>
               ))}
             </ul>
           )}
-          <p>{current.synopsis}</p>
-          <div className="title-detail__ratings">
-            {current.ratings.map((rating) => (
-              <span key={rating.source}>
-                {rating.source}{" "}
-                {Math.round((rating.value / rating.scale) * 100)}%
-              </span>
-            ))}
-          </div>
+          <p>
+            {selectedEpisode
+              ? episodeDetail?.synopsis ||
+                (detail
+                  ? "Episode description is not available."
+                  : "Loading episode details…")
+              : current.synopsis}
+          </p>
+          {!selectedEpisode && (
+            <div className="title-detail__ratings">
+              {current.ratings.map((rating) => (
+                <span key={rating.source}>
+                  {rating.source}{" "}
+                  {Math.round((rating.value / rating.scale) * 100)}%
+                </span>
+              ))}
+            </div>
+          )}
           <div className="title-detail__actions">
+            {selectedEpisode && playbackEnabled && (
+              <button
+                className={`button button--primary button--compact${episodePlayable && playing === null ? " button--play-action" : ""}`}
+                type="button"
+                data-episode={selectedEpisodeKey ?? undefined}
+                disabled={!episodePlayable || playing !== null}
+                onClick={() => void play(selectedEpisode, episodeDetail?.title)}
+              >
+                {playing === selectedEpisodeKey ? (
+                  "Starting…"
+                ) : episodePlayable ? (
+                  <PlayActionContent label="Play episode" />
+                ) : (
+                  "Episode unavailable"
+                )}
+              </button>
+            )}
+            {selectedEpisode && (
+              <>
+                <button
+                  className={`title-detail__force-search${selectedEpisodeSearch?.status === "searching" ? " is-searching" : ""}`}
+                  type="button"
+                  aria-label={`Search sources for ${episodeCode}`}
+                  aria-expanded={openSourceFor === selectedEpisodeKey}
+                  aria-busy={selectedEpisodeSearch?.status === "searching"}
+                  disabled={
+                    !playbackEnabled ||
+                    selectedEpisodeSearch?.status === "searching"
+                  }
+                  onClick={() => void searchEpisode(selectedEpisode)}
+                >
+                  <span aria-hidden="true">⋮</span>
+                </button>
+                <button
+                  className="button button--secondary button--compact"
+                  type="button"
+                  onClick={() => showSeries(null)}
+                >
+                  More episodes
+                </button>
+              </>
+            )}
             {current.kind === "movie" && playbackEnabled && (
               <button
                 className={`button button--primary button--compact${movieStatus === "checking" ? " button--checking" : ""}${movieStatus === "ready" && playing === null ? " button--play-action" : ""}`}
@@ -492,7 +648,66 @@ export function TitleDetail({
             )}
           </div>
         </div>
-        {current.kind === "series" && (
+        {current.kind === "series" && selectedEpisode && (
+          <div className="title-detail__body title-detail__episode-details">
+            <h3>Episode details</h3>
+            <p className="title-detail__episode-identity">
+              Season {selectedEpisode.seasonNumber} · Episode{" "}
+              {selectedEpisode.episodeNumber}
+              {episodeDetail?.airDate ? ` · ${episodeDetail.airDate}` : ""}
+            </p>
+            {openSourceFor === selectedEpisodeKey && (
+              <div
+                className="title-detail__source-menu"
+                role="group"
+                aria-label={`Search results for ${episodeCode}`}
+              >
+                <button
+                  className="title-detail__source-menu-dismiss"
+                  type="button"
+                  aria-label="Close search results"
+                  onClick={() => setOpenSourceFor(null)}
+                >
+                  ×
+                </button>
+                <strong>{episodeCode} sources</strong>
+                <small role="status">
+                  {selectedEpisodeSearch?.status === "searching"
+                    ? "Checking this episode…"
+                    : selectedEpisodeSearch?.status === "error"
+                      ? selectedEpisodeSearch.message
+                      : selectedEpisodeSearch?.status === "done"
+                        ? selectedEpisodeSearch.sources.length > 0
+                          ? "Choose a playable source."
+                          : "No playable sources found for this episode."
+                        : null}
+                </small>
+                {selectedEpisodeSearch?.status === "done" &&
+                  selectedEpisodeSearch.sources.map((source, index) => (
+                    <button
+                      key={source.id}
+                      type="button"
+                      title={source.releaseName}
+                      onClick={() => {
+                        setOpenSourceFor(null);
+                        void play(
+                          selectedEpisode,
+                          episodeDetail?.title,
+                          source.id,
+                        );
+                      }}
+                    >
+                      <span>
+                        {index === 0 ? "Recommended" : `Source ${index + 1}`}
+                      </span>
+                      <small>{sourceLabel(source)}</small>
+                    </button>
+                  ))}
+              </div>
+            )}
+          </div>
+        )}
+        {current.kind === "series" && !selectedEpisode && (
           <div className="title-detail__body">
             <div className="title-detail__heading">
               <h3>Seasons & episodes</h3>
@@ -569,6 +784,15 @@ export function TitleDetail({
                               ? "Ready"
                               : "Unavailable"}
                         </span>
+                        <button
+                          data-episode-details={key}
+                          className="button button--secondary button--compact title-detail__episode-details-button"
+                          type="button"
+                          onClick={() => openEpisode(selection)}
+                          aria-label={`Details for ${current.title} S${String(episode.seasonNumber).padStart(2, "0")}E${String(episode.episodeNumber).padStart(2, "0")}`}
+                        >
+                          Details
+                        </button>
                         {episode.availability === "available" &&
                           playbackEnabled && (
                             <button
@@ -676,38 +900,42 @@ export function TitleDetail({
             )}
           </div>
         )}
-        <div className="title-detail__body title-detail__body--related">
-          <h3>More to watch</h3>
-          <p>
-            {current.kind === "series"
-              ? "Similar series and connected stories from your catalogue."
-              : "Related films and saga entries already validated in your local catalogue."}
-          </p>
-          {detail?.related.length === 0 && (
-            <p>More recommendations will appear as you discover titles.</p>
-          )}
-          {(detail?.related.length ?? 0) > 0 && (
-            <div className="title-detail__related">
-              {detail?.related.map((related) => (
-                <button
-                  type="button"
-                  key={related.id}
-                  onClick={() => onOpenRelated(related)}
-                  onPointerEnter={(event) => {
-                    if (event.pointerType === "mouse") playCardHoverTick();
-                  }}
-                  onFocus={playCardHoverTick}
-                >
-                  {related.posterUrl && <img src={related.posterUrl} alt="" />}
-                  <span>
-                    {related.title}
-                    {related.year ? ` (${related.year})` : ""}
-                  </span>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
+        {!selectedEpisode && (
+          <div className="title-detail__body title-detail__body--related">
+            <h3>More to watch</h3>
+            <p>
+              {current.kind === "series"
+                ? "Similar series and connected stories from your catalogue."
+                : "Related films and saga entries already validated in your local catalogue."}
+            </p>
+            {detail?.related.length === 0 && (
+              <p>More recommendations will appear as you discover titles.</p>
+            )}
+            {(detail?.related.length ?? 0) > 0 && (
+              <div className="title-detail__related">
+                {detail?.related.map((related) => (
+                  <button
+                    type="button"
+                    key={related.id}
+                    onClick={() => onOpenRelated(related)}
+                    onPointerEnter={(event) => {
+                      if (event.pointerType === "mouse") playCardHoverTick();
+                    }}
+                    onFocus={playCardHoverTick}
+                  >
+                    {related.posterUrl && (
+                      <img src={related.posterUrl} alt="" />
+                    )}
+                    <span>
+                      {related.title}
+                      {related.year ? ` (${related.year})` : ""}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </section>
     </div>
   );
