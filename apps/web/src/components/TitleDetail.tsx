@@ -7,10 +7,12 @@ import type {
 } from "@streamer-ai/contracts";
 import type { OfflineDownload, StreamerApi } from "../api/client";
 import { safeErrorMessage } from "../api/client";
+import { lockBodyScroll } from "../body-scroll-lock";
 import { sourceLabel } from "../source-label";
 import { SourceIcon, sourceName } from "./SourceIcon";
 import { useToasts } from "./ToastProvider";
 import { playCardHoverTick } from "./TitleCard";
+import { ComposingDots, ComposingLabel } from "./ComposingLabel";
 import { DownloadButton } from "./DownloadButton";
 
 interface Props {
@@ -99,9 +101,10 @@ export function TitleDetail({
     null,
   );
   const [downloadBusy, setDownloadBusy] = useState(false);
-  const [confirmDownload, setConfirmDownload] = useState<{
-    sourceId: string;
-    rootId: string;
+  const onAddedRef = useRef(onAdded);
+  onAddedRef.current = onAdded;
+  const [confirmDelete, setConfirmDelete] = useState<{
+    downloadId: string;
     label: string;
   } | null>(null);
   const [chooseRoot, setChooseRoot] = useState<{
@@ -111,7 +114,7 @@ export function TitleDetail({
   } | null>(null);
   const downloadDialogOpenRef = useRef(false);
   downloadDialogOpenRef.current =
-    confirmDownload !== null || chooseRoot !== null;
+    confirmDelete !== null || chooseRoot !== null;
   const refreshedOfflineJobs = useRef(new Set<string>());
   const reportedOfflineFailures = useRef(new Set<string>());
   const startedOfflineJobs = useRef(new Set<string>());
@@ -285,6 +288,14 @@ export function TitleDetail({
   }, [api, detail?.series?.status, profileId, title.id]);
 
   useEffect(() => {
+    if (detail?.series) onAddedRef.current();
+  }, [detail?.series?.status]);
+
+  useEffect(() => {
+    if (forceSearch?.status) onAddedRef.current();
+  }, [forceSearch?.status]);
+
+  useEffect(() => {
     if (suspended) {
       wasSuspendedRef.current = true;
       return;
@@ -324,8 +335,7 @@ export function TitleDetail({
   useEffect(() => {
     if (suspended) return;
     const previous = document.activeElement as HTMLElement | null;
-    const overflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
+    const releaseScrollLock = lockBodyScroll();
     const episodeButton = lastPlayedEpisodeRef.current
       ? dialogRef.current?.querySelector<HTMLButtonElement>(
           `button[data-episode="${lastPlayedEpisodeRef.current}"]`,
@@ -336,7 +346,7 @@ export function TitleDetail({
       if (event.key === "Escape") {
         event.preventDefault();
         if (downloadDialogOpenRef.current) {
-          setConfirmDownload(null);
+          setConfirmDelete(null);
           setChooseRoot(null);
         } else if (openSourceForRef.current !== null) setOpenSourceFor(null);
         else if (selectedEpisodeRef.current !== null) {
@@ -369,7 +379,7 @@ export function TitleDetail({
     document.addEventListener("keydown", keydown);
     return () => {
       document.removeEventListener("keydown", keydown);
-      document.body.style.overflow = overflow;
+      releaseScrollLock();
       previous?.focus();
     };
   }, [onClose, suspended]);
@@ -471,7 +481,6 @@ export function TitleDetail({
   const launchDownload = async (
     sourceId: string,
     rootId: string,
-    replaceExisting = false,
   ) => {
     setDownloadBusy(true);
     try {
@@ -480,7 +489,6 @@ export function TitleDetail({
         current.id,
         sourceId,
         rootId,
-        replaceExisting,
       );
       startedOfflineJobs.current.add(job.id);
       setOfflineJobs((jobs) => [...jobs, job]);
@@ -502,6 +510,15 @@ export function TitleDetail({
       } catch (reason) {
         showToast(safeErrorMessage(reason), "error");
       }
+      return;
+    }
+    if (state.saved) {
+      setConfirmDelete({
+        downloadId: state.saved.id,
+        label: episode
+          ? `${current.title} S${String(episode.seasonNumber).padStart(2, "0")}E${String(episode.episodeNumber).padStart(2, "0")}`
+          : current.title,
+      });
       return;
     }
     if (localRoots.length === 0) {
@@ -540,20 +557,7 @@ export function TitleDetail({
       showToast("No downloadable source is available for this title.", "error");
       return;
     }
-    const saved = downloadJobsFor(episode, source).findLast(
-      (job) => job.state === "complete",
-    );
-    const rootId = saved?.rootId ?? localRoots[0]!.id;
-    if (saved) {
-      setConfirmDownload({
-        sourceId: source.id,
-        rootId,
-        label: episode
-          ? `${current.title} S${String(episode.seasonNumber).padStart(2, "0")}E${String(episode.episodeNumber).padStart(2, "0")}`
-          : current.title,
-      });
-      return;
-    }
+    const rootId = localRoots[0]!.id;
     if (localRoots.length > 1) {
       setChooseRoot({
         sourceId: source.id,
@@ -565,6 +569,31 @@ export function TitleDetail({
       return;
     }
     await launchDownload(source.id, rootId);
+  };
+  const deleteOfflineCopy = async (downloadId: string) => {
+    setDownloadBusy(true);
+    try {
+      const remove = api.deleteOfflineDownload ?? api.cancelOfflineDownload;
+      await remove(profileId, downloadId);
+      setOfflineJobs((jobs) => jobs.filter((job) => job.id !== downloadId));
+      onAdded();
+      try {
+        const updated = await api.getTitleDetail(profileId, title.id);
+        setDetail(updated);
+        const preferred = await api.getPreferredSource?.(
+          profileId,
+          title.id,
+          selectedEpisode ?? undefined,
+        );
+        if (preferred) setPreferredSourceId(preferred.sourceId);
+      } catch {
+        // The file is already removed; the next detail refresh will update the view.
+      }
+    } catch (reason) {
+      showToast(safeErrorMessage(reason), "error");
+    } finally {
+      setDownloadBusy(false);
+    }
   };
   const selectedEpisodeKey = selectedEpisode
     ? `${selectedEpisode.seasonNumber}:${selectedEpisode.episodeNumber}`
@@ -718,7 +747,7 @@ export function TitleDetail({
           style={
             current.backdropUrl
               ? {
-                  backgroundImage: `linear-gradient(90deg, #09090b 20%, transparent), url(${current.backdropUrl})`,
+                  backgroundImage: `radial-gradient(ellipse at 100% 0%, #000 0%, rgb(0 0 0 / 88%) 10%, rgb(0 0 0 / 60%) 28%, rgb(0 0 0 / 30%) 52%, rgb(0 0 0 / 9%) 78%, transparent 100%), linear-gradient(90deg, #09090b 20%, transparent), url(${current.backdropUrl})`,
                 }
               : { backgroundColor: current.accentColor }
           }
@@ -918,10 +947,14 @@ export function TitleDetail({
                         <DownloadButton
                           compact
                           state={downloadStateFor(undefined, source).state}
+                          deletable={Boolean(
+                            downloadStateFor(undefined, source).saved,
+                          )}
                           progress={
                             downloadStateFor(undefined, source).progress
                           }
                           label={source.releaseName}
+                          disabled={downloadBusy}
                           onClick={() => void download(undefined, source)}
                         />
                       )}
@@ -947,6 +980,9 @@ export function TitleDetail({
             <div className="title-detail__hero-download">
               <DownloadButton
                 state={downloadStateFor(selectedEpisode ?? undefined).state}
+                deletable={Boolean(
+                  downloadStateFor(selectedEpisode ?? undefined).saved,
+                )}
                 progress={
                   downloadStateFor(selectedEpisode ?? undefined).progress
                 }
@@ -955,6 +991,7 @@ export function TitleDetail({
                     ? `${current.title} ${episodeCode}`
                     : current.title
                 }
+                disabled={downloadBusy}
                 onClick={() => void download(selectedEpisode ?? undefined)}
               />
             </div>
@@ -1029,10 +1066,14 @@ export function TitleDetail({
                           state={
                             downloadStateFor(selectedEpisode, source).state
                           }
+                          deletable={Boolean(
+                            downloadStateFor(selectedEpisode, source).saved,
+                          )}
                           progress={
                             downloadStateFor(selectedEpisode, source).progress
                           }
                           label={source.releaseName}
+                          disabled={downloadBusy}
                           onClick={() => void download(selectedEpisode, source)}
                         />
                       )}
@@ -1046,24 +1087,28 @@ export function TitleDetail({
           <div className="title-detail__body">
             <div className="title-detail__heading">
               <h3>Seasons & episodes</h3>
-              <button
-                className={`button button--secondary button--compact title-detail__find-episodes${detail?.series?.status === "searching" ? " is-searching" : ""}`}
-                type="button"
-                disabled={
-                  !playbackEnabled || detail?.series?.status === "searching"
-                }
-                onClick={() => {
-                  setError("");
-                  void api
-                    .getTitleDetail(profileId, title.id, true)
-                    .then(setDetail)
-                    .catch(() => setError("Episode search could not restart."));
-                }}
-              >
-                {detail?.series?.status === "searching"
-                  ? "Searching…"
-                  : "Try to find more episodes"}
-              </button>
+              {detail?.series?.status !== "complete" && (
+                <button
+                  className={`button button--secondary button--compact title-detail__find-episodes${detail?.series?.status === "searching" ? " is-searching" : ""}`}
+                  type="button"
+                  disabled={
+                    !playbackEnabled || detail?.series?.status === "searching"
+                  }
+                  onClick={() => {
+                    setError("");
+                    void api
+                      .getTitleDetail(profileId, title.id, true)
+                      .then(setDetail)
+                      .catch(() => setError("Episode search could not restart."));
+                  }}
+                >
+                  {detail?.series?.status === "searching" ? (
+                    <ComposingLabel />
+                  ) : (
+                    "Try to find more episodes"
+                  )}
+                </button>
+              )}
             </div>
             {!detail && !error && <p>Loading episode guide…</p>}
             {detail?.series === null && (
@@ -1113,11 +1158,13 @@ export function TitleDetail({
                           {episode.airDate && <small>{episode.airDate}</small>}
                         </div>
                         <span>
-                          {episode.availability === "searching"
-                            ? "• searching..."
-                            : episode.availability === "available"
-                              ? "Ready"
-                              : "Unavailable"}
+                          {episode.availability === "searching" ? (
+                            <ComposingDots />
+                          ) : episode.availability === "available" ? (
+                            "Ready"
+                          ) : (
+                            "Unavailable"
+                          )}
                         </span>
                         <div className="title-detail__episode-actions">
                           <button
@@ -1166,8 +1213,12 @@ export function TitleDetail({
                               <DownloadButton
                                 compact
                                 state={downloadStateFor(selection).state}
+                                deletable={Boolean(
+                                  downloadStateFor(selection).saved,
+                                )}
                                 progress={downloadStateFor(selection).progress}
                                 label={`${current.title} S${String(episode.seasonNumber).padStart(2, "0")}E${String(episode.episodeNumber).padStart(2, "0")}`}
+                                disabled={downloadBusy}
                                 onClick={() => void download(selection)}
                               />
                             )}
@@ -1251,11 +1302,16 @@ export function TitleDetail({
                                           downloadStateFor(selection, source)
                                             .state
                                         }
+                                        deletable={Boolean(
+                                          downloadStateFor(selection, source)
+                                            .saved,
+                                        )}
                                         progress={
                                           downloadStateFor(selection, source)
                                             .progress
                                         }
                                         label={source.releaseName}
+                                        disabled={downloadBusy}
                                         onClick={() =>
                                           void download(selection, source)
                                         }
@@ -1310,31 +1366,33 @@ export function TitleDetail({
             )}
           </div>
         )}
-        {confirmDownload && (
+        {confirmDelete && (
           <div
             className="title-detail__download-confirm"
             role="dialog"
             aria-modal="true"
-            aria-label="Replace offline copy"
+            aria-label="Delete offline copy"
           >
-            <strong>Download again?</strong>
+            <strong>Delete offline copy?</strong>
             <p>
-              This will replace the offline copy of {confirmDownload.label}.
+              This permanently deletes the downloaded file for{" "}
+              {confirmDelete.label} from your local folder.
             </p>
             <div>
-              <button type="button" onClick={() => setConfirmDownload(null)}>
-                Keep existing
+              <button type="button" onClick={() => setConfirmDelete(null)}>
+                Cancel
               </button>
               <button
                 type="button"
-                className="button button--primary"
+                className="button button--danger"
+                disabled={downloadBusy}
                 onClick={() => {
-                  const choice = confirmDownload;
-                  setConfirmDownload(null);
-                  void launchDownload(choice.sourceId, choice.rootId, true);
+                  const choice = confirmDelete;
+                  setConfirmDelete(null);
+                  void deleteOfflineCopy(choice.downloadId);
                 }}
               >
-                Replace and download
+                Delete file
               </button>
             </div>
           </div>

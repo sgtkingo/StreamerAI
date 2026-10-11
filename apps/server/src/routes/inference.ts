@@ -4,6 +4,10 @@ import {
   type InferenceFetch,
 } from "../integrations/ollama-preflight.js";
 import type { RuntimeConfig } from "../runtime-config.js";
+import {
+  parseManualAgentConfig,
+  type ManualAgentConfig,
+} from "../integrations/manual-agent-config.js";
 import type { IntegrationStateStore } from "../stores/integration-state-store.js";
 
 export interface InferenceRouteDependencies {
@@ -11,12 +15,96 @@ export interface InferenceRouteDependencies {
   config: RuntimeConfig["inference"];
   integrationStateStore: IntegrationStateStore;
   now: () => Date;
+  isManualAgent: () => boolean;
+  saveManualAgent: (selection: ManualAgentConfig) => void;
 }
 
 export function registerInferenceRoutes(
   app: FastifyInstance,
   dependencies: InferenceRouteDependencies,
 ): void {
+  app.get("/api/v1/inference/agent", async () => ({
+    runtime: "Ollama",
+    model: dependencies.config.model,
+    baseUrl: dependencies.config.baseUrl,
+    manual: dependencies.isManualAgent(),
+  }));
+
+  app.post("/api/v1/inference/agent/connect", async (request, reply) => {
+    let selection: ManualAgentConfig;
+    try {
+      selection = parseManualAgentConfig(request.body);
+    } catch {
+      return reply.code(400).send({
+        error: {
+          code: "LOCAL_AGENT_ADDRESS_INVALID",
+          message:
+            "Enter a valid local or private Ollama API address and model.",
+        },
+      });
+    }
+    const result = await preflightOllama({
+      fetch: dependencies.fetch,
+      config: { ...dependencies.config, ...selection },
+      now: dependencies.now,
+    });
+    if (!result.ok) return result;
+    dependencies.saveManualAgent(selection);
+    await dependencies.integrationStateStore.set({
+      integrationId: "ollama",
+      status: "connected",
+      configured: true,
+      checkedAt: result.checkedAt,
+      updatedAt: result.checkedAt,
+    });
+    return {
+      ...result,
+      baseUrl: selection.baseUrl,
+      manual: true,
+    };
+  });
+
+  app.post("/api/v1/inference/discover", async () => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3_000);
+    try {
+      const response = await dependencies.fetch(
+        `${dependencies.config.baseUrl}/api/tags`,
+        {
+          method: "GET",
+          headers: { accept: "application/json" },
+          signal: controller.signal,
+          redirect: "manual",
+        },
+      );
+      if (!response.ok) return { availableIds: [], runtimeAvailable: false };
+      const body: unknown = await response.json();
+      if (
+        typeof body !== "object" ||
+        body === null ||
+        !("models" in body) ||
+        !Array.isArray(body.models)
+      ) {
+        return { availableIds: [], runtimeAvailable: false };
+      }
+      const available = body.models.some(
+        (model: unknown) =>
+          typeof model === "object" &&
+          model !== null &&
+          (("name" in model && model.name === dependencies.config.model) ||
+            ("model" in model && model.model === dependencies.config.model)),
+      );
+      return {
+        availableIds: available ? ["ollama"] : [],
+        runtimeAvailable: true,
+      };
+    } catch {
+      return { availableIds: [], runtimeAvailable: false };
+    } finally {
+      clearTimeout(timeout);
+    }
+  });
+
   app.get("/api/v1/inference/residency", async (request) => {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 1_500);
@@ -28,6 +116,7 @@ export function registerInferenceRoutes(
           method: "GET",
           headers: { accept: "application/json" },
           signal: controller.signal,
+          redirect: "manual",
         },
       );
       if (response.ok) {

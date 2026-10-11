@@ -25,6 +25,7 @@ export const SOURCE_CONNECTOR_CAPABILITIES = {
     "ratings",
     "artwork",
     "discovery-feeds",
+    "genre-discovery",
   ],
   media: [
     "movie-search",

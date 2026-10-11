@@ -63,9 +63,17 @@ Pro titulky:
 
 - Po zavření přehrávače se někdy možnost skrolování zasekne.  Černé pozadí pod křížkem Close v kartě by měl začínát více v roku, at jde plynule z úplně černé. Zelený symbol stažení by u dláždice měl být bez fajfky - prostě původní download ikona ale jen zelená, v kartě ji nech tak. Po dokončení stahování titulu by se ikona měla změnit na červený trash a další kliknutím by měl být titul smazán (po potvrzení uživatelem). 
 
+- DONE:U nastavení 06 / Agent adapters - AI agent chce uživatel jasně vidět název modelu na který je napojen - dej ho do vniřního bloku který se týká agenta (místo "Local AI"). "Local AI
+On-device recommendations and interpretation." je rudundatní informace. Tlačítko "Check local agent" přsun do bloku s agentem, a přejmenuj ho na "Check agent a dej mu ikonu terčíku se středem". Místo tlačítka "Check local agent" dej na jeho místo tlačítko "Discover local agents" které spustí explicití hledání dalších agentů, ikona radaru. V Add-more nepiš "All listed services in this group are already added." ale spíše "Sorry, no more agents found." - barvu světle šedá. Save settings by měl zároven zavřít celé settings.
 
+- DONE: UI vylepěšení: StreamerAI search chat by měl mít otevřené zadávání pro rychlou odpověď, tzn input box kde může hned uživatel napsat co by chtěl jinak. Tento input se vloží do chatu a vyvolá agenta, ale UI chat neotevře, aby nerušil focus uživatele (chat otevřít půjde pouze ručně uživatelem, kliknutím na hlavní tělo). Udělej rámeček chatboty asymetrický a obly, aby se dole rozšířil pro větší prostor na "fast reply" field. Při přemýšlení se bude ikona hvězdy v zavřeném okně agenta protočívat. "fast reply" field by měl lehce zářit narůžovělu duhou ve vizuálu agenta, by na sebe upozonil. 
+
+- DONE: Bot se chová zvláštně, při hledání "complete sci-fi series " nic nenajde (ani opakovaně) ale pokud mu řeknu "try again" nebo "why?" tak už ano. Není v prvním hledání nějaký blok? Špatný systém prompt? Došlu totiž k integraci skillu "najdi něco co jsem neviděl", nesouvisí to? Velmi často ted dostávám "
+I found some ideas, but none could be validated reliably. Is this what you had in mind? Tell me what to change." Dokáže bot použít web-search?  
 
 - Každý profil by měl mít oddělené data, i v rámci onboardingu - hlavně api konektory.
+
+- Měli bychom vylepšit catchování 
 
 - DONE: Přehrávač nezobrazuje titulky, pro titulky přuprav napoj také nastavení v rámci 03 / Subtitles (velikost, barva, font). U přehrávače neslyším zvuk, dodělej funční Audio output v 02 / Audio a napoj ho na přehrávač.  Seriály by na konci měli automaticky začít odpočítávat přehrání dalšího dílu (5 sekund?), 
 

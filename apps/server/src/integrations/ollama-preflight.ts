@@ -14,6 +14,7 @@ export interface InferenceFetchOptions {
   readonly headers: Record<string, string>;
   readonly body?: string;
   readonly signal: AbortSignal;
+  readonly redirect?: "manual";
 }
 
 export type InferenceFetch = (
@@ -148,6 +149,7 @@ async function requestJson(
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       signal: controller.signal,
+      redirect: "manual",
     });
     if (!response.ok) {
       throw new Error(`Ollama request failed with HTTP ${response.status}.`);

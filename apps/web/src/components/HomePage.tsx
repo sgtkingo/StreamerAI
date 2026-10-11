@@ -67,7 +67,9 @@ export function HomePage({
   const [chatPendingMessage, setChatPendingMessage] = useState("");
   const [chatOpen, setChatOpen] = useState(false);
   const [chatSearching, setChatSearching] = useState(false);
+  const [isChatStopping, setIsChatStopping] = useState(false);
   const [chatError, setChatError] = useState("");
+  const [chatNotice, setChatNotice] = useState("");
   const [result, setResult] = useState<DiscoveryUiResponse | null>(null);
   const [resultQuery, setResultQuery] = useState("");
   const [primaryQuery, setPrimaryQuery] = useState("");
@@ -75,6 +77,8 @@ export function HomePage({
   const [visibleCandidateCount, setVisibleCandidateCount] = useState(3);
   const [isSearching, setIsSearching] = useState(false);
   const [isStopping, setIsStopping] = useState(false);
+  const [showSearchOrb, setShowSearchOrb] = useState(false);
+  const [searchStopped, setSearchStopped] = useState(false);
   const [isWakingAgent, setIsWakingAgent] = useState(false);
   const [searchMessageIndex, setSearchMessageIndex] = useState(0);
   const [isLoadingFeed, setIsLoadingFeed] = useState(true);
@@ -87,6 +91,7 @@ export function HomePage({
   const [turns, setTurns] = useState<ConversationTurn[]>([]);
   const { showToast } = useToasts();
   const requestCounter = useRef(0);
+  const orbStartedAt = useRef(0);
   const searchSerial = useRef(0);
   const activeSearch = useRef<AbortController | null>(null);
   const activeFast = useRef<AbortController | null>(null);
@@ -97,9 +102,10 @@ export function HomePage({
   const activeChatKey = useRef<string | null>(null);
   const chatSerial = useRef(0);
   const chatLogRef = useRef<HTMLOListElement>(null);
-  const searchProgressRef = useRef<HTMLElement>(null);
+  const searchComposerRef = useRef<HTMLElement>(null);
   const resultsHeadingRef = useRef<HTMLHeadingElement>(null);
   const scrollToNextResult = useRef(false);
+  const lastScrolledHash = useRef("");
   const playbackChecks = usePlaybackChecks(api, profileId);
 
   const loadHome = useCallback(async () => {
@@ -118,7 +124,91 @@ export function HomePage({
   }, [loadHome, version]);
 
   useEffect(() => {
-    if (!feed || !window.location.hash) return;
+    const titles = [
+      ...(feed?.sections.flatMap((section) => section.items) ?? []),
+      ...(result?.bestMatch ? [result.bestMatch.title] : []),
+      ...(result?.available.map((item) => item.title) ?? []),
+      ...(result?.unavailable.map((item) => item.title) ?? []),
+      ...(result?.unverified.map((item) => item.title) ?? []),
+    ];
+    const activeIds = [
+      ...new Set(
+        titles
+          .filter((item) => item.kind === "series" && item.seriesSearchActive)
+          .map((item) => item.id),
+      ),
+    ];
+    if (activeIds.length === 0) return;
+    let active = true;
+    let pending = false;
+    const poll = async () => {
+      if (pending) return;
+      pending = true;
+      try {
+        const details = await Promise.allSettled(
+          activeIds.map((id) => api.getTitleDetail(profileId, id)),
+        );
+        if (!active) return;
+        const updated = new Map<string, CatalogTitle>();
+        for (const detail of details) {
+          if (detail.status === "fulfilled")
+            updated.set(detail.value.title.id, detail.value.title);
+        }
+        if (updated.size > 0) {
+          setResult((current) => {
+            if (!current) return current;
+            let changed = false;
+            const titleFor = (title: CatalogTitle) => {
+              const next = updated.get(title.id);
+              if (!next || JSON.stringify(next) === JSON.stringify(title))
+                return title;
+              changed = true;
+              return next;
+            };
+            const next = {
+              ...current,
+              bestMatch: current.bestMatch
+                ? {
+                    ...current.bestMatch,
+                    title: titleFor(current.bestMatch.title),
+                  }
+                : null,
+              available: current.available.map((item) => ({
+                ...item,
+                title: titleFor(item.title),
+              })),
+              unavailable: current.unavailable.map((item) => ({
+                ...item,
+                title: titleFor(item.title),
+              })),
+              unverified: current.unverified.map((item) => ({
+                ...item,
+                title: titleFor(item.title),
+              })),
+            };
+            return changed ? next : current;
+          });
+        }
+        void loadHome();
+      } finally {
+        pending = false;
+      }
+    };
+    const timer = window.setInterval(() => void poll(), 2500);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [api, feed, loadHome, profileId, result]);
+
+  useEffect(() => {
+    if (!feed) return;
+    if (!window.location.hash) {
+      lastScrolledHash.current = "";
+      return;
+    }
+    if (lastScrolledHash.current === window.location.hash) return;
+    lastScrolledHash.current = window.location.hash;
     const target = document.getElementById(
       decodeURIComponent(window.location.hash.slice(1)),
     );
@@ -131,7 +221,7 @@ export function HomePage({
     setAnnouncement(
       `${count} validated ${count === 1 ? "title" : "titles"} ready.`,
     );
-    if (scrollToNextResult.current) {
+    if (scrollToNextResult.current && result.mode === "live" && count > 0) {
       scrollToNextResult.current = false;
       resultsHeadingRef.current?.focus({ preventScroll: true });
       resultsHeadingRef.current?.scrollIntoView?.({
@@ -161,16 +251,27 @@ export function HomePage({
 
   useEffect(() => {
     if (!isSearching || isStopping) return;
-    if (!result)
-      searchProgressRef.current?.scrollIntoView?.({
-        behavior: "smooth",
-        block: "start",
-      });
+    searchComposerRef.current?.scrollIntoView?.({
+      behavior: "smooth",
+      block: "start",
+    });
     const interval = window.setInterval(() => {
       setSearchMessageIndex((index) => (index + 1) % searchMessages.length);
     }, 3_000);
     return () => window.clearInterval(interval);
-  }, [isSearching, isStopping, result]);
+  }, [isSearching, isStopping]);
+
+  useEffect(() => {
+    if (!showSearchOrb || isSearching || isStopping) return;
+    const reducedMotion = window.matchMedia?.(
+      "(prefers-reduced-motion: reduce)",
+    ).matches;
+    const remaining = reducedMotion
+      ? 0
+      : Math.max(0, 560 - (Date.now() - orbStartedAt.current));
+    const timeout = window.setTimeout(() => setShowSearchOrb(false), remaining);
+    return () => window.clearTimeout(timeout);
+  }, [showSearchOrb, isSearching, isStopping]);
 
   useEffect(() => {
     if (!isSearching || !isWakingAgent) return;
@@ -230,12 +331,14 @@ export function HomePage({
     activeSearch.current?.abort();
     try {
       if (key) await api.cancelDiscovery(profileId, key);
+      setSearchStopped(true);
       setAnnouncement(
         dualSearchingRef.current
           ? "Deep search stopped. Quick matches remain."
           : "Search stopped.",
       );
     } catch {
+      setSearchStopped(false);
       setError("Could not confirm that the search stopped. Please try again.");
       setAnnouncement("Search stop could not be confirmed.");
     } finally {
@@ -247,10 +350,41 @@ export function HomePage({
     }
   };
 
-  const submit = async (event: React.FormEvent) => {
+  const stopChatSearch = async () => {
+    if (!chatSearching || isChatStopping || !activeChat.current) return;
+    const serial = ++chatSerial.current;
+    const key = activeChatKey.current;
+    const pendingMessage = chatPendingMessage;
+    setIsChatStopping(true);
+    activeChat.current.abort();
+    try {
+      if (key) await api.cancelDiscovery(profileId, key);
+      if (serial !== chatSerial.current) return;
+      setChatNotice("Search stopped. You can revise and resend your reply.");
+      setAnnouncement("Reply search stopped.");
+    } catch {
+      if (serial !== chatSerial.current) return;
+      setChatError(
+        "Could not confirm that the search stopped. Please try again.",
+      );
+      setAnnouncement("Reply search stop could not be confirmed.");
+    } finally {
+      if (serial === chatSerial.current) {
+        activeChat.current = null;
+        activeChatKey.current = null;
+        setChatPendingMessage("");
+        setChatDraft((current) => current || pendingMessage);
+        setChatSearching(false);
+        setIsChatStopping(false);
+      }
+    }
+  };
+
+  const submit = async (event: React.FormEvent, messageOverride?: string) => {
     event.preventDefault();
-    const message = query.trim();
-    if (message.length < 2 || activeSearch.current) return;
+    const message = (messageOverride ?? query).trim();
+    if (message.length < 2 || isSearching || isStopping || activeSearch.current)
+      return;
     const controller = new AbortController();
     const serial = ++searchSerial.current;
     const idempotencyKey = `${Date.now()}-${++requestCounter.current}`;
@@ -269,16 +403,22 @@ export function HomePage({
     activeChat.current = null;
     activeChatKey.current = null;
     setChatSearching(false);
+    setIsChatStopping(false);
     setChatOpen(false);
     setChatDraft("");
     setChatPendingMessage("");
     setChatError("");
+    setChatNotice("");
     setResult(null);
+    scrollToNextResult.current = false;
     setResultQuery(message);
     setPrimaryQuery(message);
     setResultPhase(null);
     setVisibleCandidateCount(3);
     setTurns([]);
+    orbStartedAt.current = Date.now();
+    setShowSearchOrb(true);
+    setSearchStopped(false);
     activeSearch.current = controller;
     activeSearchKey.current = idempotencyKey;
     setIsSearching(true);
@@ -312,7 +452,6 @@ export function HomePage({
         published = true;
         setResult(next);
         setResultPhase(deepResult ? "deep" : "quick");
-        if (next.stage === "needs-input") setChatOpen(true);
         setTurns([
           { id: `${sessionId}-user-${turnId}`, role: "user", text: message },
           {
@@ -428,7 +567,6 @@ export function HomePage({
       scrollToNextResult.current = true;
       setResult(response as DiscoveryUiResponse);
       setResultPhase("deep");
-      if (response.stage === "needs-input") setChatOpen(true);
       setTurns([
         {
           id: `${response.sessionId}-user-${requestCounter.current}`,
@@ -456,11 +594,26 @@ export function HomePage({
     }
   };
 
-  const submitChat = async (event: React.FormEvent) => {
+  const submitChat = async (event: React.FormEvent, fromQuickReply = false) => {
     event.preventDefault();
     const message = chatDraft.trim();
-    if (!result || isSearching || activeChat.current || message.length < 2)
+    if (
+      isSearching ||
+      isStopping ||
+      showSearchOrb ||
+      isChatStopping ||
+      activeChat.current ||
+      message.length < 2
+    )
       return;
+    if (
+      !result ||
+      result.mode !== "live" ||
+      (result.stage !== "completed" && result.stage !== "needs-input")
+    ) {
+      await submit(event, message);
+      return;
+    }
     const controller = new AbortController();
     const serial = ++chatSerial.current;
     const idempotencyKey = `${Date.now()}-${++requestCounter.current}`;
@@ -474,6 +627,7 @@ export function HomePage({
     setChatPendingMessage(message);
     setChatDraft("");
     setChatError("");
+    setChatNotice("");
     try {
       const response = await api.discover(
         {
@@ -485,7 +639,7 @@ export function HomePage({
         controller.signal,
       );
       if (serial !== chatSerial.current || controller.signal.aborted) return;
-      scrollToNextResult.current = true;
+      scrollToNextResult.current = !fromQuickReply;
       setResult(response);
       setResultQuery(message);
       setResultPhase("deep");
@@ -591,11 +745,19 @@ export function HomePage({
       : locale === "de"
         ? "Ist das, was du dir vorgestellt hast?"
         : "Is this what you had in mind?";
+  const chatSummary =
+    result?.reply ||
+    (searchStopped
+      ? "Search stopped. Try another request."
+      : error
+        ? "I couldn't finish that search. Try another request."
+        : chatQuestion);
 
   return (
     <main id="home" className="home-page">
       <section
         className="discovery-composer"
+        ref={searchComposerRef}
         aria-labelledby="discovery-heading"
       >
         <p className="eyebrow">Conversational discovery</p>
@@ -664,7 +826,6 @@ export function HomePage({
         <>
           <section
             className="pipeline"
-            ref={searchProgressRef}
             aria-live="polite"
             aria-label="Discovery progress"
           >
@@ -871,117 +1032,227 @@ export function HomePage({
           </section>
         ))}
       </div>
-      {result?.mode === "live" &&
-        (result.stage === "completed" || result.stage === "needs-input") &&
-        !isSearching && (
-          <aside
-            className={`discovery-chat${chatOpen ? " is-open" : ""}`}
-            aria-label="StreamerAI chat"
-          >
-            {chatOpen ? (
-              <div className="discovery-chat__panel" id="discovery-chat-panel">
-                <div className="discovery-chat__header">
-                  <div>
-                    <span className="discovery-chat__eyebrow">
-                      CURRENT SEARCH
-                    </span>
-                    <h2>Chat with StreamerAI</h2>
-                  </div>
-                  <button
-                    type="button"
-                    className="discovery-chat__close close-icon-button"
-                    aria-label="Close chat"
-                    onClick={() => setChatOpen(false)}
-                  >
-                    ×
-                  </button>
+      {primaryQuery && (
+        <aside
+          className={`discovery-chat${chatOpen && !showSearchOrb ? " is-open" : ""}${showSearchOrb || (chatSearching && !chatOpen) ? " is-orb" : ""}`}
+          aria-label="StreamerAI chat"
+        >
+          {chatOpen && !showSearchOrb ? (
+            <div className="discovery-chat__panel" id="discovery-chat-panel">
+              <div className="discovery-chat__header">
+                <div>
+                  <span className="discovery-chat__eyebrow">
+                    CURRENT SEARCH
+                  </span>
+                  <h2>Chat with StreamerAI</h2>
                 </div>
-                <ol
-                  className="discovery-chat__messages"
-                  ref={chatLogRef}
-                  aria-label="Discovery conversation"
+                <button
+                  type="button"
+                  className="discovery-chat__close close-icon-button"
+                  aria-label="Close chat"
+                  onClick={() => setChatOpen(false)}
                 >
-                  {turns.map((turn) => (
-                    <li
-                      key={turn.id}
-                      className={`conversation-turn conversation-turn--${turn.role}`}
-                    >
-                      <span>{turn.role === "user" ? "You" : "StreamerAI"}</span>
-                      <p>{turn.text}</p>
+                  ×
+                </button>
+              </div>
+              <ol
+                className="discovery-chat__messages"
+                ref={chatLogRef}
+                aria-label="Discovery conversation"
+              >
+                {turns.length === 0 && (
+                  <li className="conversation-turn conversation-turn--user">
+                    <span>You</span>
+                    <p>{primaryQuery}</p>
+                  </li>
+                )}
+                {turns.map((turn) => (
+                  <li
+                    key={turn.id}
+                    className={`conversation-turn conversation-turn--${turn.role}`}
+                  >
+                    <span>{turn.role === "user" ? "You" : "StreamerAI"}</span>
+                    <p>{turn.text}</p>
+                  </li>
+                ))}
+                {!result && (
+                  <li className="conversation-turn conversation-turn--assistant">
+                    <span>StreamerAI</span>
+                    <p>{chatSummary}</p>
+                  </li>
+                )}
+                {chatSearching && (
+                  <>
+                    <li className="conversation-turn conversation-turn--user">
+                      <span>You</span>
+                      <p>{chatPendingMessage}</p>
                     </li>
-                  ))}
-                  {chatSearching && (
-                    <>
-                      <li className="conversation-turn conversation-turn--user">
-                        <span>You</span>
-                        <p>{chatPendingMessage}</p>
-                      </li>
-                      <li
-                        className="conversation-turn conversation-turn--assistant"
-                        role="status"
-                      >
-                        <span>StreamerAI</span>
-                        <p className="discovery-chat__typing">
-                          Rethinking your picks<span aria-hidden="true">…</span>
-                        </p>
-                      </li>
-                    </>
-                  )}
-                </ol>
+                    <li
+                      className="conversation-turn conversation-turn--assistant"
+                      role="status"
+                    >
+                      <span>StreamerAI</span>
+                      <p className="discovery-chat__typing">
+                        <span
+                          className="discovery-chat__mark discovery-chat__mark--inline is-searching"
+                          aria-hidden="true"
+                        >
+                          <span className="discovery-chat__mark-star">✦</span>
+                          <span className="discovery-chat__orbit">
+                            <i />
+                            <i />
+                            <i />
+                            <i />
+                          </span>
+                        </span>
+                        Rethinking your picks
+                        <span
+                          className="discovery-chat__typing-dots"
+                          aria-hidden="true"
+                        >
+                          …
+                        </span>
+                      </p>
+                    </li>
+                  </>
+                )}
+              </ol>
+              {chatError && (
+                <p className="discovery-chat__error" role="alert">
+                  {chatError}
+                </p>
+              )}
+              {chatNotice && (
+                <p className="discovery-chat__notice" role="status">
+                  {chatNotice}
+                </p>
+              )}
+              <form className="discovery-chat__form" onSubmit={submitChat}>
+                <label className="sr-only" htmlFor="discovery-chat-input">
+                  Reply to StreamerAI
+                </label>
+                <textarea
+                  id="discovery-chat-input"
+                  rows={2}
+                  value={chatDraft}
+                  onChange={(event) => setChatDraft(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && !event.shiftKey) {
+                      event.preventDefault();
+                      if (!chatSearching)
+                        event.currentTarget.form?.requestSubmit();
+                    }
+                  }}
+                  placeholder="Tell me what to change…"
+                />
+                <button
+                  type={chatSearching ? "button" : "submit"}
+                  className={chatSearching ? "is-stop" : undefined}
+                  aria-label={chatSearching ? "Stop reply search" : undefined}
+                  onClick={
+                    chatSearching ? () => void stopChatSearch() : undefined
+                  }
+                  disabled={
+                    chatSearching ? isChatStopping : chatDraft.trim().length < 2
+                  }
+                >
+                  {chatSearching
+                    ? isChatStopping
+                      ? "Stopping…"
+                      : "Stop"
+                    : "Send"}
+                </button>
+              </form>
+            </div>
+          ) : (
+            <div
+              className={`discovery-chat__collapsed${showSearchOrb || chatSearching ? " is-searching" : ""}`}
+            >
+              <button
+                type="button"
+                className="discovery-chat__bubble"
+                aria-expanded={showSearchOrb ? undefined : false}
+                aria-label={
+                  showSearchOrb || chatSearching
+                    ? "StreamerAI is searching"
+                    : undefined
+                }
+                disabled={showSearchOrb}
+                onClick={() => setChatOpen(true)}
+              >
+                <span
+                  className={`discovery-chat__mark${chatSearching || showSearchOrb ? " is-searching" : ""}`}
+                  aria-hidden="true"
+                >
+                  <span className="discovery-chat__mark-star">✦</span>
+                  <span className="discovery-chat__orbit">
+                    <i />
+                    <i />
+                    <i />
+                    <i />
+                  </span>
+                </span>
+                <span
+                  className="discovery-chat__bubble-copy"
+                  aria-hidden={showSearchOrb || chatSearching}
+                >
+                  <strong>StreamerAI</strong>
+                  <small>
+                    {chatSearching ? "Rethinking your picks…" : chatSummary}
+                  </small>
+                </span>
+                <span
+                  className="discovery-chat__bubble-arrow"
+                  aria-hidden={showSearchOrb || chatSearching}
+                >
+                  ↗
+                </span>
+              </button>
+              <form
+                className="discovery-chat__quick-reply"
+                onSubmit={(event) => void submitChat(event, true)}
+              >
+                {!showSearchOrb && (
+                  <div className="discovery-chat__quick-field">
+                    <label
+                      className="sr-only"
+                      htmlFor="discovery-chat-quick-input"
+                    >
+                      Quick reply to StreamerAI
+                    </label>
+                    <input
+                      id="discovery-chat-quick-input"
+                      type="text"
+                      value={chatDraft}
+                      onChange={(event) => setChatDraft(event.target.value)}
+                      placeholder={
+                        result ? "What would you change?" : "Try another search"
+                      }
+                    />
+                    <button
+                      type="submit"
+                      aria-label="Send quick reply"
+                      disabled={chatSearching || chatDraft.trim().length < 2}
+                    >
+                      ↑
+                    </button>
+                  </div>
+                )}
                 {chatError && (
                   <p className="discovery-chat__error" role="alert">
                     {chatError}
                   </p>
                 )}
-                <form className="discovery-chat__form" onSubmit={submitChat}>
-                  <label className="sr-only" htmlFor="discovery-chat-input">
-                    Reply to StreamerAI
-                  </label>
-                  <textarea
-                    id="discovery-chat-input"
-                    rows={2}
-                    value={chatDraft}
-                    onChange={(event) => setChatDraft(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" && !event.shiftKey) {
-                        event.preventDefault();
-                        event.currentTarget.form?.requestSubmit();
-                      }
-                    }}
-                    placeholder="Tell me what to change…"
-                  />
-                  <button
-                    type="submit"
-                    disabled={chatSearching || chatDraft.trim().length < 2}
-                  >
-                    Send
-                  </button>
-                </form>
-              </div>
-            ) : (
-              <button
-                type="button"
-                className="discovery-chat__bubble"
-                aria-expanded="false"
-                onClick={() => setChatOpen(true)}
-              >
-                <span className="discovery-chat__mark" aria-hidden="true">
-                  ✦
+              </form>
+              {showSearchOrb && (
+                <span className="sr-only" role="status">
+                  StreamerAI is finding your matches.
                 </span>
-                <span>
-                  <strong>StreamerAI</strong>
-                  <small>{chatQuestion}</small>
-                </span>
-                <span
-                  className="discovery-chat__bubble-arrow"
-                  aria-hidden="true"
-                >
-                  ↗
-                </span>
-              </button>
-            )}
-          </aside>
-        )}
+              )}
+            </div>
+          )}
+        </aside>
+      )}
     </main>
   );
 }

@@ -44,6 +44,23 @@ export interface LocalAiResult {
   runtime?: string;
 }
 
+export interface LocalAgentInfo {
+  runtime: string;
+  model: string;
+  baseUrl: string;
+  manual: boolean;
+}
+
+export interface LocalAgentConnectResult extends LocalAiResult {
+  baseUrl?: string;
+  manual?: boolean;
+}
+
+export interface LocalAgentDiscovery {
+  availableIds: string[];
+  runtimeAvailable: boolean;
+}
+
 export interface IntegrationCatalogItem {
   id: string;
   name: string;
@@ -135,6 +152,7 @@ export interface StreamerApi {
     replaceExisting?: boolean,
   ): Promise<OfflineDownload>;
   cancelOfflineDownload(profileId: string, downloadId: string): Promise<void>;
+  deleteOfflineDownload?(profileId: string, downloadId: string): Promise<void>;
   getSetupStatus(): Promise<SetupStatus>;
   connectTmdb(token: string): Promise<ConnectionResult>;
   connectWebshare(
@@ -142,6 +160,12 @@ export interface StreamerApi {
     password: string,
   ): Promise<ConnectionResult>;
   detectLocalAi(): Promise<LocalAiResult>;
+  getLocalAgent(): Promise<LocalAgentInfo>;
+  connectLocalAgent(input: {
+    baseUrl: string;
+    model: string;
+  }): Promise<LocalAgentConnectResult>;
+  discoverLocalAgents(): Promise<LocalAgentDiscovery>;
   getInferenceResidency(
     signal?: AbortSignal,
     record?: boolean,
@@ -249,6 +273,8 @@ const domainErrorMessages: Record<string, string> = {
     "Finish configuring the required integration and try again.",
   INVALID_REQUEST:
     "Some information is missing or invalid. Check it and try again.",
+  LOCAL_AGENT_ADDRESS_INVALID:
+    "Enter a local or private Ollama API address and a valid model name.",
   RATE_LIMITED: "The provider is busy. Wait a moment and try again.",
   FOLDER_PICKER_LOCAL_ONLY:
     "Open StreamerAI on the home server to use Select folder, or enter the server path manually.",
@@ -537,6 +563,11 @@ export const apiClient: StreamerApi = {
       `/profiles/${encodeURIComponent(profileId)}/offline-downloads/${encodeURIComponent(downloadId)}`,
       { method: "DELETE" },
     ),
+  deleteOfflineDownload: (profileId, downloadId) =>
+    request<void>(
+      `/profiles/${encodeURIComponent(profileId)}/offline-downloads/${encodeURIComponent(downloadId)}`,
+      { method: "DELETE" },
+    ),
   getSetupStatus: async () => {
     const status = await request<SetupStatusResponse>("/setup/status");
     const complete = status.complete;
@@ -569,6 +600,16 @@ export const apiClient: StreamerApi = {
   connectWebshare,
   detectLocalAi: () =>
     request<LocalAiResult>("/inference/detect", {
+      method: "POST",
+    }),
+  getLocalAgent: () => request<LocalAgentInfo>("/inference/agent"),
+  connectLocalAgent: (input) =>
+    request<LocalAgentConnectResult>("/inference/agent/connect", {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  discoverLocalAgents: () =>
+    request<LocalAgentDiscovery>("/inference/discover", {
       method: "POST",
     }),
   getInferenceResidency: (signal, record = false) =>

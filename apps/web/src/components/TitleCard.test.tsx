@@ -161,7 +161,7 @@ describe("TitleCard sources", () => {
       screen
         .getByRole("img", { name: "Available offline" })
         .querySelector(".download-glyph__check"),
-    ).toBeInTheDocument();
+    ).not.toBeInTheDocument();
   });
 
   it("stacks at most three distinct stream providers and fades overflow", () => {

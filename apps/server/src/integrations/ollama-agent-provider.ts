@@ -32,6 +32,7 @@ export type OllamaFetch = (
     headers: Record<string, string>;
     body?: string;
     signal: AbortSignal;
+    redirect?: "manual";
   },
 ) => Promise<OllamaFetchResponse>;
 
@@ -234,6 +235,7 @@ export class OllamaAgentProvider implements AgentProvider {
         },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
         signal,
+        redirect: "manual",
       });
       if (!response.ok)
         throw providerFailureForStatus("ollama", response.status);

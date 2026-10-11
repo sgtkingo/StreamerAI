@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { MediaProvider, MetadataProvider } from "@streamer-ai/contracts";
+import { openStreamerDatabase } from "@streamer-ai/database";
 import {
   createApp,
   type FetchLike,
@@ -81,6 +82,164 @@ describe("system API", () => {
       url: "/api/v1/inference/residency",
     });
     expect(warm.json()).toMatchObject({ state: "loaded" });
+  });
+
+  it("reports the configured model and discovers only the supported installed agent", async () => {
+    let models: unknown[] = [{ name: "qwen3.5:4b" }, { name: "other:latest" }];
+    const inferenceFetch: InferenceFetch = async (url) => {
+      expect(url).toMatch(/\/api\/tags$/);
+      return { ok: true, status: 200, json: async () => ({ models }) };
+    };
+    const instance = createApp({
+      environment: "test",
+      logger: false,
+      fetch: unusedFetch,
+      inferenceFetch,
+    });
+    apps.push(instance);
+    const agent = await instance.inject({
+      method: "GET",
+      url: "/api/v1/inference/agent",
+    });
+    expect(agent.json()).toMatchObject({
+      runtime: "Ollama",
+      model: "qwen3.5:4b",
+    });
+    const found = await instance.inject({
+      method: "POST",
+      url: "/api/v1/inference/discover",
+    });
+    expect(found.json()).toEqual({
+      availableIds: ["ollama"],
+      runtimeAvailable: true,
+    });
+    models = [{ name: "other:latest" }];
+    const missing = await instance.inject({
+      method: "POST",
+      url: "/api/v1/inference/discover",
+    });
+    expect(missing.json()).toEqual({
+      availableIds: [],
+      runtimeAvailable: true,
+    });
+  });
+
+  it("verifies and persists a manually supplied private Ollama endpoint", async () => {
+    const database = openStreamerDatabase({ filename: ":memory:" });
+    const calls: string[] = [];
+    const inferenceFetch: InferenceFetch = async (url, options) => {
+      calls.push(url);
+      expect(options.redirect).toBe("manual");
+      const data = url.endsWith("/api/version")
+        ? { version: "0.6.0" }
+        : url.endsWith("/api/tags")
+          ? { models: [{ name: "qwen3.5:4b", digest: "sha256:test" }] }
+          : url.endsWith("/api/show")
+            ? {
+                license: "Apache License 2.0",
+                capabilities: ["completion", "tools"],
+                details: {
+                  family: "qwen3",
+                  parameter_size: "4B",
+                  quantization_level: "Q4_K_M",
+                },
+              }
+            : url.endsWith("/api/generate")
+              ? { response: '{"ready":true,"language":"cs"}' }
+              : url.endsWith("/api/chat")
+                ? {
+                    message: {
+                      tool_calls: [
+                        {
+                          function: {
+                            name: "echo",
+                            arguments: { value: "streamer-ai-canary" },
+                          },
+                        },
+                      ],
+                    },
+                  }
+                : {
+                    models: [
+                      {
+                        name: "qwen3.5:4b",
+                        size: 3_000_000_000,
+                        size_vram: 2_900_000_000,
+                        context_length: 4096,
+                      },
+                    ],
+                  };
+      return { ok: true, status: 200, json: async () => data };
+    };
+    const instance = createApp({
+      environment: "test",
+      logger: false,
+      fetch: unusedFetch,
+      inferenceFetch,
+      database,
+    });
+    apps.push(instance);
+    const rejected = await instance.inject({
+      method: "POST",
+      url: "/api/v1/inference/agent/connect",
+      payload: { baseUrl: "http://example.com", model: "qwen3.5:4b" },
+    });
+    expect(rejected.statusCode).toBe(400);
+    expect(calls).toHaveLength(0);
+
+    const connected = await instance.inject({
+      method: "POST",
+      url: "/api/v1/inference/agent/connect",
+      payload: { baseUrl: "192.168.1.10:11434", model: "qwen3.5:4b" },
+    });
+    expect(connected.json()).toMatchObject({ ok: true, state: "READY" });
+    expect(calls).toHaveLength(6);
+    expect(
+      calls.every((url) => url.startsWith("http://192.168.1.10:11434/")),
+    ).toBe(true);
+    expect(database.settings.get("inference.manual-agent")).toEqual({
+      baseUrl: "http://192.168.1.10:11434",
+      model: "qwen3.5:4b",
+    });
+    const failed = await instance.inject({
+      method: "POST",
+      url: "/api/v1/inference/agent/connect",
+      payload: { baseUrl: "192.168.1.10:11434", model: "missing:latest" },
+    });
+    expect(failed.json()).toMatchObject({ ok: false, state: "MODEL_MISSING" });
+    expect(database.settings.get("inference.manual-agent")).toEqual({
+      baseUrl: "http://192.168.1.10:11434",
+      model: "qwen3.5:4b",
+    });
+    const agent = await instance.inject({
+      method: "GET",
+      url: "/api/v1/inference/agent",
+    });
+    expect(agent.json()).toMatchObject({
+      baseUrl: "http://192.168.1.10:11434",
+      model: "qwen3.5:4b",
+      manual: true,
+    });
+    await instance.close();
+    apps.splice(apps.indexOf(instance), 1);
+    const reopened = createApp({
+      environment: "test",
+      logger: false,
+      fetch: unusedFetch,
+      database,
+    });
+    apps.push(reopened);
+    const saved = await reopened.inject({
+      method: "GET",
+      url: "/api/v1/inference/agent",
+    });
+    expect(saved.json()).toMatchObject({
+      baseUrl: "http://192.168.1.10:11434",
+      manual: true,
+    });
+    await reopened.close();
+    apps.splice(apps.indexOf(reopened), 1);
+    database.close();
   });
 
   it("makes non-persistent development storage explicit", async () => {

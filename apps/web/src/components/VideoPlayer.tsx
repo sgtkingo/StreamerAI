@@ -10,6 +10,7 @@ import type {
 } from "@streamer-ai/contracts";
 import type { StreamerApi } from "../api/client";
 import { safeErrorMessage } from "../api/client";
+import { lockBodyScroll } from "../body-scroll-lock";
 import { applyAudioOutput } from "../audio-output";
 import {
   preferredAudioTrack,
@@ -340,12 +341,11 @@ export function VideoPlayer({
 
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
-    const oldOverflow = document.body.style.overflow;
     const localUrls = localUrlsRef.current;
-    document.body.style.overflow = "hidden";
+    const releaseScrollLock = lockBodyScroll();
     rootRef.current?.focus();
     return () => {
-      document.body.style.overflow = oldOverflow;
+      releaseScrollLock();
       previous?.focus();
       for (const url of localUrls) URL.revokeObjectURL(url);
     };

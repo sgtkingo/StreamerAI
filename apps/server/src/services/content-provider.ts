@@ -61,6 +61,8 @@ export interface StreamerContentProvider {
     title: CatalogTitle,
     retry?: boolean,
   ): Promise<SeriesDetail>;
+  isSeriesSearchActive?(titleId: string): boolean;
+  activeSeriesSearchCount?(): number;
   /** Explicit title-wide media recheck; automatic episode discovery remains independent. */
   forceSearchTitle?(
     profileId: string,

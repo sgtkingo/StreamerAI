@@ -42,6 +42,26 @@ export const MetadataSearchQuerySchema = z
   .strict();
 export type MetadataSearchQuery = z.infer<typeof MetadataSearchQuerySchema>;
 
+/** Broad catalog discovery by catalog genres, rather than a title-text search.
+ * `completeOnly` means an ended TV run; episode playback is checked separately.
+ */
+export const MetadataDiscoveryRequestSchema = z
+  .object({
+    kind: MediaKindSchema,
+    genres: z.array(z.string().trim().min(1).max(60)).min(1).max(3),
+    completeOnly: z.boolean(),
+    locale: z.string().trim().min(2).max(16),
+    limit: z.number().int().min(1).max(50),
+  })
+  .strict()
+  .refine((request) => !request.completeOnly || request.kind === "series", {
+    message: "Complete-only discovery requires a series kind.",
+    path: ["kind"],
+  });
+export type MetadataDiscoveryRequest = z.infer<
+  typeof MetadataDiscoveryRequestSchema
+>;
+
 export const MetadataCandidateSchema = z
   .object({
     ref: ExternalEntityRefSchema,
@@ -519,6 +539,11 @@ export interface MetadataProvider {
   health(context: ProviderContext): Promise<ProviderHealth>;
   search(
     query: MetadataSearchQuery,
+    context: ProviderContext,
+  ): Promise<MetadataCandidate[]>;
+  /** Optional because title-search-only metadata sources remain valid. */
+  discover?(
+    request: MetadataDiscoveryRequest,
     context: ProviderContext,
   ): Promise<MetadataCandidate[]>;
   getTitle(

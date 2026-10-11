@@ -36,9 +36,9 @@ const groups: {
   },
   {
     id: "inference",
-    title: "Local AI",
+    title: "Local agents",
     emptyLabel: "Choose a local AI service",
-    description: "On-device recommendations and interpretation.",
+    description: "",
   },
   {
     id: "enrichment",
@@ -108,6 +108,101 @@ interface IntegrationManagerProps {
   initialTmdbState?: ConnectionState;
   initialWebshareState?: ConnectionState;
   onConnectionChange?: (id: string, connected: boolean) => void;
+  agentModel?: string;
+  agentBaseUrl?: string;
+  onAgentConfigured?: (agent: { model: string; baseUrl: string }) => void;
+  onCheckAgent?: () => void;
+  checkingAgent?: boolean;
+  agentCheck?: string;
+  discoveryRevision?: number;
+  discoveredAgentIds?: string[] | null;
+}
+
+function TargetIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+    >
+      <circle cx="12" cy="12" r="9" />
+      <circle cx="12" cy="12" r="4" />
+      <circle cx="12" cy="12" r="1" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+function AgentConnectionForm({
+  baseUrl,
+  model,
+  onBaseUrlChange,
+  onModelChange,
+  onSubmit,
+  busy,
+  error,
+  submitLabel,
+}: {
+  baseUrl: string;
+  model: string;
+  onBaseUrlChange: (value: string) => void;
+  onModelChange: (value: string) => void;
+  onSubmit: () => void;
+  busy: boolean;
+  error: string;
+  submitLabel: string;
+}) {
+  return (
+    <form
+      className="integration-agent-form"
+      onSubmit={(event) => {
+        event.preventDefault();
+        onSubmit();
+      }}
+    >
+      <p>Connect to an Ollama API on this device or your private network.</p>
+      <label className="field">
+        <span>Local API address</span>
+        <input
+          type="text"
+          value={baseUrl}
+          onChange={(event) => onBaseUrlChange(event.target.value)}
+          placeholder="http://192.168.1.10:11434"
+          autoComplete="url"
+          required
+        />
+      </label>
+      <label className="field">
+        <span>Model name</span>
+        <input
+          type="text"
+          value={model}
+          onChange={(event) => onModelChange(event.target.value)}
+          placeholder="qwen3.5:4b"
+          spellCheck={false}
+          required
+        />
+      </label>
+      <p className="integration-block__hint">
+        Verification checks the model and its capabilities. A successful
+        connection becomes the active local agent.
+      </p>
+      {error && (
+        <p className="integration-agent-form__error" role="alert">
+          {error}
+        </p>
+      )}
+      <button
+        className="button button--secondary"
+        type="submit"
+        disabled={busy}
+      >
+        <TargetIcon />
+        {busy ? "Verifying…" : submitLabel}
+      </button>
+    </form>
+  );
 }
 
 function ActionIcon({
@@ -175,6 +270,14 @@ export function IntegrationManager({
   initialTmdbState,
   initialWebshareState,
   onConnectionChange,
+  agentModel,
+  agentBaseUrl,
+  onAgentConfigured,
+  onCheckAgent,
+  checkingAgent = false,
+  agentCheck,
+  discoveryRevision = 0,
+  discoveredAgentIds = null,
 }: IntegrationManagerProps) {
   const [items, setItems] = useState<IntegrationCatalogItem[]>([
     coreIntegration("tmdb", initialTmdbState === "connected"),
@@ -197,6 +300,10 @@ export function IntegrationManager({
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [memoryOnly, setMemoryOnly] = useState(false);
+  const [manualOpen, setManualOpen] = useState(false);
+  const [agentFormBaseUrl, setAgentFormBaseUrl] = useState("");
+  const [agentFormModel, setAgentFormModel] = useState("");
+  const [agentFormError, setAgentFormError] = useState("");
 
   useEffect(() => {
     let active = true;
@@ -210,6 +317,7 @@ export function IntegrationManager({
           return [...byId.values()];
         });
         setCatalogError("");
+        if (discoveryRevision > 0) setPicker("inference");
       })
       .catch((error: unknown) => {
         if (active) setCatalogError(safeErrorMessage(error));
@@ -217,13 +325,18 @@ export function IntegrationManager({
     return () => {
       active = false;
     };
-  }, [api]);
+  }, [api, discoveryRevision]);
 
   const visible = (item: IntegrationCatalogItem) =>
     item.configured || item.selected || addedIds.includes(item.id);
   const visibleIds = new Set(items.filter(visible).map((item) => item.id));
   const pickerItems = items.filter(
-    (item) => !visibleIds.has(item.id) && item.category === picker,
+    (item) =>
+      !visibleIds.has(item.id) &&
+      item.category === picker &&
+      (picker !== "inference" ||
+        discoveredAgentIds === null ||
+        discoveredAgentIds.includes(item.id)),
   );
 
   const openSetup = (id: string) => {
@@ -235,6 +348,56 @@ export function IntegrationManager({
     setPassword("");
     setShowToken(false);
     setShowPassword(false);
+  };
+
+  const openAgentSettings = () => {
+    const opening = expandedId !== "ollama";
+    setExpandedId(opening ? "ollama" : null);
+    setPicker(null);
+    setManualOpen(false);
+    setAgentFormBaseUrl(agentBaseUrl ?? "");
+    setAgentFormModel(agentModel ?? "");
+    setAgentFormError("");
+  };
+
+  const configureAgent = async () => {
+    setWorkingId("ollama");
+    setAgentFormError("");
+    try {
+      const result = await api.connectLocalAgent({
+        baseUrl: agentFormBaseUrl,
+        model: agentFormModel,
+      });
+      if (!result.ok) {
+        setAgentFormError(
+          result.message || "The local agent could not be verified.",
+        );
+        return;
+      }
+      const model = result.model || agentFormModel.trim();
+      const baseUrl = result.baseUrl || agentFormBaseUrl.trim();
+      setItems((current) =>
+        current.map((item) =>
+          item.id === "ollama"
+            ? { ...item, configured: true, status: "connected" }
+            : item,
+        ),
+      );
+      onAgentConfigured?.({ model, baseUrl });
+      onConnectionChange?.("ollama", true);
+      setExpandedId(null);
+      setManualOpen(false);
+      setPicker(null);
+      setMessage({
+        id: "ollama",
+        text: "Local agent verified and connected.",
+        error: false,
+      });
+    } catch (reason) {
+      setAgentFormError(safeErrorMessage(reason));
+    } finally {
+      setWorkingId(null);
+    }
   };
 
   const choose = async (item: IntegrationCatalogItem) => {
@@ -386,10 +549,12 @@ export function IntegrationManager({
               key={group.id}
               aria-label={group.title}
             >
-              <div className="integration-group__heading">
-                <h3>{group.title}</h3>
-                <p>{group.description}</p>
-              </div>
+              {category !== "agents" && (
+                <div className="integration-group__heading">
+                  <h3>{group.title}</h3>
+                  <p>{group.description}</p>
+                </div>
+              )}
               <div className="integration-group__cards">
                 {groupItems.length === 0 && (
                   <button
@@ -414,7 +579,11 @@ export function IntegrationManager({
                         <div className="integration-block__identity">
                           <SourceIcon providerId={item.id} />
                           <div>
-                            <h4>{item.name}</h4>
+                            <h4>
+                              {item.id === "ollama"
+                                ? agentModel || "Loading model…"
+                                : item.name}
+                            </h4>
                             <span
                               className={
                                 "integration-block__status " +
@@ -434,6 +603,28 @@ export function IntegrationManager({
                           </div>
                         </div>
                         <div className="integration-block__actions">
+                          {item.id === "ollama" && (
+                            <button
+                              type="button"
+                              className="integration-block__settings"
+                              aria-label="Agent settings"
+                              aria-expanded={expandedId === "ollama"}
+                              onClick={openAgentSettings}
+                              disabled={busy}
+                            >
+                              <ActionIcon kind="settings" />
+                            </button>
+                          )}
+                          {item.id === "ollama" && onCheckAgent && (
+                            <button
+                              type="button"
+                              onClick={onCheckAgent}
+                              disabled={checkingAgent}
+                            >
+                              <TargetIcon />
+                              {checkingAgent ? "Checking…" : "Check agent"}
+                            </button>
+                          )}
                           {!item.planned && supported && (
                             <button
                               type="button"
@@ -466,12 +657,17 @@ export function IntegrationManager({
                         </div>
                       </div>
                       <p>{item.description}</p>
+                      {item.id === "ollama" && agentCheck && (
+                        <p className="integration-block__hint" role="status">
+                          {agentCheck}
+                        </p>
+                      )}
                       {item.planned && (
                         <p className="integration-block__hint">
                           Saved for later. This adapter cannot connect yet.
                         </p>
                       )}
-                      {!item.planned && !supported && (
+                      {!item.planned && !supported && item.id !== "ollama" && (
                         <p className="integration-block__hint">
                           {item.configured
                             ? "This connection is managed in its own setup flow."
@@ -529,6 +725,20 @@ export function IntegrationManager({
                               );
                               onConnectionChange?.(item.id, configured);
                             }}
+                          />
+                        </div>
+                      )}
+                      {expandedId === "ollama" && item.id === "ollama" && (
+                        <div className="integration-block__form">
+                          <AgentConnectionForm
+                            baseUrl={agentFormBaseUrl}
+                            model={agentFormModel}
+                            onBaseUrlChange={setAgentFormBaseUrl}
+                            onModelChange={setAgentFormModel}
+                            onSubmit={() => void configureAgent()}
+                            busy={busy}
+                            error={agentFormError}
+                            submitLabel="Verify and save"
                           />
                         </div>
                       )}
@@ -680,7 +890,17 @@ export function IntegrationManager({
                     </button>
                   </div>
                   {pickerItems.length === 0 ? (
-                    <p>All listed services in this group are already added.</p>
+                    <p
+                      className={
+                        category === "agents"
+                          ? "integration-picker__empty"
+                          : undefined
+                      }
+                    >
+                      {category === "agents"
+                        ? "Sorry, no more agents found."
+                        : "All listed services in this group are already added."}
+                    </p>
                   ) : (
                     <div className="integration-picker__options">
                       {pickerItems.map((item) => (
@@ -702,6 +922,36 @@ export function IntegrationManager({
                         </button>
                       ))}
                     </div>
+                  )}
+                  {category === "agents" && (
+                    <>
+                      <button
+                        className="integration-picker__manual-link"
+                        type="button"
+                        aria-expanded={manualOpen}
+                        onClick={() => {
+                          setManualOpen((current) => !current);
+                          setExpandedId(null);
+                          setAgentFormBaseUrl("");
+                          setAgentFormModel("");
+                          setAgentFormError("");
+                        }}
+                      >
+                        You can try to add your local agent manually
+                      </button>
+                      {manualOpen && (
+                        <AgentConnectionForm
+                          baseUrl={agentFormBaseUrl}
+                          model={agentFormModel}
+                          onBaseUrlChange={setAgentFormBaseUrl}
+                          onModelChange={setAgentFormModel}
+                          onSubmit={() => void configureAgent()}
+                          busy={workingId === "ollama"}
+                          error={agentFormError}
+                          submitLabel="Verify and add agent"
+                        />
+                      )}
+                    </>
                   )}
                 </section>
               )}

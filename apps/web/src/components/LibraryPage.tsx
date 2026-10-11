@@ -9,6 +9,7 @@ import type {
 } from "@streamer-ai/contracts";
 import type { PlaybackGrant, StreamerApi } from "../api/client";
 import { safeErrorMessage } from "../api/client";
+import { lockBodyScroll } from "../body-scroll-lock";
 import { useToasts } from "./ToastProvider";
 import { TitleCard } from "./TitleCard";
 import { usePlaybackChecks } from "./usePlaybackChecks";
@@ -107,6 +108,36 @@ export function LibraryPage({
     }
   }, [api, profileId]);
 
+  useEffect(() => {
+    const activeIds =
+      library?.items
+        .filter((item) => item.title.seriesSearchActive)
+        .map((item) => item.title.id) ?? [];
+    if (activeIds.length === 0) return;
+    let active = true;
+    let pending = false;
+    const poll = async () => {
+      if (pending) return;
+      pending = true;
+      try {
+        await Promise.allSettled(
+          activeIds.map((id) => api.getTitleDetail(profileId, id)),
+        );
+        const updated = await api.getLibrary(profileId);
+        if (active) setLibrary(updated);
+      } catch {
+        // Keep the existing cards visible until the next refresh.
+      } finally {
+        pending = false;
+      }
+    };
+    const timer = window.setInterval(() => void poll(), 2500);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [api, library, profileId]);
+
   const loadHistory = useCallback(async () => {
     setHistoryLoading(true);
     setHistoryError("");
@@ -127,8 +158,7 @@ export function LibraryPage({
     if (!historyOpen) return;
     const previouslyFocused = document.activeElement as HTMLElement | null;
     const historyTrigger = historyTriggerRef.current;
-    const oldOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
+    const releaseScrollLock = lockBodyScroll();
     historyCloseRef.current?.focus();
 
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -162,7 +192,7 @@ export function LibraryPage({
     document.addEventListener("keydown", handleKeyDown);
     return () => {
       document.removeEventListener("keydown", handleKeyDown);
-      document.body.style.overflow = oldOverflow;
+      releaseScrollLock();
       (previouslyFocused ?? historyTrigger)?.focus();
     };
   }, [historyOpen]);

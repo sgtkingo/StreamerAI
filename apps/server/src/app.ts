@@ -21,6 +21,11 @@ import { WebshareClient } from "./integrations/webshare-client.js";
 import { WebshareMediaProvider } from "./integrations/webshare-media-provider.js";
 import { LocalMediaProvider } from "./integrations/local-media-provider.js";
 import { OllamaAgentProvider } from "./integrations/ollama-agent-provider.js";
+import {
+  MANUAL_AGENT_SETTING_KEY,
+  parseManualAgentConfig,
+  type ManualAgentConfig,
+} from "./integrations/manual-agent-config.js";
 import { AdapterRegistry } from "./integrations/provider-registry.js";
 import { createAppLogger } from "./logging.js";
 import { registerSystemRoutes } from "./routes/system.js";
@@ -158,6 +163,17 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
       mkdirSync(resolve(filename, ".."), { recursive: true });
     database = openStreamerDatabase({ filename, clock: now });
   }
+  const activeInferenceConfig = { ...runtimeConfig.inference };
+  let manualAgent = false;
+  const storedAgent = database.settings.get<unknown>(MANUAL_AGENT_SETTING_KEY);
+  if (storedAgent !== null) {
+    try {
+      Object.assign(activeInferenceConfig, parseManualAgentConfig(storedAgent));
+      manualAgent = true;
+    } catch {
+      // Ignore invalid saved data and keep the configured default agent.
+    }
+  }
   const stores = createStores(options, database, environment, runtimeConfig);
   const playbackTicketStore =
     options.playbackTicketStore ?? new InMemoryPlaybackTicketStore(now);
@@ -206,7 +222,7 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
     options.subtitleProviders?.list() ?? [],
   );
   const agent = new OllamaAgentProvider({
-    config: runtimeConfig.inference,
+    config: activeInferenceConfig,
     now,
   });
   const providerDescriptors = [
@@ -233,7 +249,7 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
           integrationStateStore: stores.integrationStateStore,
           secretRefForProvider: (providerId) =>
             database.integrations.getSecretRef(providerId),
-          inference: runtimeConfig.inference,
+          inference: activeInferenceConfig,
           localeForProfile: (profileId) =>
             database.profiles.get(profileId)?.locale ?? "en",
           now,
@@ -382,9 +398,15 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
   );
   registerInferenceRoutes(app, {
     fetch: options.inferenceFetch ?? defaultInferenceFetch(),
-    config: runtimeConfig.inference,
+    config: activeInferenceConfig,
     integrationStateStore: stores.integrationStateStore,
     now,
+    isManualAgent: () => manualAgent,
+    saveManualAgent: (selection: ManualAgentConfig) => {
+      database.settings.set(MANUAL_AGENT_SETTING_KEY, selection);
+      Object.assign(activeInferenceConfig, selection);
+      manualAgent = true;
+    },
   });
   registerTmdbRoutes(app, {
     fetch: options.fetch ?? defaultFetch(),

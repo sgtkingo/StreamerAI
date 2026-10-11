@@ -2,6 +2,7 @@ import {
   CanonicalTitlePayloadSchema,
   DiscoveryFeedRequestSchema,
   ExternalEntityRefSchema,
+  MetadataDiscoveryRequestSchema,
   MetadataSearchQuerySchema,
   ProviderHealthSchema,
   SeriesStructureSchema,
@@ -11,6 +12,7 @@ import {
   type ExternalEntityRef,
   type FieldProvenance,
   type MetadataCandidate,
+  type MetadataDiscoveryRequest,
   type MetadataProvider,
   type MetadataSearchQuery,
   type ProviderContext,
@@ -109,10 +111,31 @@ function results(value: unknown): Record<string, unknown>[] {
   return body.results.map(object);
 }
 
+function genreName(value: string, kind: "movie" | "series"): string {
+  const normalized = normalizedIdentity(value);
+  if (kind === "series" && ["action", "adventure"].includes(normalized))
+    return "action adventure";
+  if (kind === "series" && normalized === "fantasy") return "sci fi fantasy";
+  if (
+    [
+      "sci fi",
+      "scifi",
+      "scify",
+      "science fiction",
+      "sci fi fantasy",
+      "sci fi and fantasy",
+    ].includes(normalized)
+  ) {
+    return kind === "movie" ? "science fiction" : "sci fi fantasy";
+  }
+  return normalized;
+}
+
 /** Converts TMDB responses into provider-neutral records with field provenance. */
 export class TmdbMetadataProvider implements MetadataProvider {
   readonly #client: TmdbApiClient;
   readonly #now: () => Date;
+  readonly #genreCache = new Map<"movie" | "series", Map<string, number>>();
 
   constructor(options: TmdbMetadataProviderOptions) {
     this.#client = options.client;
@@ -132,6 +155,7 @@ export class TmdbMetadataProvider implements MetadataProvider {
         "ratings",
         "artwork",
         "discovery-feeds",
+        "genre-discovery",
       ],
       supportedLocales: ["cs", "en", "de"],
       setupMode: "api-key",
@@ -284,6 +308,132 @@ export class TmdbMetadataProvider implements MetadataProvider {
       }),
     );
     return candidates.flat().slice(0, query.limit);
+  }
+
+  async discover(
+    rawRequest: MetadataDiscoveryRequest,
+    context: ProviderContext,
+  ): Promise<MetadataCandidate[]> {
+    const request = MetadataDiscoveryRequestSchema.parse(rawRequest);
+    const genres = await this.genreIds(request.kind, context.signal);
+    const ids = request.genres.map((name) =>
+      genres.get(genreName(name, request.kind)),
+    );
+    if (ids.some((id) => id === undefined)) return [];
+
+    const candidates: MetadataCandidate[] = [];
+    const seen = new Set<string>();
+    const retrievedAt = this.#now().toISOString();
+    for (let page = 1; page <= 3 && candidates.length < request.limit; page++) {
+      const response = object(
+        await this.#client.discover(
+          request.kind,
+          {
+            genreIds: ids as number[],
+            completeOnly: request.completeOnly,
+            language: tmdbLanguage(request.locale),
+            page,
+            releasedBefore: this.#now().toISOString().slice(0, 10),
+          },
+          context.signal,
+        ),
+      );
+      const items = results(response);
+      if (items.length === 0) break;
+      const eligible = request.completeOnly
+        ? await this.endedSeries(
+            items,
+            context,
+            request.limit - candidates.length,
+          )
+        : items;
+      for (const item of eligible) {
+        if (!Number.isInteger(item.id)) continue;
+        const title = optionalString(item.title ?? item.name);
+        if (title === null) continue;
+        const externalId = String(item.id);
+        if (seen.has(externalId)) continue;
+        seen.add(externalId);
+        candidates.push({
+          ref: {
+            providerId: "tmdb",
+            externalId,
+            entityType: request.kind,
+          },
+          kind: request.kind,
+          title,
+          originalTitle: optionalString(
+            item.original_title ?? item.original_name,
+          ),
+          year: year(item.release_date ?? item.first_air_date),
+          confidence: 1,
+          provenance: provenance(retrievedAt),
+        });
+        if (candidates.length >= request.limit) break;
+      }
+      if (
+        typeof response.total_pages === "number" &&
+        page >= response.total_pages
+      ) {
+        break;
+      }
+    }
+    return candidates;
+  }
+
+  private async genreIds(
+    kind: "movie" | "series",
+    signal?: AbortSignal,
+  ): Promise<Map<string, number>> {
+    const cached = this.#genreCache.get(kind);
+    if (cached !== undefined) return cached;
+    const body = object(await this.#client.getGenres(kind, signal));
+    if (!Array.isArray(body.genres)) {
+      throw new ProviderRequestError("tmdb", "invalid-response", true);
+    }
+    const genres = new Map<string, number>();
+    for (const rawGenre of body.genres) {
+      const genre = object(rawGenre);
+      if (!Number.isInteger(genre.id)) continue;
+      const name = optionalString(genre.name);
+      if (name !== null) genres.set(normalizedIdentity(name), Number(genre.id));
+    }
+    this.#genreCache.set(kind, genres);
+    return genres;
+  }
+
+  private async endedSeries(
+    items: Record<string, unknown>[],
+    context: ProviderContext,
+    limit: number,
+  ): Promise<Record<string, unknown>[]> {
+    const ended: Record<string, unknown>[] = [];
+    for (let offset = 0; offset < items.length; offset += 4) {
+      const batch = items.slice(offset, offset + 4);
+      const matches = await Promise.all(
+        batch.map(async (item) => {
+          if (!Number.isInteger(item.id) || Number(item.id) <= 0) return false;
+          try {
+            const details = object(
+              await this.#client.getSeries(
+                Number(item.id),
+                tmdbLanguage(context.locale),
+                context.signal,
+              ),
+            );
+            return optionalString(details.status) === "Ended";
+          } catch (error) {
+            if (context.signal?.aborted) throw error;
+            return false;
+          }
+        }),
+      );
+      for (const [index, item] of batch.entries()) {
+        if (matches[index]) ended.push(item);
+      }
+      if (ended.length >= limit) break;
+    }
+    return ended;
   }
 
   async getTitle(

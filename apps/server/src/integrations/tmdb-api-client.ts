@@ -220,6 +220,65 @@ export class TmdbApiClient {
     );
   }
 
+  getGenres(kind: "movie" | "series", signal?: AbortSignal): Promise<unknown> {
+    return this.get(
+      `/genre/${kind === "movie" ? "movie" : "tv"}/list`,
+      { language: "en-US" },
+      signal,
+    );
+  }
+
+  discover(
+    kind: "movie" | "series",
+    input: {
+      genreIds: number[];
+      completeOnly: boolean;
+      language?: string;
+      page?: number;
+      releasedBefore?: string;
+    },
+    signal?: AbortSignal,
+  ): Promise<unknown> {
+    if (
+      input.genreIds.length === 0 ||
+      input.genreIds.some((id) => !Number.isInteger(id) || id <= 0)
+    ) {
+      throw new TypeError("TMDB genre ids must be positive integers.");
+    }
+    if (input.completeOnly && kind !== "series") {
+      throw new TypeError("Complete-only discovery requires a series kind.");
+    }
+    const page = input.page ?? 1;
+    if (!Number.isInteger(page) || page < 1 || page > 500) {
+      throw new TypeError("TMDB discovery page must be between 1 and 500.");
+    }
+    if (
+      input.releasedBefore !== undefined &&
+      !/^\d{4}-\d{2}-\d{2}$/.test(input.releasedBefore)
+    ) {
+      throw new TypeError("TMDB release cutoff must be an ISO date.");
+    }
+    return this.get(
+      `/discover/${kind === "movie" ? "movie" : "tv"}`,
+      {
+        language: input.language ?? "en-US",
+        include_adult: "false",
+        ...(kind === "movie" ? { include_video: "false" } : {}),
+        page: String(page),
+        sort_by: "popularity.desc",
+        with_genres: input.genreIds.join(","),
+        ...(input.releasedBefore
+          ? kind === "movie"
+            ? { "primary_release_date.lte": input.releasedBefore }
+            : { "first_air_date.lte": input.releasedBefore }
+          : {}),
+        ...(kind === "series" ? { include_null_first_air_dates: "false" } : {}),
+        ...(input.completeOnly ? { with_status: "3" } : {}),
+      },
+      signal,
+    );
+  }
+
   async get(
     path: string,
     query: Readonly<Record<string, string>> = {},

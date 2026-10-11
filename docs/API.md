@@ -14,7 +14,15 @@ empty JSON content type.
 | `GET` | `/setup/status` | Required onboarding steps and storage durability. |
 | `POST` | `/setup/complete` | Save the default profile and preferences. |
 | `GET` | `/integrations` | Sanitized public integration catalog/status. |
+| `GET` | `/inference/agent` | Configured local runtime and model name. |
+| `POST` | `/inference/agent/connect` | Verify and activate a local Ollama API address and model. |
+| `POST` | `/inference/discover` | Probe the local runtime for the supported installed agent model. |
 | `POST` | `/inference/detect` | Bounded local Ollama detection. |
+
+`POST /inference/agent/connect` accepts a local or private HTTP(S) API address
+and model name. It runs the full Ollama compatibility check before saving the
+selection. The selected address and model are persisted in application settings
+and used by subsequent agent requests.
 
 `POST /setup/complete` accepts:
 

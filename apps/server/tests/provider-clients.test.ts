@@ -242,6 +242,209 @@ describe("provider HTTP clients", () => {
     ]);
   });
 
+  it("discovers mystery films by TMDB genre while preserving catalog order", async () => {
+    const secrets = new NonPersistentMemorySecretStore();
+    await secrets.set(TMDB_READ_TOKEN_SECRET_KEY, "test-token");
+    const urls: URL[] = [];
+    const client = new TmdbApiClient({
+      secretStore: secrets,
+      fetch: async (url) => {
+        const parsed = new URL(url);
+        urls.push(parsed);
+        if (parsed.pathname.endsWith("/genre/movie/list")) {
+          return response(
+            200,
+            JSON.stringify({ genres: [{ id: 9648, name: "Mystery" }] }),
+          );
+        }
+        if (parsed.pathname.endsWith("/discover/movie")) {
+          return response(
+            200,
+            JSON.stringify({
+              total_pages: 1,
+              results: [
+                {
+                  id: 77,
+                  title: "Memento",
+                  original_title: "Memento",
+                  release_date: "2000-10-11",
+                },
+                {
+                  id: 78,
+                  title: "Knives Out",
+                  original_title: "Knives Out",
+                  release_date: "2019-11-27",
+                },
+              ],
+            }),
+          );
+        }
+        throw new Error(`Unexpected TMDB request: ${parsed.pathname}`);
+      },
+      baseUrl: "https://tmdb.test/3",
+    });
+    const provider = new TmdbMetadataProvider({
+      client,
+      now: () => new Date("2026-09-29T20:00:00.000Z"),
+    });
+    const context = {
+      requestId: "mystery-discovery",
+      profileId: "default",
+      locale: "en" as const,
+      deadlineAt: "2099-01-01T00:00:00.000Z",
+      secretRef: null,
+    };
+
+    const candidates = await provider.discover(
+      {
+        kind: "movie",
+        genres: ["Mystery"],
+        completeOnly: false,
+        locale: "en",
+        limit: 2,
+      },
+      context,
+    );
+
+    expect(candidates.map((candidate) => candidate.title)).toEqual([
+      "Memento",
+      "Knives Out",
+    ]);
+    expect(candidates[0]?.ref).toEqual({
+      providerId: "tmdb",
+      externalId: "77",
+      entityType: "movie",
+    });
+    expect(urls[1]?.searchParams.get("with_genres")).toBe("9648");
+    expect(urls[1]?.searchParams.get("sort_by")).toBe("popularity.desc");
+    expect(urls[1]?.searchParams.get("primary_release_date.lte")).toBe(
+      "2026-09-29",
+    );
+    expect(urls[1]?.searchParams.has("with_status")).toBe(false);
+
+    await provider.discover(
+      {
+        kind: "movie",
+        genres: ["Nonexistent genre"],
+        completeOnly: false,
+        locale: "en",
+        limit: 2,
+      },
+      context,
+    );
+    expect(urls).toHaveLength(2);
+  });
+
+  it("discovers sci-fi series only when TMDB confirms they have ended", async () => {
+    const secrets = new NonPersistentMemorySecretStore();
+    await secrets.set(TMDB_READ_TOKEN_SECRET_KEY, "test-token");
+    const urls: URL[] = [];
+    const client = new TmdbApiClient({
+      secretStore: secrets,
+      fetch: async (url) => {
+        const parsed = new URL(url);
+        urls.push(parsed);
+        if (parsed.pathname.endsWith("/genre/tv/list")) {
+          return response(
+            200,
+            JSON.stringify({
+              genres: [
+                { id: 10765, name: "Sci-Fi & Fantasy" },
+                { id: 10759, name: "Action & Adventure" },
+              ],
+            }),
+          );
+        }
+        if (parsed.pathname.endsWith("/discover/tv")) {
+          return response(
+            200,
+            JSON.stringify({
+              total_pages: 1,
+              results: [
+                { id: 101, name: "The Expanse", first_air_date: "2015-12-14" },
+                {
+                  id: 102,
+                  name: "Ongoing Space",
+                  first_air_date: "2025-01-01",
+                },
+                { id: 103, name: "Dark", first_air_date: "2017-12-01" },
+              ],
+            }),
+          );
+        }
+        if (parsed.pathname.endsWith("/tv/101")) {
+          return response(200, JSON.stringify({ status: "Ended" }));
+        }
+        if (parsed.pathname.endsWith("/tv/102")) {
+          return response(200, JSON.stringify({ status: "Returning Series" }));
+        }
+        if (parsed.pathname.endsWith("/tv/103")) {
+          return response(200, JSON.stringify({ status: "Ended" }));
+        }
+        throw new Error(`Unexpected TMDB request: ${parsed.pathname}`);
+      },
+      baseUrl: "https://tmdb.test/3",
+    });
+    const provider = new TmdbMetadataProvider({
+      client,
+      now: () => new Date("2026-09-29T20:00:00.000Z"),
+    });
+
+    const candidates = await provider.discover(
+      {
+        kind: "series",
+        genres: ["Science fiction"],
+        completeOnly: true,
+        locale: "en",
+        limit: 2,
+      },
+      {
+        requestId: "scifi-discovery",
+        profileId: "default",
+        locale: "en",
+        deadlineAt: "2099-01-01T00:00:00.000Z",
+        secretRef: null,
+      },
+    );
+
+    expect(candidates.map((candidate) => candidate.title)).toEqual([
+      "The Expanse",
+      "Dark",
+    ]);
+    const discovery = urls.find((url) => url.pathname.endsWith("/discover/tv"));
+    expect(discovery?.searchParams.get("with_genres")).toBe("10765");
+    expect(discovery?.searchParams.get("with_status")).toBe("3");
+    expect(discovery?.searchParams.get("sort_by")).toBe("popularity.desc");
+    expect(discovery?.searchParams.get("first_air_date.lte")).toBe(
+      "2026-09-29",
+    );
+    expect(discovery?.searchParams.get("include_null_first_air_dates")).toBe(
+      "false",
+    );
+    await provider.discover(
+      {
+        kind: "series",
+        genres: ["Action"],
+        completeOnly: false,
+        locale: "en",
+        limit: 1,
+      },
+      {
+        requestId: "action-discovery",
+        profileId: "default",
+        locale: "en",
+        deadlineAt: "2099-01-01T00:00:00.000Z",
+        secretRef: null,
+      },
+    );
+    expect(
+      urls
+        .filter((url) => url.pathname.endsWith("/discover/tv"))
+        .at(-1)
+        ?.searchParams.get("with_genres"),
+    ).toBe("10759");
+  });
+
   it("deterministically filters title candidates by an explicitly named person", async () => {
     const secrets = new NonPersistentMemorySecretStore();
     await secrets.set(TMDB_READ_TOKEN_SECRET_KEY, "test-token");

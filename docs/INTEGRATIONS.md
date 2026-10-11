@@ -479,6 +479,30 @@ The agent receives the user request, profile preferences and validated
 candidate facts. Tool output is untrusted input. Search content cannot override
 system policy, request credentials or call arbitrary URLs.
 
+The `SearchProvider` contract is available for a future web-search adapter, but
+no web-search provider is registered in the application composition root yet.
+Brave Search is shown as a planned integration. A thematic request such as
+"mystery tonight" or "complete scify series" first maps to catalog genres and
+searches a connected metadata provider through its optional `discover` method.
+TMDB uses its genre discovery endpoint and excludes titles that have not yet
+premiered; a request for a complete series also requires TMDB's `Ended` status.
+The coordinator then resolves canonical title
+details and checks playable media. An ended show is only reported as fully
+playable when every episode in the numbered seasons has a verified source;
+season-zero specials are optional. Seen titles and
+previously suggested titles are removed before those expensive checks.
+
+The quick pass skips title-text search for thematic requests because a mood or
+genre phrase is not a title. It reports that genre discovery is underway; the
+full pass returns validated matches. If no metadata adapter supports genre
+discovery, the local agent can still propose exact titles for ordinary metadata
+search and verification.
+
+Agent instructions are selected from model size and configured context. The
+default 4B model gets a short request for three exact titles with no inferred
+person filter. Larger models with sufficient context can rank only the IDs of
+already resolved catalog candidates. Failed ranking falls back to catalog order.
+
 The coordinator must remove candidates that fail metadata resolution before
 ranking. It must also recheck media availability before returning the Play
 action. The final response is parsed with `DiscoveryResponseSchema`.

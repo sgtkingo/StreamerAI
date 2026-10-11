@@ -19,6 +19,7 @@ import {
   type MediaProvider,
   type MediaSearchRequest,
   type MetadataCandidate,
+  type MetadataDiscoveryRequest,
   type MetadataProvider,
   type MetadataSearchQuery,
   type ProviderContext,
@@ -42,6 +43,11 @@ import {
   explicitEpisodeNumber,
   releaseEpisode,
 } from "./episode-release.js";
+import { discoveryInstructionPolicy } from "./discovery-instruction-policy.js";
+import {
+  parseThematicDiscoveryIntent,
+  type ThematicDiscoveryIntent,
+} from "./thematic-discovery-intent.js";
 
 const AGENT_SCHEMA = {
   type: "object",
@@ -301,7 +307,21 @@ function discoveryReply(
   validatedCount: number,
   best: RankedTitle | null,
   acknowledgement: string,
+  validationFailed = false,
 ): string {
+  if (validatedCount === 0) {
+    if (locale === "cs")
+      return validationFailed
+        ? "Ověření titulů teď selhalo. Zkontroluj připojení katalogu a zkus hledání znovu."
+        : "Navržené tituly se nepodařilo potvrdit v katalogu. Zkus konkrétnější zadání.";
+    if (locale === "de")
+      return validationFailed
+        ? "Die Titel konnten gerade nicht geprüft werden. Prüfe die Katalogverbindung und versuche es erneut."
+        : "Die vorgeschlagenen Titel konnten im Katalog nicht bestätigt werden. Versuche eine genauere Anfrage.";
+    return validationFailed
+      ? "Title verification failed. Check the catalog connection and try again."
+      : "I couldn't confirm the suggested titles in the catalog. Try a more specific request.";
+  }
   let summary: string;
   let question: string;
   if (locale === "cs") {
@@ -331,6 +351,77 @@ function discoveryReply(
     else summary = "I found some ideas, but none could be validated reliably.";
   }
   return `${acknowledgement ? `${acknowledgement} ` : ""}${summary} ${question}`;
+}
+
+function thematicReason(
+  intent: ThematicDiscoveryIntent,
+  locale: string,
+): string {
+  const scienceFiction = intent.genres.includes("Science fiction");
+  if (locale === "cs") {
+    if (intent.completeOnly)
+      return scienceFiction
+        ? "Ukončený sci-fi seriál; dostupnost všech dílů se ověřuje zvlášť."
+        : "Ukončený seriál; dostupnost všech dílů se ověřuje zvlášť.";
+    return "Odpovídá požadovanému žánru.";
+  }
+  if (locale === "de") {
+    if (intent.completeOnly)
+      return "Abgeschlossene Serie; die Verfügbarkeit aller Folgen wird getrennt geprüft.";
+    return "Passt zum gewünschten Genre.";
+  }
+  if (intent.completeOnly)
+    return "A concluded series; every episode is checked separately.";
+  return "Matches the requested genre.";
+}
+
+function thematicReply(
+  locale: string,
+  intent: ThematicDiscoveryIntent,
+  validatedCount: number,
+  best: RankedTitle | null,
+  validationFailed: boolean,
+): string {
+  if (validatedCount === 0) {
+    if (locale === "cs")
+      return validationFailed
+        ? "Ověření nalezených titulů selhalo. Zkontroluj připojení katalogu a zkus to znovu."
+        : "V katalogu jsem pro tento žánr nenašel vhodný titul.";
+    if (locale === "de")
+      return validationFailed
+        ? "Die gefundenen Titel konnten nicht geprüft werden. Prüfe die Katalogverbindung und versuche es erneut."
+        : "Im Katalog wurde kein passender Titel für dieses Genre gefunden.";
+    return validationFailed
+      ? "I found catalog matches but could not verify them. Check the catalog connection and try again."
+      : "I couldn't find a matching title in the connected catalog.";
+  }
+  if (intent.completeOnly) {
+    const confirmedComplete =
+      best?.title.availability === "available" &&
+      best.title.seriesCoverage?.complete === true;
+    if (locale === "cs")
+      return confirmedComplete
+        ? `Našel jsem ukončený seriál s ověřenými všemi díly: ${best.title.title}. Je to ono?`
+        : "Našel jsem ukončené seriály, ale zatím nemohu potvrdit dostupnost všech dílů. U návrhů vidíš aktuální dostupnost.";
+    if (locale === "de")
+      return confirmedComplete
+        ? `Ich habe eine abgeschlossene Serie mit allen bestätigten Folgen gefunden: ${best.title.title}. Passt das?`
+        : "Ich habe abgeschlossene Serien gefunden, kann aber noch nicht bestätigen, dass alle Folgen verfügbar sind. Die Vorschläge zeigen die aktuelle Verfügbarkeit.";
+    return confirmedComplete
+      ? `I found a concluded series with every episode confirmed playable: ${best.title.title}. Is this what you had in mind?`
+      : "I found concluded series, but could not confirm that every episode is playable. The suggestions show current availability.";
+  }
+  if (locale === "cs")
+    return best
+      ? `Našel jsem tipy v požadovaném žánru. Nejlepší dostupný je ${best.title.title}. Je to ono?`
+      : "Našel jsem odpovídající tituly, ale zatím nemohu potvrdit přehrávání.";
+  if (locale === "de")
+    return best
+      ? `Ich habe passende Titel gefunden. Der beste verfügbare Treffer ist ${best.title.title}. Passt das?`
+      : "Ich habe passende Titel gefunden, kann die Wiedergabe aber noch nicht bestätigen.";
+  return best
+    ? `I found matching titles. The best playable match is ${best.title.title}. Is this what you had in mind?`
+    : "I found matching titles, but could not confirm playback yet.";
 }
 
 function normalize(value: string): string {
@@ -601,6 +692,7 @@ export class LiveContentCoordinator implements StreamerContentProvider {
   readonly #now: () => Date;
   readonly #playbackCandidates = new Map<string, MediaCandidateRef[]>();
   readonly #seriesJobs = new Map<string, SeriesSearchJob>();
+  readonly #manualSeriesSearches = new Set<string>();
   readonly #forcedEpisodeSources = new Map<string, TitleSource[]>();
 
   constructor(options: LiveContentCoordinatorOptions) {
@@ -712,30 +804,56 @@ export class LiveContentCoordinator implements StreamerContentProvider {
       this.#now(),
       conversation?.signal,
     );
-    const history = (conversation?.messages ?? []).map((message) => {
+    const thematicIntent = parseThematicDiscoveryIntent(request.message);
+    if (thematicIntent) {
+      const thematic = await this.discoverThematic(
+        request,
+        completedAt,
+        context,
+        thematicIntent,
+        conversation,
+      );
+      if (thematic) return thematic;
+    }
+    const history = (conversation?.messages ?? []).flatMap((message) => {
       const data = record(message.content);
       const previousTitles = Array.isArray(data?.titles)
         ? data.titles
             .filter((title): title is string => typeof title === "string")
             .slice(0, 6)
         : [];
-      return {
-        role: message.role,
-        content:
-          data?.stage === "quick" && previousTitles.length > 0
-            ? `Deterministic metadata search found these title candidates: ${previousTitles.join(", ")}. They are metadata matches, not proof of playback or preference fit. For a direct title query, include an exact matching title unless the user has ruled it out.`
-            : typeof data?.message === "string"
+      if (data?.stage === "quick") {
+        return previousTitles.length > 0
+          ? [
+              {
+                role: "system" as const,
+                content: `Deterministic metadata search found these title candidates: ${previousTitles.join(", ")}. They are metadata matches, not proof of playback or preference fit. For a direct title query, include an exact matching title unless the user has ruled it out.`,
+              },
+            ]
+          : [];
+      }
+      return [
+        {
+          role: message.role,
+          content:
+            typeof data?.message === "string"
               ? data.message
               : typeof data?.reply === "string"
                 ? `${data.reply}${previousTitles.length ? ` Previously suggested: ${previousTitles.join(", ")}.` : ""}`
                 : typeof message.content === "string"
                   ? message.content
                   : JSON.stringify(message.content),
-      };
+        },
+      ];
     });
-    const instruction = `You propose films and series for a ${locale} user. Keep earlier preferences unless revised. Apply objections and avoid rejected or already watched titles. A quick-search note contains metadata candidates, not user preferences. For a direct title request, consider an exact quick-search match. Include only currently required people; every candidate must feature them. Return up to 6 real, correctly spelled titles with kind, approximate year, short reason and score. Give a brief acknowledgement in the user's language without naming unvalidated titles or claiming availability. Do not invent facts. Output only JSON.`;
-    const displayInstruction =
-      "Acknowledgement and reasons are shown to the user. Use natural language without naming metadata or media providers, websites, APIs, tools, or validation steps.";
+    const policy = discoveryInstructionPolicy({
+      model: this.#inference.model,
+      contextTokens: this.#inference.contextTokens,
+      maxOutputTokens: this.#inference.maxOutputTokens,
+      locale,
+    });
+    const instruction = policy.instruction;
+    const displayInstruction = policy.displayInstruction;
     const seenNote = conversation?.unseen
       ? `The user asked for something unseen. Never propose these already watched titles: ${conversation.unseen.titles.join(", ")}. The application also filters them by canonical ID.`
       : "";
@@ -784,57 +902,98 @@ export class LiveContentCoordinator implements StreamerContentProvider {
         : []),
       ...recent,
     ];
+    const lastCurrentUser = compactHistory.findLastIndex(
+      (message) =>
+        message.role === "user" && message.content === request.message,
+    );
+    if (lastCurrentUser >= 0) compactHistory.splice(lastCurrentUser, 1);
+    const agentMessages = [
+      { role: "system" as const, content: instruction },
+      { role: "system" as const, content: displayInstruction },
+      ...(note ? [{ role: "system" as const, content: note }] : []),
+      ...compactHistory,
+      { role: "user" as const, content: request.message },
+    ];
     const generation = await this.#agent.generateStructured<unknown>(
       {
         model: this.#inference.model,
-        messages: [
-          {
-            role: "system",
-            content: instruction,
-          },
-          {
-            role: "system",
-            content: displayInstruction,
-          },
-          ...(note ? [{ role: "system" as const, content: note }] : []),
-          ...compactHistory,
-          ...(history.some(
-            (message) =>
-              message.role === "user" &&
-              message.content.includes(request.message),
-          )
-            ? []
-            : [{ role: "user" as const, content: request.message }]),
-        ],
+        messages: agentMessages,
         outputSchemaName: "streamer_ai_discovery_candidates",
         outputJsonSchema: AGENT_SCHEMA,
         allowedToolNames: [],
-        temperature: 0.35,
+        temperature: policy.temperature,
         maxOutputTokens: this.#inference.maxOutputTokens,
       },
       context,
     );
     context.signal?.throwIfAborted();
-    const plan = parseAgentPlan(generation.output);
+    let plan = parseAgentPlan(generation.output);
     const validated: ValidatedCandidate[] = [];
     const warnings: string[] = [];
     const seen = new Set<string>();
-    for (const candidate of plan.candidates) {
-      context.signal?.throwIfAborted();
+    const attemptedHints = new Set<string>();
+    let unresolvedHints = 0;
+    const validatePlan = async (proposal: AgentPlan) => {
+      for (const candidate of proposal.candidates) {
+        context.signal?.throwIfAborted();
+        const hint = `${normalize(candidate.title)}:${candidate.kind}:${candidate.year ?? ""}`;
+        if (attemptedHints.has(hint)) continue;
+        attemptedHints.add(hint);
+        try {
+          const result = await this.validateCandidate(
+            candidate,
+            proposal.people[0] ?? null,
+            context,
+          );
+          if (result === null) {
+            unresolvedHints += 1;
+            continue;
+          }
+          if (seen.has(result.ranked.title.id)) continue;
+          seen.add(result.ranked.title.id);
+          validated.push(result);
+        } catch {
+          context.signal?.throwIfAborted();
+          warnings.push(
+            `Could not validate '${candidate.title}' against live providers.`,
+          );
+        }
+      }
+    };
+    await validatePlan(plan);
+    if (
+      validated.length === 0 &&
+      unresolvedHints > 0 &&
+      Date.parse(context.deadlineAt) - this.#now().getTime() >= 15_000
+    ) {
       try {
-        const result = await this.validateCandidate(
-          candidate,
-          plan.people[0] ?? null,
+        const retry = await this.#agent.generateStructured<unknown>(
+          {
+            model: this.#inference.model,
+            messages: [
+              ...agentMessages.slice(0, -1),
+              {
+                role: "system",
+                content: policy.retryInstruction(
+                  plan.candidates.map((item) => item.title),
+                ),
+              },
+              agentMessages.at(-1)!,
+            ],
+            outputSchemaName: "streamer_ai_discovery_candidates",
+            outputJsonSchema: AGENT_SCHEMA,
+            allowedToolNames: [],
+            temperature: policy.retryTemperature,
+            maxOutputTokens: this.#inference.maxOutputTokens,
+          },
           context,
         );
-        if (result === null || seen.has(result.ranked.title.id)) continue;
-        seen.add(result.ranked.title.id);
-        validated.push(result);
+        const retryPlan = parseAgentPlan(retry.output);
+        await validatePlan(retryPlan);
+        if (validated.length > 0) plan = retryPlan;
       } catch {
         context.signal?.throwIfAborted();
-        warnings.push(
-          `Could not validate '${candidate.title}' against live providers.`,
-        );
+        // Retain the first attempt's diagnostic result if the retry fails.
       }
     }
 
@@ -873,6 +1032,7 @@ export class LiveContentCoordinator implements StreamerContentProvider {
         validated.length,
         best?.ranked ?? null,
         plan.acknowledgement,
+        warnings.length > 0,
       ),
       bestMatch: best?.ranked ?? null,
       available: available.map((item) => item.ranked),
@@ -885,6 +1045,283 @@ export class LiveContentCoordinator implements StreamerContentProvider {
       warnings: [...new Set(warnings)].slice(0, 20),
       completedAt,
     });
+  }
+
+  private async discoverThematic(
+    request: DiscoveryRequest,
+    completedAt: string,
+    context: ProviderContext,
+    intent: ThematicDiscoveryIntent,
+    conversation?: DiscoveryConversationContext,
+  ): Promise<DiscoveryResponse | null> {
+    let candidates: MetadataCandidate[] | null;
+    try {
+      candidates = await this.thematicMetadata(intent, context);
+    } catch {
+      context.signal?.throwIfAborted();
+      // A temporarily unavailable genre endpoint may still allow exact title
+      // proposals through the agent and the ordinary metadata search path.
+      return null;
+    }
+    if (candidates === null) return null;
+    const emptyResponse = () =>
+      DiscoveryResponseSchema.parse({
+        sessionId: request.sessionId,
+        mode: "live",
+        stage: "completed",
+        reply: thematicReply(context.locale, intent, 0, null, false),
+        bestMatch: null,
+        available: [],
+        unavailable: [],
+        unverified: [],
+        warnings: [],
+        completedAt,
+      });
+    if (candidates.length === 0) return emptyResponse();
+
+    const excludedIds = new Set(conversation?.unseen?.titleIds ?? []);
+    const excludedNames = new Set(
+      (conversation?.unseen?.titles ?? []).map(normalize),
+    );
+    for (const message of conversation?.messages ?? []) {
+      if (message.role !== "assistant") continue;
+      const body = record(message.content);
+      if (body?.stage === "quick" || !Array.isArray(body?.titles)) continue;
+      for (const title of body.titles) {
+        if (typeof title === "string") excludedNames.add(normalize(title));
+      }
+    }
+    const fresh = candidates.filter(
+      (candidate) =>
+        !excludedIds.has(canonicalTitleId(candidate.ref)) &&
+        !excludedNames.has(normalize(candidate.title)) &&
+        (candidate.originalTitle === null ||
+          !excludedNames.has(normalize(candidate.originalTitle))),
+    );
+    if (fresh.length === 0) return emptyResponse();
+    const grouped = new Map<string, MetadataCandidate[]>();
+    for (const candidate of fresh) {
+      const key = metadataIdentity(candidate);
+      grouped.set(key, [...(grouped.get(key) ?? []), candidate]);
+    }
+    const groups = [...grouped.values()];
+
+    const validated: ValidatedCandidate[] = [];
+    const warnings: string[] = [];
+    const seen = new Set<string>();
+    const validationLimit = intent.completeOnly ? 4 : 8;
+    for (
+      let offset = 0;
+      offset < Math.min(groups.length, validationLimit);
+      offset += 2
+    ) {
+      context.signal?.throwIfAborted();
+      const batch = await Promise.allSettled(
+        groups.slice(offset, offset + 2).map(async (alternatives, index) => {
+          let nonPlayable: ValidatedCandidate | null = null;
+          let failed = false;
+          for (const candidate of alternatives) {
+            try {
+              const result = await this.validateResolvedCandidate(
+                candidate,
+                Math.max(60, 88 - (offset + index) * 4),
+                thematicReason(intent, context.locale),
+                context,
+                intent.completeOnly ? 30 : 12,
+                intent.completeOnly ? 30 : 3,
+                false,
+                undefined,
+                alternatives.map((item) => item.ref),
+              );
+              if (
+                result.ranked.title.availability === "available" ||
+                (!intent.completeOnly &&
+                  result.ranked.title.availability === "partial")
+              )
+                return result;
+              if (result.ranked.title.availability === "partial")
+                nonPlayable = result;
+              else if (nonPlayable?.ranked.title.availability !== "partial")
+                nonPlayable = preferNonPlayable(nonPlayable, result);
+            } catch {
+              context.signal?.throwIfAborted();
+              failed = true;
+            }
+          }
+          if (nonPlayable === null && failed)
+            throw new Error("All matching metadata sources failed validation.");
+          return nonPlayable;
+        }),
+      );
+      for (const [index, result] of batch.entries()) {
+        if (result.status === "rejected") {
+          context.signal?.throwIfAborted();
+          warnings.push(
+            `Could not validate '${groups[offset + index]![0]!.title}' against live providers.`,
+          );
+          continue;
+        }
+        if (result.value === null) continue;
+        const id = result.value.ranked.title.id;
+        if (seen.has(id)) continue;
+        seen.add(id);
+        validated.push(result.value);
+      }
+      const playable = validated.filter(
+        (item) =>
+          (item.ranked.title.availability === "available" ||
+            (!intent.completeOnly &&
+              item.ranked.title.availability === "partial")) &&
+          (!intent.completeOnly ||
+            item.ranked.title.seriesCoverage?.complete === true),
+      );
+      if (playable.length >= (intent.completeOnly ? 1 : 2)) break;
+    }
+    context.signal?.throwIfAborted();
+    const ordered = await this.rerankThematic(
+      request,
+      context,
+      validated,
+      conversation,
+    );
+    this.rememberValidated(request.profileId, ordered);
+
+    const available = ordered.filter((item) =>
+      ["available", "partial"].includes(item.ranked.title.availability),
+    );
+    let bestIndex = available.findIndex(
+      (item) =>
+        !intent.completeOnly ||
+        item.ranked.title.seriesCoverage?.complete === true,
+    );
+    if (bestIndex < 0 && available.length > 0) bestIndex = 0;
+    const best = bestIndex < 0 ? null : available.splice(bestIndex, 1)[0]!;
+    const highestOther = Math.max(
+      0,
+      ...ordered
+        .filter((item) => item !== best)
+        .map((item) => item.ranked.title.matchPercent ?? 0),
+    );
+    if (best && (best.ranked.title.matchPercent ?? 0) < highestOther) {
+      best.ranked = {
+        ...best.ranked,
+        title: { ...best.ranked.title, matchPercent: highestOther },
+      };
+    }
+    return DiscoveryResponseSchema.parse({
+      sessionId: request.sessionId,
+      mode: "live",
+      stage: "completed",
+      reply: thematicReply(
+        context.locale,
+        intent,
+        validated.length,
+        best?.ranked ?? null,
+        warnings.length > 0,
+      ),
+      bestMatch: best?.ranked ?? null,
+      available: available.map((item) => item.ranked),
+      unavailable: ordered
+        .filter((item) => item.ranked.title.availability === "unavailable")
+        .map((item) => item.ranked),
+      unverified: ordered
+        .filter((item) => item.ranked.title.availability === "unknown")
+        .map((item) => item.ranked),
+      warnings: [...new Set(warnings)].slice(0, 20),
+      completedAt,
+    });
+  }
+
+  private async rerankThematic(
+    request: DiscoveryRequest,
+    context: ProviderContext,
+    validated: ValidatedCandidate[],
+    conversation?: DiscoveryConversationContext,
+  ): Promise<ValidatedCandidate[]> {
+    const policy = discoveryInstructionPolicy({
+      model: this.#inference.model,
+      contextTokens: this.#inference.contextTokens,
+      maxOutputTokens: this.#inference.maxOutputTokens,
+      locale: this.#localeForProfile(request.profileId),
+    });
+    if (policy.tier !== "extended" || validated.length < 2) return validated;
+
+    const ids = validated.map((item) => item.ranked.title.id);
+    const allowed = new Set(ids);
+    const candidates = validated.map((item) => ({
+      id: item.ranked.title.id,
+      title: item.ranked.title.title,
+      kind: item.ranked.title.kind,
+      genres: item.ranked.title.genres,
+      synopsis: item.ranked.title.synopsis.slice(0, 350),
+      availability: item.ranked.title.availability,
+      episodeCoverage: item.ranked.title.seriesCoverage ?? null,
+    }));
+    const priorRequests = (conversation?.messages ?? [])
+      .filter((message) => message.role === "user")
+      .slice(-3)
+      .map((message) => {
+        const body = record(message.content);
+        return typeof body?.message === "string"
+          ? body.message.slice(0, 250)
+          : "";
+      })
+      .filter(Boolean);
+    try {
+      const result = await this.#agent.generateStructured<unknown>(
+        {
+          model: this.#inference.model,
+          messages: [
+            {
+              role: "system",
+              content:
+                "Rank only the listed catalog IDs for the user's request. Consider genre, mood, earlier corrections and playback coverage. Never add an ID or assert a fact not present in the list. Return JSON with orderedIds only.",
+            },
+            {
+              role: "user",
+              content: JSON.stringify({
+                request: request.message,
+                priorRequests,
+                candidates,
+              }),
+            },
+          ],
+          outputSchemaName: "streamer_ai_grounded_rank",
+          outputJsonSchema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["orderedIds"],
+            properties: {
+              orderedIds: {
+                type: "array",
+                minItems: 1,
+                maxItems: ids.length,
+                items: { type: "string", enum: ids },
+              },
+            },
+          },
+          allowedToolNames: [],
+          temperature: 0.15,
+          maxOutputTokens: Math.min(this.#inference.maxOutputTokens, 160),
+        },
+        context,
+      );
+      const output = record(result.output);
+      if (!Array.isArray(output?.orderedIds)) return validated;
+      const preferred = output.orderedIds.filter(
+        (id): id is string => typeof id === "string" && allowed.has(id),
+      );
+      if (preferred.length === 0) return validated;
+      const priority = new Map(preferred.map((id, index) => [id, index]));
+      return [...validated].sort(
+        (a, b) =>
+          (priority.get(a.ranked.title.id) ?? ids.length) -
+          (priority.get(b.ranked.title.id) ?? ids.length),
+      );
+    } catch {
+      context.signal?.throwIfAborted();
+      return validated;
+    }
   }
 
   async discoverFast(
@@ -916,6 +1353,34 @@ export class LiveContentCoordinator implements StreamerContentProvider {
       conversation?.signal,
     );
     const locale = context.locale;
+    const thematicIntent = parseThematicDiscoveryIntent(request.message);
+    if (
+      !directEpisode &&
+      thematicIntent &&
+      (await this.activeProviders(this.#metadataProviders)).some(
+        ([, provider]) => typeof provider.discover === "function",
+      )
+    ) {
+      // The full pass will search by genre. A title-text search and unrelated
+      // trending fallback do not provide a meaningful provisional result.
+      return DiscoveryResponseSchema.parse({
+        sessionId: request.sessionId,
+        mode: "live",
+        stage: "completed",
+        reply:
+          locale === "cs"
+            ? "Hledám odpovídající tituly podle žánru."
+            : locale === "de"
+              ? "Ich suche passende Titel nach Genre."
+              : "Searching for matching titles by genre.",
+        bestMatch: null,
+        available: [],
+        unavailable: [],
+        unverified: [],
+        warnings: [],
+        completedAt,
+      });
+    }
     let matches: MetadataCandidate[] = [];
     try {
       matches = await this.searchMetadata(
@@ -1318,41 +1783,61 @@ export class LiveContentCoordinator implements StreamerContentProvider {
     };
   }
 
+  isSeriesSearchActive(titleId: string): boolean {
+    return (
+      this.#seriesJobs.get(titleId)?.running === true ||
+      this.#manualSeriesSearches.has(titleId)
+    );
+  }
+
+  activeSeriesSearchCount(): number {
+    const activeIds = new Set(this.#manualSeriesSearches);
+    for (const [titleId, job] of this.#seriesJobs) {
+      if (job.running) activeIds.add(titleId);
+    }
+    return activeIds.size;
+  }
+
   async forceSearchTitle(
     profileId: string,
     title: CatalogTitle,
   ): Promise<CatalogTitle> {
     const ref = titleMetadataRef(title);
     if (!ref) throw new Error("This title cannot be searched again.");
-    const checked = await this.validateResolvedCandidate(
-      {
-        ref,
-        kind: title.kind,
-        title: title.title,
-        originalTitle: title.originalTitle,
-        year: title.year,
-        confidence: 1,
-        provenance: title.metadataProvenance ?? {
-          providerId: ref.providerId,
-          retrievedAt: title.metadataValidatedAt,
-          connectorVersion: "stored-title",
+    if (title.kind === "series") this.#manualSeriesSearches.add(title.id);
+    try {
+      const checked = await this.validateResolvedCandidate(
+        {
+          ref,
+          kind: title.kind,
+          title: title.title,
+          originalTitle: title.originalTitle,
+          year: title.year,
           confidence: 1,
-          validationState: "verified",
-          expiresAt: null,
+          provenance: title.metadataProvenance ?? {
+            providerId: ref.providerId,
+            retrievedAt: title.metadataValidatedAt,
+            connectorVersion: "stored-title",
+            confidence: 1,
+            validationState: "verified",
+            expiresAt: null,
+          },
         },
-      },
-      title.matchPercent ?? 100,
-      "Manual title search.",
-      this.playbackContext(profileId, title),
-      24,
-      24,
-      true,
-    );
-    // Only add verified finds. A missed manual search must not erase sources
-    // already known to the normal discovery and episode-search workflows.
-    if ((checked.ranked.title.sources?.length ?? 0) > 0)
-      this.rememberValidated(profileId, [checked], false);
-    return checked.ranked.title;
+        title.matchPercent ?? 100,
+        "Manual title search.",
+        this.playbackContext(profileId, title),
+        24,
+        24,
+        true,
+      );
+      // Only add verified finds. A missed manual search must not erase sources
+      // already known to the normal discovery and episode-search workflows.
+      if ((checked.ranked.title.sources?.length ?? 0) > 0)
+        this.rememberValidated(profileId, [checked], false);
+      return checked.ranked.title;
+    } finally {
+      if (title.kind === "series") this.#manualSeriesSearches.delete(title.id);
+    }
   }
 
   async forceSearchEpisode(
@@ -1935,6 +2420,71 @@ export class LiveContentCoordinator implements StreamerContentProvider {
     return candidates;
   }
 
+  private async thematicMetadata(
+    intent: ThematicDiscoveryIntent,
+    context: ProviderContext,
+  ): Promise<MetadataCandidate[] | null> {
+    const providers = (
+      await this.activeProviders(this.#metadataProviders)
+    ).filter(([, provider]) => typeof provider.discover === "function");
+    if (providers.length === 0) return null;
+    const kinds = intent.kind ? [intent.kind] : (["movie", "series"] as const);
+    const jobs = providers.flatMap(([id, provider]) =>
+      kinds.map((kind) => ({
+        id,
+        provider,
+        request: {
+          kind,
+          genres: intent.genres,
+          completeOnly: intent.completeOnly,
+          locale: context.locale,
+          limit: intent.completeOnly ? 6 : 8,
+        } satisfies MetadataDiscoveryRequest,
+      })),
+    );
+    const settled = await Promise.allSettled(
+      jobs.map(({ id, provider, request }) =>
+        provider.discover!(request, this.scopedContext(id, context)),
+      ),
+    );
+    context.signal?.throwIfAborted();
+    if (settled.every((result) => result.status === "rejected")) {
+      throw new Error("All metadata providers failed thematic discovery.");
+    }
+    const candidates: MetadataCandidate[] = [];
+    const seen = new Set<string>();
+    for (const kind of kinds) {
+      const batches = jobs.flatMap((job, index) => {
+        const result = settled[index]!;
+        if (job.request.kind !== kind || result.status !== "fulfilled")
+          return [];
+        return [
+          result.value.slice(0, job.request.limit).flatMap((raw) => {
+            const parsed = MetadataCandidateSchema.safeParse(raw);
+            return parsed.success &&
+              parsed.data.ref.providerId === job.id &&
+              parsed.data.kind === kind &&
+              hasValidAttribution(job.provider, parsed.data)
+              ? [parsed.data]
+              : [];
+          }),
+        ];
+      });
+      const depth = Math.max(0, ...batches.map((batch) => batch.length));
+      for (let position = 0; position < depth; position++) {
+        for (const batch of batches) {
+          const candidate = batch[position];
+          if (!candidate) continue;
+          const id = canonicalTitleId(candidate.ref);
+          if (seen.has(id)) continue;
+          seen.add(id);
+          candidates.push(candidate);
+        }
+      }
+    }
+    return candidates;
+  }
+
   private async searchMedia(
     request: MediaSearchRequest,
     context: ProviderContext,
@@ -2001,24 +2551,31 @@ export class LiveContentCoordinator implements StreamerContentProvider {
     person: string | null,
     context: ProviderContext,
   ): Promise<ValidatedCandidate | null> {
-    const metadataCandidates = await this.searchMetadata(
-      {
-        query: agent.title,
-        kind: agent.kind,
-        year: agent.year,
-        person,
-        locale: context.locale,
-        limit: 5,
-      },
-      context,
-    );
-    const ranked = [...metadataCandidates]
-      .map((candidate) => ({
-        candidate,
-        score: metadataScore(agent, candidate),
-      }))
-      .sort((a, b) => b.score - a.score)
-      .filter((item) => item.score >= 60);
+    const rankMetadata = (candidates: MetadataCandidate[]) =>
+      [...candidates]
+        .map((candidate) => ({
+          candidate,
+          score: metadataScore(agent, candidate),
+        }))
+        .sort((a, b) => b.score - a.score)
+        .filter((item) => item.score >= 60);
+    const search = (year: number | null) =>
+      this.searchMetadata(
+        {
+          query: agent.title,
+          kind: agent.kind,
+          year,
+          person,
+          locale: context.locale,
+          limit: 5,
+        },
+        context,
+      );
+    let ranked = rankMetadata(await search(agent.year));
+    // The model supplies an approximate year; TMDB treats it as an exact filter.
+    // Retry without the year before treating a real title as unresolved.
+    if (ranked.length === 0 && agent.year !== null)
+      ranked = rankMetadata(await search(null));
     let nonPlayable: ValidatedCandidate | null = null;
     for (const { candidate } of ranked) {
       try {
@@ -2281,9 +2838,25 @@ export class LiveContentCoordinator implements StreamerContentProvider {
               this.scopedContext(metadata.ref.providerId, context),
             ));
           seriesStructure = structure;
-          const expectedEpisodes = structure.seasons.reduce(
+          const numberedSeasons = structure.seasons.filter(
+            (season) => season.seasonNumber > 0 && season.episodes.length > 0,
+          );
+          const requiredSeasons =
+            numberedSeasons.length > 0
+              ? numberedSeasons
+              : structure.seasons.filter(
+                  (season) => season.episodes.length > 0,
+                );
+          const expectedEpisodes = requiredSeasons.reduce(
             (count, season) => count + season.episodes.length,
             0,
+          );
+          const requiredEpisodes = new Set(
+            requiredSeasons.flatMap((season) =>
+              season.episodes.map(
+                (episode) => `${season.seasonNumber}:${episode.episodeNumber}`,
+              ),
+            ),
           );
           const found = new Map<string, { season: number; episode: number }>();
           for (const source of sources) {
@@ -2292,7 +2865,8 @@ export class LiveContentCoordinator implements StreamerContentProvider {
                 season: source.seasonNumber,
                 episode: source.episodeNumber,
               };
-              found.set(`${episode.season}:${episode.episode}`, episode);
+              const identity = `${episode.season}:${episode.episode}`;
+              if (requiredEpisodes.has(identity)) found.set(identity, episode);
               const key = episodeKey(titleId, {
                 seasonNumber: episode.season,
                 episodeNumber: episode.episode,
@@ -2309,9 +2883,7 @@ export class LiveContentCoordinator implements StreamerContentProvider {
           const seasonsAvailable = new Set(
             [...found.values()].map((episode) => episode.season),
           ).size;
-          const seasonsTotal = structure.seasons.filter(
-            (season) => season.episodes.length > 0,
-          ).length;
+          const seasonsTotal = requiredSeasons.length;
           const complete =
             expectedEpisodes > 0 &&
             found.size === expectedEpisodes &&

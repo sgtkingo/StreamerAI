@@ -257,14 +257,28 @@ export function registerLocalFilesRoutes(
         profileId: string;
         downloadId: string;
       };
-      return downloads.cancel(downloadId, profileId)
-        ? reply.code(204).send()
-        : reply.code(404).send({
-            error: {
-              code: "OFFLINE_DOWNLOAD_NOT_FOUND",
-              message: "Active download not found.",
-            },
-          });
+      if (downloads.cancel(downloadId, profileId))
+        return reply.code(204).send();
+      try {
+        if (await downloads.removeSaved(downloadId, profileId))
+          return reply.code(204).send();
+      } catch (error) {
+        return reply.code(400).send({
+          error: {
+            code: "OFFLINE_DOWNLOAD_DELETE_REJECTED",
+            message:
+              error instanceof Error
+                ? error.message
+                : "The offline copy could not be deleted.",
+          },
+        });
+      }
+      return reply.code(404).send({
+        error: {
+          code: "OFFLINE_DOWNLOAD_NOT_FOUND",
+          message: "Active download or saved copy not found.",
+        },
+      });
     },
   );
 }

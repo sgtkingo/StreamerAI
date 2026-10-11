@@ -96,6 +96,24 @@ function createApi(): StreamerApi {
       runtime: "Ollama",
       model: "qwen3.5:4b",
     }),
+    getLocalAgent: vi.fn().mockResolvedValue({
+      runtime: "Ollama",
+      model: "qwen3.5:4b",
+      baseUrl: "http://127.0.0.1:11434",
+      manual: false,
+    }),
+    connectLocalAgent: vi.fn().mockResolvedValue({
+      ok: true,
+      message: "Ready",
+      runtime: "Ollama",
+      model: "qwen3.5:4b",
+      baseUrl: "http://192.168.1.10:11434",
+      manual: true,
+    }),
+    discoverLocalAgents: vi.fn().mockResolvedValue({
+      availableIds: ["ollama"],
+      runtimeAvailable: true,
+    }),
     getInferenceResidency: vi.fn().mockResolvedValue({
       state: "loaded",
       checkedAt: "2026-09-27T12:00:00.000Z",
@@ -468,6 +486,9 @@ describe("profile navigation", () => {
         }),
       ),
     );
+    expect(
+      screen.queryByRole("heading", { name: "Settings" }),
+    ).not.toBeInTheDocument();
     await user.click(
       screen.getByRole("button", { name: /profile menu for alex/i }),
     );
@@ -492,6 +513,96 @@ describe("profile navigation", () => {
     expect(
       await screen.findByRole("heading", { name: /who's watching/i }),
     ).toBeInTheDocument();
+  });
+
+  it("shows the active model and separates agent checking from discovery", async () => {
+    const user = userEvent.setup();
+    const api = createApi();
+    vi.mocked(api.getIntegrations).mockResolvedValue({
+      items: [
+        {
+          id: "ollama",
+          name: "Local AI",
+          description: "Private on-device recommendations.",
+          category: "inference",
+          planned: false,
+          selected: false,
+          configured: true,
+          setup: { documentationUrl: null, supportsDisconnect: true },
+        },
+      ],
+    });
+    window.history.replaceState({}, "", "/");
+    render(<App api={api} />);
+    await user.click(await screen.findByRole("button", { name: /alex/i }));
+    await user.click(
+      screen.getByRole("button", { name: /profile menu for alex/i }),
+    );
+    await user.click(screen.getByRole("menuitem", { name: "Settings" }));
+
+    const agents = screen.getByRole("region", { name: "Local agents" });
+    const card = (await within(agents).findByText("qwen3.5:4b")).closest(
+      "article",
+    )!;
+    expect(within(card).queryByText("Local AI")).not.toBeInTheDocument();
+    await user.click(within(card).getByRole("button", { name: "Check agent" }));
+    await waitFor(() => expect(api.detectLocalAi).toHaveBeenCalledOnce());
+    expect(within(card).getByText("Ready")).toBeInTheDocument();
+    expect(
+      within(card).queryByText(/managed in its own setup flow/i),
+    ).not.toBeInTheDocument();
+
+    await user.click(
+      within(card).getByRole("button", { name: "Agent settings" }),
+    );
+    expect(within(card).getByLabelText("Local API address")).toHaveValue(
+      "http://127.0.0.1:11434",
+    );
+    await user.click(
+      within(card).getByRole("button", { name: "Agent settings" }),
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: "Discover local agents" }),
+    );
+    await waitFor(() => expect(api.discoverLocalAgents).toHaveBeenCalledOnce());
+    expect(
+      await within(agents).findByText("Sorry, no more agents found."),
+    ).toBeInTheDocument();
+    await user.click(
+      within(agents).getByRole("button", {
+        name: "You can try to add your local agent manually",
+      }),
+    );
+    await user.type(
+      within(agents).getByLabelText("Local API address"),
+      "192.168.1.10:11434",
+    );
+    await user.type(within(agents).getByLabelText("Model name"), "qwen3.5:4b");
+    vi.mocked(api.connectLocalAgent).mockResolvedValueOnce({
+      ok: false,
+      message: "The model is not installed on this local API.",
+    });
+    await user.click(
+      within(agents).getByRole("button", { name: "Verify and add agent" }),
+    );
+    expect(await within(agents).findByRole("alert")).toHaveTextContent(
+      "The model is not installed on this local API.",
+    );
+    await user.click(
+      within(agents).getByRole("button", { name: "Verify and add agent" }),
+    );
+    await waitFor(() => expect(api.connectLocalAgent).toHaveBeenCalledTimes(2));
+    expect(api.connectLocalAgent).toHaveBeenLastCalledWith({
+      baseUrl: "192.168.1.10:11434",
+      model: "qwen3.5:4b",
+    });
+    await user.click(
+      within(card).getByRole("button", { name: "Agent settings" }),
+    );
+    expect(within(card).getByLabelText("Local API address")).toHaveValue(
+      "http://192.168.1.10:11434",
+    );
   });
 
   it("creates a second viewer from one of five profile medallions", async () => {
@@ -1012,6 +1123,15 @@ describe("conversational Home", () => {
     expect(
       screen.getByRole("button", { name: "Stop search" }),
     ).toBeInTheDocument();
+    const chat = screen.getByRole("complementary", {
+      name: "StreamerAI chat",
+    });
+    expect(
+      within(chat).getByRole("button", { name: "StreamerAI is searching" }),
+    ).toBeDisabled();
+    expect(
+      within(chat).queryByLabelText("Quick reply to StreamerAI"),
+    ).not.toBeInTheDocument();
     const quickRequest = vi.mocked(api.discoverFast).mock.calls[0]![0];
     const deepRequest = vi.mocked(api.discover).mock.calls[0]![0];
     expect(deepRequest).toMatchObject({
@@ -1044,6 +1164,9 @@ describe("conversational Home", () => {
       })),
     });
     expect(await screen.findByText("Contextual match.")).toBeInTheDocument();
+    expect(
+      await within(chat).findByLabelText("Quick reply to StreamerAI"),
+    ).toBeInTheDocument();
     const results = screen.getByRole("region", {
       name: /a considered shortlist/i,
     });
@@ -1130,6 +1253,39 @@ describe("conversational Home", () => {
         "Sorry, there are no more suggestions for this search.",
       ),
     ).not.toBeInTheDocument();
+    const chat = screen.getByRole("complementary", {
+      name: "StreamerAI chat",
+    });
+    expect(
+      within(chat).getByRole("button", { name: "StreamerAI is searching" }),
+    ).toBeDisabled();
+    expect(
+      within(chat).queryByLabelText("Quick reply to StreamerAI"),
+    ).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Stop search" }));
+    const quickReply = await within(chat).findByLabelText(
+      "Quick reply to StreamerAI",
+    );
+    expect(
+      within(chat).getByRole("button", {
+        name: /search stopped\. try another request/i,
+      }),
+    ).toBeEnabled();
+    await user.type(quickReply, "a cozy comedy{Enter}");
+    await waitFor(() => expect(api.discover).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(api.discover).mock.calls[1]?.[0]).toMatchObject({
+      message: "a cozy comedy",
+    });
+    expect(vi.mocked(api.discover).mock.calls[1]?.[0]).toMatchObject({
+      createSession: true,
+    });
+    expect(vi.mocked(api.discover).mock.calls[1]?.[0].sessionId).not.toBe(
+      vi.mocked(api.discover).mock.calls[0]?.[0].sessionId,
+    );
+    expect(
+      within(chat).getByRole("button", { name: "StreamerAI is searching" }),
+    ).toBeDisabled();
   });
 
   it("checks a provisional fast match and promotes it when the streaming source succeeds", async () => {
@@ -1422,6 +1578,84 @@ describe("conversational Home", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("stops a reply search without accepting its late answer", async () => {
+    const user = userEvent.setup();
+    const api = createApi();
+    vi.mocked(api.getHome).mockResolvedValue({
+      profileId: "default",
+      mode: "live",
+      generatedAt: "2026-09-27T12:00:00.000Z",
+      sections: [],
+    });
+    const firstAnswer = {
+      sessionId: "stopped-reply-session",
+      mode: "live" as const,
+      stage: "completed" as const,
+      reply: "Original answer. Is this what you had in mind?",
+      bestMatch: null,
+      available: [],
+      unavailable: [],
+      unverified: [],
+      warnings: [],
+      completedAt: "2026-09-27T12:00:00.000Z",
+    };
+    let finishReply!: (value: typeof firstAnswer) => void;
+    vi.mocked(api.discover)
+      .mockResolvedValueOnce(firstAnswer)
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finishReply = resolve;
+          }),
+      );
+
+    window.history.replaceState({}, "", "/");
+    render(<App api={api} />);
+    await user.click(await screen.findByRole("button", { name: /alex/i }));
+    await user.type(screen.getByLabelText(/ask streamerai/i), "a quiet film");
+    await user.click(screen.getByRole("button", { name: "Find something" }));
+    await user.click(
+      await screen.findByRole("button", {
+        name: /original answer\. is this what you had in mind/i,
+      }),
+    );
+    const chat = screen.getByRole("complementary", {
+      name: "StreamerAI chat",
+    });
+    await user.type(
+      within(chat).getByLabelText("Reply to StreamerAI"),
+      "Make it lighter",
+    );
+    await user.click(within(chat).getByRole("button", { name: "Send" }));
+    const stop = within(chat).getByRole("button", {
+      name: "Stop reply search",
+    });
+    expect(stop).toBeEnabled();
+    expect(within(chat).getByText("Rethinking your picks")).toBeInTheDocument();
+    const followupRequest = vi.mocked(api.discover).mock.calls[1];
+    expect(followupRequest?.[0]).toMatchObject({
+      sessionId: "stopped-reply-session",
+      message: "Make it lighter",
+    });
+
+    await user.click(stop);
+    expect(followupRequest?.[1]?.aborted).toBe(true);
+    expect(api.cancelDiscovery).toHaveBeenCalledWith(
+      "default",
+      followupRequest?.[0].idempotencyKey,
+    );
+    expect(within(chat).getByRole("button", { name: "Send" })).toBeEnabled();
+    expect(within(chat).getByLabelText("Reply to StreamerAI")).toHaveValue(
+      "Make it lighter",
+    );
+    expect(within(chat).getByText(/search stopped/i)).toBeInTheDocument();
+
+    await act(async () => {
+      finishReply({ ...firstAnswer, reply: "Late reply after stop." });
+    });
+    expect(within(chat).queryByText("Late reply after stop.")).toBeNull();
+  });
+
   it("stops only deep discovery and keeps already returned quick matches", async () => {
     const user = userEvent.setup();
     const api = createApi();
@@ -1561,14 +1795,16 @@ describe("conversational Home", () => {
     ).toBeUndefined();
     expect(
       await screen.findByRole("button", {
-        name: /is this what you had in mind/i,
+        name: /a fresh shortlist\. is this right/i,
       }),
     ).toBeInTheDocument();
     expect(screen.getByText(/Best suggestion for/)).toHaveTextContent(
       "a space comedy",
     );
     await user.click(
-      screen.getByRole("button", { name: /is this what you had in mind/i }),
+      screen.getByRole("button", {
+        name: /a fresh shortlist\. is this right/i,
+      }),
     );
     expect(
       within(
@@ -1577,7 +1813,87 @@ describe("conversational Home", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("opens the chat for a watched-list question and sends the reply in the same session", async () => {
+  it("sends a quick reply from the closed chat without opening it or moving input focus", async () => {
+    const user = userEvent.setup();
+    const api = createApi();
+    const response = (reply: string) => ({
+      sessionId: "quick-reply-session",
+      mode: "live" as const,
+      stage: "completed" as const,
+      reply,
+      bestMatch: { title, reason: "A validated match." },
+      available: [],
+      unavailable: [],
+      unverified: [],
+      warnings: [],
+      completedAt: "2026-09-27T12:00:00.000Z",
+    });
+    let finishReply!: (
+      value: Awaited<ReturnType<StreamerApi["discover"]>>,
+    ) => void;
+    vi.mocked(api.discover)
+      .mockResolvedValueOnce(response("Is this what you had in mind?"))
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finishReply = resolve;
+          }),
+      );
+    window.history.replaceState({}, "", "/");
+    render(<App api={api} />);
+
+    await user.click(await screen.findByRole("button", { name: /alex/i }));
+    await user.type(screen.getByLabelText(/ask streamerai/i), "an autumn film");
+    await user.click(screen.getByRole("button", { name: "Find something" }));
+    const chat = await screen.findByRole("complementary", {
+      name: "StreamerAI chat",
+    });
+    const quickReply = await within(chat).findByLabelText(
+      "Quick reply to StreamerAI",
+    );
+    const bubble = within(chat).getByRole("button", {
+      name: /is this what you had in mind/i,
+    });
+    expect(bubble).toHaveAttribute("aria-expanded", "false");
+
+    await user.type(quickReply, "Make it lighter");
+    expect(quickReply).toHaveFocus();
+    expect(bubble).toHaveAttribute("aria-expanded", "false");
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(api.discover).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(api.discover).mock.calls[1]?.[0]).toMatchObject({
+      sessionId: "quick-reply-session",
+      message: "Make it lighter",
+    });
+    expect(quickReply).toHaveFocus();
+    expect(bubble).toHaveAttribute("aria-expanded", "false");
+    expect(chat.querySelector(".discovery-chat__mark")).toHaveClass(
+      "is-searching",
+    );
+
+    await act(async () => {
+      finishReply(response("A brighter choice for you."));
+    });
+    expect(quickReply).toHaveFocus();
+    expect(bubble).toHaveAttribute("aria-expanded", "false");
+    expect(
+      within(chat).getByText("A brighter choice for you."),
+    ).toBeInTheDocument();
+    expect(chat.querySelector(".discovery-chat__mark")).not.toHaveClass(
+      "is-searching",
+    );
+
+    await user.click(bubble);
+    expect(
+      within(chat).getByLabelText("Reply to StreamerAI"),
+    ).toBeInTheDocument();
+    expect(within(chat).getByText("Make it lighter")).toBeInTheDocument();
+    expect(
+      within(chat).getByText("A brighter choice for you."),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps a watched-list question closed and sends the quick reply in the same session", async () => {
     const user = userEvent.setup();
     const api = createApi();
     const base = {
@@ -1616,18 +1932,32 @@ describe("conversational Home", () => {
     expect(
       within(chat).getByText("Which films have you already seen?"),
     ).toBeInTheDocument();
+    const bubble = await within(chat).findByRole("button", {
+      name: /which films have you already seen/i,
+    });
+    expect(bubble).toHaveAttribute("aria-expanded", "false");
     await user.type(
-      within(chat).getByLabelText("Reply to StreamerAI"),
+      within(chat).getByLabelText("Quick reply to StreamerAI"),
       "Arrival",
     );
-    await user.click(within(chat).getByRole("button", { name: "Send" }));
+    expect(bubble).toHaveAttribute("aria-expanded", "false");
+    await user.click(
+      within(chat).getByRole("button", { name: "Send quick reply" }),
+    );
     expect(
       await within(chat).findByText("I excluded Arrival."),
     ).toBeInTheDocument();
+    expect(bubble).toHaveAttribute("aria-expanded", "false");
     expect(vi.mocked(api.discover).mock.calls[1]?.[0]).toMatchObject({
       sessionId: "unseen-session",
       message: "Arrival",
     });
+    await user.click(bubble);
+    expect(
+      within(chat).getByText("Which films have you already seen?"),
+    ).toBeInTheDocument();
+    expect(within(chat).getByText("Arrival")).toBeInTheDocument();
+    expect(within(chat).getByText("I excluded Arrival.")).toBeInTheDocument();
   });
 
   it.each([

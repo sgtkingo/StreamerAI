@@ -49,6 +49,7 @@ function storageTitle(item: CatalogTitle) {
     progressPercent: _progressPercent,
     resumePositionSeconds: _resumePositionSeconds,
     resumeEpisode: _resumeEpisode,
+    seriesSearchActive: _seriesSearchActive,
     ...stored
   } = item;
   return stored;
@@ -236,7 +237,7 @@ export class StreamerCore {
     this.requireProfile(profileId);
     const titles = this.database.titles.list().map((stored) => {
       const { createdAt: _createdAt, updatedAt: _updatedAt, ...data } = stored;
-      return this.decorateTitle(
+      const title = this.decorateTitle(
         profileId,
         CatalogTitleSchema.parse({
           ...data,
@@ -245,12 +246,68 @@ export class StreamerCore {
           progressPercent: null,
         }),
       );
+      return CatalogTitleSchema.parse({
+        ...title,
+        seriesSearchActive:
+          this.contentProvider.isSeriesSearchActive?.(title.id) ?? false,
+      });
     });
-    return this.contentProvider.buildHome({
+    const feed = this.contentProvider.buildHome({
       profileId,
       generatedAt: this.now().toISOString(),
       titles,
     });
+    this.startBackgroundSeriesSearches(
+      profileId,
+      feed.sections.flatMap((section) => section.items),
+    );
+    return {
+      ...feed,
+      sections: feed.sections.map((section) => ({
+        ...section,
+        items: section.items.map((item) => ({
+          ...item,
+          seriesSearchActive:
+            this.contentProvider.isSeriesSearchActive?.(item.id) ?? false,
+        })),
+      })),
+    };
+  }
+
+  private startBackgroundSeriesSearches(
+    profileId: string,
+    titles: readonly CatalogTitle[],
+  ): void {
+    if (
+      this.contentProvider.mode !== "live" ||
+      !this.contentProvider.getSeriesDetail
+    )
+      return;
+    let active = this.contentProvider.activeSeriesSearchCount?.() ?? 0;
+    const visibleSearchRunning = titles.some((title) =>
+      this.contentProvider.isSeriesSearchActive?.(title.id),
+    );
+    let startedVisibleSearch = false;
+    const seen = new Set<string>();
+    for (const title of titles) {
+      if (active >= 3 && (visibleSearchRunning || startedVisibleSearch))
+        break;
+      if (seen.has(title.id)) continue;
+      seen.add(title.id);
+      if (
+        title.kind !== "series" ||
+        !title.seriesCoverage ||
+        title.seriesCoverage.complete ||
+        title.metadataProvider === "local-files" ||
+        this.contentProvider.isSeriesSearchActive?.(title.id)
+      )
+        continue;
+      void this.contentProvider
+        .getSeriesDetail(profileId, title)
+        .catch(() => undefined);
+      active = this.contentProvider.activeSeriesSearchCount?.() ?? active + 1;
+      startedVisibleSearch = true;
+    }
   }
 
   cancelDiscovery(profileId: string, idempotencyKey: string): boolean {
@@ -469,7 +526,11 @@ export class StreamerCore {
     }
     const decorate = (item: (typeof ranked)[number]) => ({
       ...item,
-      title: this.decorateTitle(request.profileId, item.title),
+      title: {
+        ...this.decorateTitle(request.profileId, item.title),
+        seriesSearchActive:
+          this.contentProvider.isSeriesSearchActive?.(item.title.id) ?? false,
+      },
     });
     return DiscoveryResponseSchema.parse({
       ...response,
@@ -584,7 +645,11 @@ export class StreamerCore {
 
       const decorateRanked = (item: (typeof ranked)[number]) => ({
         ...item,
-        title: this.decorateTitle(request.profileId, item.title),
+        title: {
+          ...this.decorateTitle(request.profileId, item.title),
+          seriesSearchActive:
+            this.contentProvider.isSeriesSearchActive?.(item.title.id) ?? false,
+        },
       });
       const response = DiscoveryResponseSchema.parse({
         ...providerResult,
@@ -647,7 +712,7 @@ export class StreamerCore {
       const stored = this.database.titles.get(entry.titleId);
       if (stored === null) return [];
       const { createdAt: _createdAt, updatedAt: _updatedAt, ...data } = stored;
-      const title = this.decorateTitle(
+      const decorated = this.decorateTitle(
         profileId,
         CatalogTitleSchema.parse({
           ...data,
@@ -656,6 +721,11 @@ export class StreamerCore {
           progressPercent: entry.progressPercent,
         }),
       );
+      const title = CatalogTitleSchema.parse({
+        ...decorated,
+        seriesSearchActive:
+          this.contentProvider.isSeriesSearchActive?.(decorated.id) ?? false,
+      });
       return [
         {
           title,
@@ -667,7 +737,21 @@ export class StreamerCore {
         },
       ];
     });
-    return LibraryResponseSchema.parse({ profileId, items });
+    this.startBackgroundSeriesSearches(
+      profileId,
+      items.map((item) => item.title),
+    );
+    return LibraryResponseSchema.parse({
+      profileId,
+      items: items.map((item) => ({
+        ...item,
+        title: {
+          ...item.title,
+          seriesSearchActive:
+            this.contentProvider.isSeriesSearchActive?.(item.title.id) ?? false,
+        },
+      })),
+    });
   }
 
   async titleDetail(
@@ -755,6 +839,10 @@ export class StreamerCore {
         }
       }
     }
+    title = CatalogTitleSchema.parse({
+      ...title,
+      seriesSearchActive: series?.status === "searching",
+    });
     return TitleDetailSchema.parse({ title, series, related });
   }
 

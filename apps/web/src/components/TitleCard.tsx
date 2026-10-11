@@ -7,6 +7,7 @@ import {
 } from "../title-language-label";
 import { SourceOriginStack, titleSourceProviderIds } from "./SourceIcon";
 import { DownloadGlyph } from "./DownloadButton";
+import { ComposingLabel } from "./ComposingLabel";
 import type { PlaybackCheckState } from "./usePlaybackChecks";
 
 let cardHoverAudioContext: AudioContext | null = null;
@@ -94,6 +95,66 @@ function availabilityLabel(item: CatalogTitle): string {
   }
   if (item.availability === "unknown") return "Availability needs recheck";
   return `Not found on ${item.availabilityProvider ?? "media source"}`;
+}
+
+function SeriesCoverageGlyph({
+  available,
+  total,
+}: {
+  available: number;
+  total: number;
+}) {
+  const missing = Math.max(0, total - available);
+  const missingRatio = total > 0 ? missing / total : 0;
+  const state =
+    total === 0
+      ? "some"
+      : missing === 0
+        ? "complete"
+        : missingRatio > 0.5
+          ? "many"
+          : "some";
+
+  return (
+    <svg
+      className={`series-coverage__glyph series-coverage__glyph--${state}`}
+      viewBox="0 0 24 16"
+      role="img"
+      aria-label={
+        total === 0
+          ? "Episode coverage loading"
+          : missing === 0
+          ? "All episodes found"
+          : `${missing} of ${total} episodes missing`
+      }
+      focusable="false"
+    >
+      <rect
+        className="series-coverage__frame series-coverage__frame--one"
+        x="1"
+        y="1"
+        width="13"
+        height="11"
+        rx="1.5"
+      />
+      <rect
+        className="series-coverage__frame series-coverage__frame--two"
+        x="5"
+        y="3"
+        width="13"
+        height="11"
+        rx="1.5"
+      />
+      <rect
+        className="series-coverage__frame series-coverage__frame--three"
+        x="9"
+        y="5"
+        width="13"
+        height="10"
+        rx="1.5"
+      />
+    </svg>
+  );
 }
 
 export function titleHasPlayableVariant(item: CatalogTitle): boolean {
@@ -290,7 +351,8 @@ export function TitleCard({
     episodeCode ? "title-card--episode" : "",
     item.kind === "series" &&
     item.seriesCoverage &&
-    !item.seriesCoverage.complete
+    !item.seriesCoverage.complete &&
+    item.seriesSearchActive
       ? "title-card--searching"
       : "",
   ]
@@ -399,7 +461,7 @@ export function TitleCard({
                     : "Available to save offline"
                 }
               >
-                <DownloadGlyph checked={availableOffline} />
+                <DownloadGlyph />
               </span>
             )}
             <SourceOriginStack providerIds={sourceProviderIds} />
@@ -464,7 +526,13 @@ export function TitleCard({
             {item.seriesCoverage.seasonsTotal} seasons ·{" "}
             {item.seriesCoverage.episodesAvailable}/
             {item.seriesCoverage.episodesTotal} episodes
-            {!item.seriesCoverage.complete && <span> · • searching...</span>}
+            <span className="series-coverage__status">
+              <SeriesCoverageGlyph
+                available={item.seriesCoverage.episodesAvailable}
+                total={item.seriesCoverage.episodesTotal}
+              />
+              {item.seriesSearchActive && <ComposingLabel />}
+            </span>
           </p>
         )}
         {item.progressPercent !== null && (

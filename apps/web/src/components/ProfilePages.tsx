@@ -57,6 +57,14 @@ export function ProfilePages({
   const [error, setError] = useState("");
   const [agentCheck, setAgentCheck] = useState("");
   const [checkingAgent, setCheckingAgent] = useState(false);
+  const [agentModel, setAgentModel] = useState("");
+  const [agentBaseUrl, setAgentBaseUrl] = useState("");
+  const [discoveringAgents, setDiscoveringAgents] = useState(false);
+  const [discoveredAgentIds, setDiscoveredAgentIds] = useState<string[] | null>(
+    null,
+  );
+  const [discoveryRevision, setDiscoveryRevision] = useState(0);
+  const [discoveryMessage, setDiscoveryMessage] = useState("");
   const deleteDialogRef = useRef<HTMLDivElement>(null);
   const { showToast } = useToasts();
 
@@ -74,6 +82,24 @@ export function ProfilePages({
   useEffect(() => {
     if (error) showToast(error, "error");
   }, [error, showToast]);
+  useEffect(() => {
+    if (page !== "settings") return;
+    let active = true;
+    void api
+      .getLocalAgent()
+      .then(({ model, baseUrl }) => {
+        if (active) {
+          setAgentModel(model);
+          setAgentBaseUrl(baseUrl);
+        }
+      })
+      .catch(() => {
+        if (active) setAgentModel("Model unavailable");
+      });
+    return () => {
+      active = false;
+    };
+  }, [api, page]);
   const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
@@ -114,14 +140,19 @@ export function ProfilePages({
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [deleteConfirmationOpen, deleting, dismissDeleteConfirmation]);
 
-  const save = async (patch: UpdateViewerProfile) => {
+  const save = async (patch: UpdateViewerProfile, closeOnSuccess = false) => {
     setSaving(true);
     setError("");
     setNotice("");
     try {
       const updated = await api.updateProfile(profile.id, patch);
       onProfileUpdated(updated);
-      setNotice("Saved for this profile.");
+      if (closeOnSuccess) {
+        showToast("Saved for this profile.", "success");
+        onBackHome();
+      } else {
+        setNotice("Saved for this profile.");
+      }
     } catch (reason) {
       setError(safeErrorMessage(reason));
     } finally {
@@ -145,6 +176,7 @@ export function ProfilePages({
     setAgentCheck("");
     try {
       const result = await api.detectLocalAi();
+      if (result.model) setAgentModel(result.model);
       setAgentCheck(
         result.message ||
           (result.ok
@@ -156,6 +188,25 @@ export function ProfilePages({
       setAgentCheck(safeErrorMessage(reason));
     } finally {
       setCheckingAgent(false);
+    }
+  };
+
+  const discoverLocalAgents = async () => {
+    setDiscoveringAgents(true);
+    setDiscoveryMessage("");
+    try {
+      const result = await api.discoverLocalAgents();
+      setDiscoveredAgentIds(result.availableIds);
+      setDiscoveryRevision((current) => current + 1);
+      if (!result.runtimeAvailable) {
+        setDiscoveryMessage(
+          "Ollama could not be reached for local agent discovery.",
+        );
+      }
+    } catch (reason) {
+      setDiscoveryMessage(safeErrorMessage(reason));
+    } finally {
+      setDiscoveringAgents(false);
     }
   };
 
@@ -267,16 +318,47 @@ export function ProfilePages({
                   context="settings"
                   category="agents"
                   onConnectionChange={onIntegrationsChanged}
+                  agentModel={agentModel}
+                  agentBaseUrl={agentBaseUrl}
+                  onAgentConfigured={({ model, baseUrl }) => {
+                    setAgentModel(model);
+                    setAgentBaseUrl(baseUrl);
+                    setAgentCheck("");
+                  }}
+                  onCheckAgent={() => void checkLocalAgent()}
+                  checkingAgent={checkingAgent}
+                  agentCheck={agentCheck}
+                  discoveryRevision={discoveryRevision}
+                  discoveredAgentIds={discoveredAgentIds}
                 />
                 <button
                   className="button button--secondary"
                   type="button"
-                  disabled={checkingAgent}
-                  onClick={() => void checkLocalAgent()}
+                  disabled={discoveringAgents}
+                  onClick={() => void discoverLocalAgents()}
                 >
-                  {checkingAgent ? "Checking…" : "Check local agent"}
+                  <svg
+                    aria-hidden="true"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <circle cx="12" cy="12" r="9" />
+                    <path d="M12 12 17.5 6.5M12 12l-2 5" />
+                    <circle
+                      cx="12"
+                      cy="12"
+                      r="1.5"
+                      fill="currentColor"
+                      stroke="none"
+                    />
+                  </svg>
+                  {discoveringAgents ? "Discovering…" : "Discover local agents"}
                 </button>
-                {agentCheck && <p role="status">{agentCheck}</p>}
+                {discoveryMessage && <p role="status">{discoveryMessage}</p>}
               </div>
               <div className="agent-adapters__panel">
                 <p className="eyebrow">Planned</p>
@@ -309,7 +391,7 @@ export function ProfilePages({
               className="button button--primary"
               disabled={saving}
               type="button"
-              onClick={() => void save({ locale, playback })}
+              onClick={() => void save({ locale, playback }, true)}
             >
               {saving ? "Saving…" : "Save settings"}
             </button>

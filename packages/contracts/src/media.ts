@@ -140,6 +140,8 @@ export const CatalogTitleSchema = z
     /** Ranked, distinct files for this title. Empty for legacy and preview records. */
     sources: z.array(TitleSourceSchema).max(1_000).optional(),
     seriesCoverage: SeriesCoverageSchema.nullable(),
+    /** True only while automatic episode discovery is actively running. */
+    seriesSearchActive: z.boolean().optional(),
     metadataProvider: z.string().trim().min(1).max(80),
     /** Stable source reference when the provider-backed title ID is shortened. */
     metadataRef: ExternalEntityRefSchema.optional(),

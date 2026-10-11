@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, open, realpath, rename, rm } from "node:fs/promises";
+import { mkdir, open, realpath, rename, rm, rmdir } from "node:fs/promises";
 import { dirname, extname, isAbsolute, join, relative, sep } from "node:path";
 import type { StreamerDatabase } from "@streamer-ai/database";
 import { WebshareClient } from "../integrations/webshare-client.js";
@@ -159,6 +159,91 @@ export class OfflineDownloadManager {
     if (!job || job.profileId !== profileId || job.state !== "downloading")
       return false;
     this.controllers.get(id)?.abort();
+    return true;
+  }
+
+  async removeSaved(id: string, profileId: string): Promise<boolean> {
+    const entry = [...this.saved.entries()].find(
+      ([, record]) =>
+        record.job.id === id && record.job.profileId === profileId,
+    );
+    if (!entry) return false;
+    const [key, record] = entry;
+    if (
+      [...this.jobs.values()].some(
+        (job) => job.state === "downloading" && savedKey(job) === key,
+      )
+    )
+      throw new Error("Wait for the replacement download to finish first.");
+
+    const root = this.local.getRoot(record.job.rootId);
+    if (!root || (await realpath(root.path)) !== root.path)
+      throw new Error("The saved file's destination folder is unavailable.");
+    const managedFolder = join(root.path, ".streamerai-downloads");
+    if ((await realpath(managedFolder)) !== managedFolder)
+      throw new Error("The managed download folder has changed.");
+    const targetFolder = dirname(record.target);
+    const folderPart = relative(managedFolder, targetFolder);
+    if (
+      !folderPart ||
+      folderPart === ".." ||
+      folderPart.startsWith(`..${sep}`) ||
+      isAbsolute(folderPart) ||
+      dirname(targetFolder) !== managedFolder
+    )
+      throw new Error("The saved file is outside the managed download folder.");
+    try {
+      if ((await realpath(targetFolder)) !== targetFolder)
+        throw new Error("The saved file's folder has changed.");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    const indexed = this.local.getFile(record.candidateId);
+    if (
+      indexed &&
+      (indexed.path !== record.target || indexed.rootId !== record.job.rootId)
+    )
+      throw new Error("The saved file no longer matches its library entry.");
+    try {
+      if ((await realpath(record.target)) !== record.target)
+        throw new Error("The saved file has been moved outside its folder.");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+
+    await rm(record.target, { force: true });
+    try {
+      await rmdir(targetFolder);
+    } catch {
+      // Keep the managed folder when it still contains other files.
+    }
+    this.local.unlinkManagedFile(record.target);
+    this.saved.delete(key);
+    for (const job of this.jobs.values())
+      if (savedKey(job) === key) this.jobs.delete(job.id);
+    this.database.settings.set(SAVED_KEY, [...this.saved.values()]);
+    this.local.startScan();
+    await this.local.waitForScan();
+
+    const remoteSource = this.database.titles
+      .get(record.job.titleId)
+      ?.sources?.find((source) => source.id === record.job.sourceId);
+    if (remoteSource) {
+      const episode =
+        remoteSource.seasonNumber !== null &&
+        remoteSource.episodeNumber !== null
+          ? {
+              seasonNumber: remoteSource.seasonNumber,
+              episodeNumber: remoteSource.episodeNumber,
+            }
+          : undefined;
+      this.preferred.set(
+        profileId,
+        record.job.titleId,
+        remoteSource.id,
+        episode,
+      );
+    }
     return true;
   }
 

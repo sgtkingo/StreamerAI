@@ -1235,6 +1235,470 @@ describe("LiveContentCoordinator", () => {
       );
     });
   });
+  it("finds a mystery from catalog genres without asking the 4B model to invent titles", async () => {
+    const dependencies = coordinatorDependencies();
+    const discover = vi.fn().mockImplementation(async (request) =>
+      request.kind === "movie"
+        ? [
+            {
+              ref: { providerId: "tmdb", externalId: "1", entityType: "movie" },
+              kind: "movie",
+              title: "Knives Out",
+              originalTitle: "Knives Out",
+              year: 2019,
+              confidence: 1,
+              provenance,
+            },
+          ]
+        : [],
+    );
+    Object.assign(dependencies.metadata, { discover });
+    vi.mocked(dependencies.metadata.getTitle).mockResolvedValue({
+      ...metadataPayload("1", "Knives Out"),
+      year: 2019,
+      genres: ["Mystery"],
+    });
+    vi.mocked(dependencies.media.search).mockResolvedValue([
+      {
+        ref: { providerId: "webshare", candidateId: "file-1" },
+        releaseName: "Knives.Out.2019.1080p.mkv",
+        sizeBytes: 10,
+        seasonNumber: null,
+        episodeNumber: null,
+        confidence: 0.8,
+        provenance: { ...provenance, providerId: "webshare" },
+      },
+    ]);
+    const coordinator = await seriesCoordinator(dependencies);
+    const request = {
+      profileId: "default",
+      sessionId: "mystery-tonight",
+      message: "A clever mystery for tonight",
+      idempotencyKey: "mystery-tonight-request",
+    };
+    const quick = await coordinator.discoverFast(request, NOW);
+    expect(quick.reply).toBe("Searching for matching titles by genre.");
+    expect(dependencies.metadata.search).not.toHaveBeenCalled();
+    const response = await coordinator.discover(request, NOW);
+
+    expect(discover).toHaveBeenCalledWith(
+      expect.objectContaining({ genres: ["Mystery"], completeOnly: false }),
+      expect.anything(),
+    );
+    expect(dependencies.generateStructured).not.toHaveBeenCalled();
+    expect(response.bestMatch?.title.title).toBe("Knives Out");
+    expect(response.bestMatch?.title.availability).toBe("available");
+    expect(response.reply).not.toContain(
+      "couldn't confirm the suggested titles",
+    );
+  });
+
+  it("skips watched catalog candidates before spending time checking playback", async () => {
+    const dependencies = coordinatorDependencies();
+    Object.assign(dependencies.metadata, {
+      discover: vi.fn().mockImplementation(async (request) =>
+        request.kind === "movie"
+          ? [
+              {
+                ref: {
+                  providerId: "tmdb",
+                  externalId: "1",
+                  entityType: "movie",
+                },
+                kind: "movie",
+                title: "Seen Film",
+                originalTitle: "Seen Film",
+                year: 2001,
+                confidence: 1,
+                provenance,
+              },
+              {
+                ref: {
+                  providerId: "tmdb",
+                  externalId: "2",
+                  entityType: "movie",
+                },
+                kind: "movie",
+                title: "Fresh Film",
+                originalTitle: "Fresh Film",
+                year: 2002,
+                confidence: 1,
+                provenance,
+              },
+            ]
+          : [],
+      ),
+    });
+    vi.mocked(dependencies.metadata.getTitle).mockImplementation(async (ref) =>
+      metadataPayload(ref.externalId, "Fresh Film"),
+    );
+    vi.mocked(dependencies.media.search).mockResolvedValue([
+      {
+        ref: { providerId: "webshare", candidateId: "file-1" },
+        releaseName: "Fresh.Film.2002.1080p.mkv",
+        sizeBytes: 10,
+        seasonNumber: null,
+        episodeNumber: null,
+        confidence: 0.8,
+        provenance: { ...provenance, providerId: "webshare" },
+      },
+    ]);
+    const coordinator = await seriesCoordinator(dependencies);
+    const response = await coordinator.discover(
+      {
+        profileId: "default",
+        sessionId: "unseen-mystery",
+        message: "A mystery I haven't seen",
+        idempotencyKey: "unseen-mystery-request",
+      },
+      NOW,
+      {
+        sessionId: "unseen-mystery",
+        messages: [],
+        unseen: {
+          titleIds: ["sai:tmdb:movie:1"],
+          titles: ["Seen Film"],
+        },
+      },
+    );
+    expect(response.bestMatch?.title.title).toBe("Fresh Film");
+    expect(dependencies.metadata.getTitle).not.toHaveBeenCalledWith(
+      expect.objectContaining({ externalId: "1" }),
+      expect.anything(),
+    );
+  });
+
+  it("checks a second discovery source before the first source fills the validation budget", async () => {
+    const dependencies = coordinatorDependencies();
+    const alternateProvenance = { ...provenance, providerId: "alternate" };
+    const alternatePayload = metadataPayload("1", "Canonical One");
+    Object.assign(dependencies.metadata, {
+      descriptor: () => ({ id: "tmdb" }),
+      discover: vi.fn().mockResolvedValue(
+        Array.from({ length: 8 }, (_, index) => ({
+          ref: {
+            providerId: "tmdb",
+            externalId: String(index + 10),
+            entityType: "movie",
+          },
+          kind: "movie",
+          title: `Unrelated ${index}`,
+          originalTitle: `Unrelated ${index}`,
+          year: 2001,
+          confidence: 1,
+          provenance,
+        })),
+      ),
+    });
+    const alternate = {
+      descriptor: () => ({ id: "alternate" }),
+      discover: vi.fn().mockResolvedValue([
+        {
+          ref: {
+            providerId: "alternate",
+            externalId: "1",
+            entityType: "movie",
+          },
+          kind: "movie",
+          title: "Canonical One",
+          originalTitle: "Canonical One",
+          year: 2001,
+          confidence: 1,
+          provenance: alternateProvenance,
+        },
+      ]),
+      getTitle: vi.fn().mockResolvedValue({
+        ...alternatePayload,
+        ref: {
+          providerId: "alternate",
+          externalId: "1",
+          entityType: "movie",
+        },
+        localizedTitles: alternatePayload.localizedTitles.map((title) => ({
+          ...title,
+          provenance: alternateProvenance,
+        })),
+        fieldProvenance: Object.fromEntries(
+          Object.keys(alternatePayload.fieldProvenance).map((key) => [
+            key,
+            alternateProvenance,
+          ]),
+        ),
+      }),
+      getRatings: vi.fn().mockResolvedValue([]),
+    } as unknown as MetadataProvider;
+    const coordinator = new LiveContentCoordinator({
+      agent: dependencies.agent,
+      metadata: registry([dependencies.metadata, alternate]),
+      media: dependencies.media,
+      integrationStateStore: await connectedStateStore([
+        "tmdb",
+        "alternate",
+        "webshare",
+        "ollama",
+      ]),
+      inference: {
+        provider: "ollama",
+        baseUrl: "http://127.0.0.1:11434",
+        model: "qwen3.5:4b",
+        minimumVersion: "0.5.0",
+        contextTokens: 4096,
+        maxOutputTokens: 512,
+        timeoutMs: 60_000,
+      },
+      localeForProfile: () => "en",
+      now: () => new Date(NOW),
+    });
+    const response = await coordinator.discover(
+      {
+        profileId: "default",
+        sessionId: "two-genre-sources",
+        message: "A mystery for tonight",
+        idempotencyKey: "two-genre-sources-request",
+      },
+      NOW,
+    );
+    expect(response.bestMatch?.title.metadataProvider).toBe("alternate");
+    expect(alternate.getTitle).toHaveBeenCalled();
+  });
+
+  it("lets a large agent rank only verified catalog IDs", async () => {
+    const dependencies = coordinatorDependencies();
+    Object.assign(dependencies.metadata, {
+      discover: vi.fn().mockResolvedValue([
+        {
+          ref: { providerId: "tmdb", externalId: "1", entityType: "movie" },
+          kind: "movie",
+          title: "Canonical One",
+          originalTitle: "Canonical One",
+          year: 2001,
+          confidence: 1,
+          provenance,
+        },
+        {
+          ref: { providerId: "tmdb", externalId: "2", entityType: "movie" },
+          kind: "movie",
+          title: "Canonical Two",
+          originalTitle: "Canonical Two",
+          year: 2002,
+          confidence: 1,
+          provenance,
+        },
+      ]),
+    });
+    vi.mocked(dependencies.media.search).mockImplementation(async (request) => [
+      {
+        ref: {
+          providerId: "webshare",
+          candidateId: request.title.includes("One") ? "file-1" : "file-2",
+        },
+        releaseName: `${request.title.replace(/ /g, ".")}.${request.year}.mkv`,
+        sizeBytes: 10,
+        seasonNumber: null,
+        episodeNumber: null,
+        confidence: 0.8,
+        provenance: { ...provenance, providerId: "webshare" },
+      },
+    ]);
+    dependencies.generateStructured.mockResolvedValue({
+      output: {
+        orderedIds: ["sai:tmdb:movie:2", "sai:tmdb:movie:1"],
+      },
+    });
+    const coordinator = new LiveContentCoordinator({
+      agent: dependencies.agent,
+      metadata: dependencies.metadata,
+      media: dependencies.media,
+      integrationStateStore: await connectedStateStore(),
+      inference: {
+        provider: "ollama",
+        baseUrl: "http://127.0.0.1:11434",
+        model: "qwen3.5:14b",
+        minimumVersion: "0.5.0",
+        contextTokens: 8192,
+        maxOutputTokens: 1024,
+        timeoutMs: 60_000,
+      },
+      localeForProfile: () => "en",
+      now: () => new Date(NOW),
+    });
+    const response = await coordinator.discover(
+      {
+        profileId: "default",
+        sessionId: "grounded-rank",
+        message: "A clever mystery for tonight",
+        idempotencyKey: "grounded-rank-request",
+      },
+      NOW,
+    );
+    expect(response.bestMatch?.title.id).toBe("sai:tmdb:movie:2");
+    expect(dependencies.generateStructured).toHaveBeenCalledTimes(1);
+    expect(
+      dependencies.generateStructured.mock.calls[0]?.[0].outputJsonSchema,
+    ).toEqual(
+      expect.objectContaining({
+        properties: expect.objectContaining({
+          orderedIds: expect.objectContaining({
+            items: {
+              type: "string",
+              enum: ["sai:tmdb:movie:1", "sai:tmdb:movie:2"],
+            },
+          }),
+        }),
+      }),
+    );
+  });
+
+  it("finds a concluded sci-fi series and checks the full episode coverage", async () => {
+    const dependencies = coordinatorDependencies();
+    const discover = vi.fn().mockResolvedValue([
+      {
+        ref: { providerId: "tmdb", externalId: "42", entityType: "series" },
+        kind: "series",
+        title: "Orbit One",
+        originalTitle: "Orbit One",
+        year: 2010,
+        confidence: 1,
+        provenance,
+      },
+    ]);
+    Object.assign(dependencies.metadata, { discover });
+    vi.mocked(dependencies.metadata.getTitle).mockResolvedValue({
+      ...metadataPayload("42", "Orbit One"),
+      ref: { providerId: "tmdb", externalId: "42", entityType: "series" },
+      kind: "series",
+      year: 2010,
+      genres: ["Sci-Fi & Fantasy"],
+    });
+    Object.assign(dependencies.metadata, {
+      getSeriesStructure: vi.fn().mockResolvedValue({
+        seriesRef: {
+          providerId: "tmdb",
+          externalId: "42",
+          entityType: "series",
+        },
+        seasons: [
+          {
+            ref: { providerId: "tmdb", externalId: "40", entityType: "season" },
+            seasonNumber: 0,
+            title: "Specials",
+            episodes: [
+              {
+                ref: {
+                  providerId: "tmdb",
+                  externalId: "41",
+                  entityType: "episode",
+                },
+                episodeNumber: 1,
+                title: "Behind the scenes",
+                airDate: null,
+                runtimeMinutes: 30,
+                provenance,
+              },
+            ],
+            provenance,
+          },
+          {
+            ref: { providerId: "tmdb", externalId: "43", entityType: "season" },
+            seasonNumber: 1,
+            title: "Season 1",
+            episodes: [
+              {
+                ref: {
+                  providerId: "tmdb",
+                  externalId: "44",
+                  entityType: "episode",
+                },
+                episodeNumber: 1,
+                title: "Pilot",
+                airDate: null,
+                runtimeMinutes: 30,
+                provenance,
+              },
+            ],
+            provenance,
+          },
+        ],
+        complete: true,
+        provenance,
+      }),
+    });
+    vi.mocked(dependencies.media.search).mockResolvedValue([
+      {
+        ref: { providerId: "webshare", candidateId: "episode-1" },
+        releaseName: "Orbit.One.S01E01.1080p.mkv",
+        sizeBytes: 10,
+        seasonNumber: 1,
+        episodeNumber: 1,
+        confidence: 0.8,
+        provenance: { ...provenance, providerId: "webshare" },
+      },
+    ]);
+    const coordinator = await seriesCoordinator(dependencies);
+    const response = await coordinator.discover(
+      {
+        profileId: "default",
+        sessionId: "complete-scify",
+        message: "A complete scify series",
+        idempotencyKey: "complete-scify-request",
+      },
+      NOW,
+    );
+
+    expect(discover).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "series",
+        genres: ["Science fiction"],
+        completeOnly: true,
+      }),
+      expect.anything(),
+    );
+    expect(dependencies.generateStructured).not.toHaveBeenCalled();
+    expect(response.bestMatch?.title.title).toBe("Orbit One");
+    expect(response.bestMatch?.title.seriesCoverage?.complete).toBe(true);
+    expect(response.bestMatch?.title.seriesCoverage?.episodesTotal).toBe(1);
+    expect(response.reply).toContain("every episode confirmed playable");
+
+    const guide = await dependencies.metadata.getSeriesStructure(
+      { providerId: "tmdb", externalId: "42", entityType: "series" },
+      {} as Parameters<MetadataProvider["getSeriesStructure"]>[1],
+    );
+    vi.mocked(dependencies.metadata.getSeriesStructure).mockResolvedValue({
+      ...guide,
+      seasons: guide.seasons.map((season) =>
+        season.seasonNumber === 0
+          ? season
+          : {
+              ...season,
+              episodes: [
+                ...season.episodes,
+                {
+                  ...season.episodes[0]!,
+                  ref: {
+                    providerId: "tmdb",
+                    externalId: "45",
+                    entityType: "episode" as const,
+                  },
+                  episodeNumber: 2,
+                },
+              ],
+            },
+      ),
+    });
+    const incomplete = await coordinator.discover(
+      {
+        profileId: "default",
+        sessionId: "incomplete-scify",
+        message: "A complete sci-fi series",
+        idempotencyKey: "incomplete-scify-request",
+      },
+      NOW,
+    );
+    expect(incomplete.bestMatch?.title.availability).toBe("partial");
+    expect(incomplete.bestMatch?.title.seriesCoverage?.complete).toBe(false);
+    expect(incomplete.reply).toContain("could not confirm that every episode");
+  });
+
   it("uses the agent only for proposals and groups deterministically validated titles", async () => {
     const dependencies = coordinatorDependencies();
     const coordinator = new LiveContentCoordinator({
@@ -1345,7 +1809,7 @@ describe("LiveContentCoordinator", () => {
           ),
         }),
         expect.objectContaining({
-          role: "assistant",
+          role: "system",
           content: expect.stringContaining(
             "Deterministic metadata search found these title candidates: Pan Tau",
           ),
@@ -1353,8 +1817,165 @@ describe("LiveContentCoordinator", () => {
       ]),
     );
     expect(input.messages[0]?.content).toContain(
-      "A quick-search note contains metadata candidates",
+      "Keep people empty unless the user explicitly names",
     );
+    expect(input.messages.at(-1)).toEqual({
+      role: "user",
+      content: "Less spooky, please",
+    });
+  });
+
+  it("keeps an empty quick search out of the first model turn", async () => {
+    const dependencies = coordinatorDependencies();
+    const coordinator = await seriesCoordinator(dependencies);
+    await coordinator.discover(
+      {
+        profileId: "default",
+        sessionId: "empty-quick",
+        message: "A complete sci-fi series",
+        idempotencyKey: "empty-quick-request",
+      },
+      NOW,
+      {
+        sessionId: "empty-quick",
+        messages: [
+          {
+            role: "user",
+            content: { message: "A complete sci-fi series" },
+            createdAt: NOW,
+          },
+          {
+            role: "assistant",
+            content: {
+              stage: "quick",
+              reply: "No confident quick match yet.",
+              titles: [],
+            },
+            createdAt: NOW,
+          },
+        ],
+      },
+    );
+    const messages =
+      dependencies.generateStructured.mock.calls[0]?.[0].messages;
+    expect(messages.at(-1)).toEqual({
+      role: "user",
+      content: "A complete sci-fi series",
+    });
+    expect(
+      messages.some((item: { content: string }) =>
+        item.content.includes("No confident quick match"),
+      ),
+    ).toBe(false);
+    expect(messages[0]?.content).toContain("Suggest 3 distinct real films");
+  });
+
+  it("retries title lookup without an approximate model year", async () => {
+    const dependencies = coordinatorDependencies();
+    dependencies.generateStructured.mockResolvedValueOnce({
+      output: {
+        acknowledgement: "Here is a film.",
+        people: [],
+        candidates: [
+          {
+            title: "Agent title one",
+            kind: "movie",
+            year: 2003,
+            reason: "A strong match.",
+            matchPercent: 90,
+          },
+        ],
+      },
+    });
+    const search = vi.mocked(dependencies.metadata.search);
+    const originalSearch = search.getMockImplementation()!;
+    search.mockImplementation(async (query, context) =>
+      query.year === null ? originalSearch(query, context) : [],
+    );
+    const coordinator = await seriesCoordinator(dependencies);
+    const response = await coordinator.discover(
+      {
+        profileId: "default",
+        sessionId: "approximate-year",
+        message: "A good film",
+        idempotencyKey: "approximate-year-request",
+      },
+      NOW,
+    );
+    expect(response.bestMatch?.title.title).toBe("Canonical One");
+    expect(search.mock.calls.map(([query]) => query.year)).toEqual([
+      2003,
+      null,
+    ]);
+    expect(dependencies.generateStructured).toHaveBeenCalledTimes(1);
+  });
+
+  it("automatically requests different candidates when the first proposals cannot be resolved", async () => {
+    const dependencies = coordinatorDependencies();
+    dependencies.generateStructured.mockResolvedValueOnce({
+      output: {
+        acknowledgement: "Let me look.",
+        people: [],
+        candidates: [
+          {
+            title: "Imaginary series",
+            kind: "series",
+            year: 2001,
+            reason: "First idea.",
+            matchPercent: 80,
+          },
+        ],
+      },
+    });
+    const search = vi.mocked(dependencies.metadata.search);
+    const originalSearch = search.getMockImplementation()!;
+    search.mockImplementation(async (query, context) =>
+      query.query === "Imaginary series" ? [] : originalSearch(query, context),
+    );
+    const coordinator = await seriesCoordinator(dependencies);
+    const response = await coordinator.discover(
+      {
+        profileId: "default",
+        sessionId: "retry-first-search",
+        message: "Find a good film",
+        idempotencyKey: "retry-first-request",
+      },
+      NOW,
+    );
+    expect(dependencies.generateStructured).toHaveBeenCalledTimes(2);
+    expect(response.bestMatch?.title.title).toBe("Canonical One");
+    const retryMessages =
+      dependencies.generateStructured.mock.calls[1]?.[0].messages;
+    expect(retryMessages.at(-1)).toEqual({
+      role: "user",
+      content: "Find a good film",
+    });
+    expect(
+      retryMessages.some((item: { content: string }) =>
+        item.content.includes("Imaginary series"),
+      ),
+    ).toBe(true);
+  });
+
+  it("reports a catalog failure instead of claiming to have found ideas", async () => {
+    const dependencies = coordinatorDependencies();
+    vi.mocked(dependencies.metadata.search).mockRejectedValue(
+      new Error("Catalog unavailable"),
+    );
+    const coordinator = await seriesCoordinator(dependencies);
+    const response = await coordinator.discover(
+      {
+        profileId: "default",
+        sessionId: "catalog-failure",
+        message: "A complete sci-fi series",
+        idempotencyKey: "catalog-failure-request",
+      },
+      NOW,
+    );
+    expect(response.bestMatch).toBeNull();
+    expect(response.reply).toContain("Check the catalog connection");
+    expect(response.reply).not.toContain("I found some ideas");
+    expect(dependencies.generateStructured).toHaveBeenCalledTimes(1);
   });
 
   it("compresses long conversations for a small model context", async () => {
