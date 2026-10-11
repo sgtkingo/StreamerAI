@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { ViewerProfile } from "@streamer-ai/contracts";
 import { apiClient, type ProfileDraft, type StreamerApi } from "./api/client";
 import { AppShell } from "./components/AppShell";
+import { DownloadProvider } from "./components/DownloadManager";
 import { Brand } from "./components/Brand";
 import { ProfileChooser } from "./components/ProfileChooser";
 import { Onboarding } from "./components/onboarding/Onboarding";
@@ -129,37 +130,39 @@ export function App({ api = apiClient, forceOnboarding = false }: AppProps) {
   }
 
   return (
-    <AppShell
-      key={activeProfile.id}
-      api={api}
-      profile={activeProfile}
-      onProfileUpdated={(updated) => {
-        setActiveProfile(updated);
-        setProfiles((current) =>
-          current.map((item) => (item.id === updated.id ? updated : item)),
-        );
-      }}
-      onSwitchAccount={() => {
-        setActiveProfile(null);
-        window.history.pushState({}, "", "/");
-      }}
-      onDeleteProfile={async () => {
-        await api.deleteProfile(activeProfile.id);
-        setProfiles((current) =>
-          current.filter((item) => item.id !== activeProfile.id),
-        );
-        setActiveProfile(null);
-        window.history.pushState({}, "", "/");
-      }}
-      onRerunOnboarding={() => setRerunProfile(activeProfile)}
-      onIntegrationsChanged={() => {
-        void api
-          .getSetupStatus(activeProfile.id)
-          .then((status) => setPlaybackEnabled(status.playback))
-          .catch(() => undefined);
-      }}
-      playbackEnabled={playbackEnabled}
-    />
+    <DownloadProvider key={activeProfile.id} api={api} profileId={activeProfile.id}>
+      <AppShell
+        key={activeProfile.id}
+        api={api}
+        profile={activeProfile}
+        onProfileUpdated={(updated) => {
+          setActiveProfile(updated);
+          setProfiles((current) =>
+            current.map((item) => (item.id === updated.id ? updated : item)),
+          );
+        }}
+        onSwitchAccount={() => {
+          setActiveProfile(null);
+          window.history.pushState({}, "", "/");
+        }}
+        onDeleteProfile={async () => {
+          await api.deleteProfile(activeProfile.id);
+          setProfiles((current) =>
+            current.filter((item) => item.id !== activeProfile.id),
+          );
+          setActiveProfile(null);
+          window.history.pushState({}, "", "/");
+        }}
+        onRerunOnboarding={() => setRerunProfile(activeProfile)}
+        onIntegrationsChanged={() => {
+          void api
+            .getSetupStatus(activeProfile.id)
+            .then((status) => setPlaybackEnabled(status.playback))
+            .catch(() => undefined);
+        }}
+        playbackEnabled={playbackEnabled}
+      />
+    </DownloadProvider>
   );
 }
 

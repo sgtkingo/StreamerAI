@@ -87,8 +87,70 @@ DONE: Subtitles vyvolávájí Loading subtitles - to není UI přívětívé a n
 
 - Měli bychom uživatelům umožnit stáhnout komplet celý seiál (všechny dostupné episody, synchronně one-by-one) stejně jako film - tlačítko download na kartě. 
 
-- Návrh optimalizace: Pokud je nějaký titul Unavaible (i díl seriálu), dohledávání už nebude automatické ale jen na vyžádání uživatelem. U filmu přes Check tlačítko jako nyní, u seriálu Try find more episodes pro vechny díly (jako nyní) nebo kliknutím na tlačíto "Try again" přímo u konkterétního Unavaible dílu (UI pro kartu i seznam episod). Ušetříme tím opakované dotazy na server. 
+- Návrh optimalizace: Pokud je nějaký titul Unavaible (i díl seriálu), dohledávání už nebude automatické ale jen na vyžádání uživatelem. U filmu přes Check tlačítko jako nyní, u seriálu Try find more episodes pro vechny díly (jako nyní) nebo kliknutím na tlačíto "Try again" přímo u konkterétního Unavaible dílu (UI pro kartu i seznam episod). Ušetříme tím opakované dotazy na server. Co si o tom myslíš? 
+
+Dobrá, udělal bych to takto: pokud dohledání selže, systém se ho pokusí ještě 3x zopakova s krátkým časovým odstupem, a až poté hdefinitně označí za Unavailable . Co se týče rozdílu mezi přehratelností a novým hledáním zdrojů, měli bychom to stejnotit a to tak že:
+1. První se ověří přehratelnost, pokud selže tak bod 2
+2. Hledají se znovu nové zdroje, pokud nejsou nalezeny tak bod 3
+3. Takový titul se označí znovu za "Unavailable" - nedostupný, další pokud musí být vyvolán manuálně pomocí "Try Again" (retry check). 
+Souhlas?
 
 - Potřebujeme dodělat konektory pro remote agenty: ChatGPT, Claude, Geminy, Grok, Kimi, DeepSeek... Nabízejí se dvě možnosti: API a MCP. Bylo by dobré kdyby StreamerAI uměl obě varianty. 
- U MCP bych rád tento hybrdní mod:
- <prompt>
+ U MCP bych rád tento hybrdní mod:
+Implement a hybrid StreamerAI agent architecture that supports both:
+1. MCP Server mode
+   - StreamerAI exposes its capabilities as MCP tools to external hosts such as Codex, Claude Code, Cursor, etc.
+   - Example tools:
+     - search_media()
+     - inspect_media()
+     - get_subtitles()
+     - start_playback()
+     - stop_playback()
+2. Embedded Local Agent mode
+   - StreamerAI can itself use a locally authenticated coding/AI agent as its reasoning backend.
+   - Supported providers initially:
+     - Codex via codex app-server / SDK where possible
+     - Claude Code via its non-interactive/programmatic CLI mode
+   - Do NOT read, copy, or manage provider OAuth/API credentials directly.
+   - Authentication remains owned by the installed local CLI/tool.
+Target architecture:
+StreamerAI ├── MCP Server │   └── StreamerAI tools ├── AgentRouter │   ├── CodexProvider │   ├── ClaudeProvider │   └── future providers └── LocalAgentHost └── manages persistent local agent processes / sessions
+Requirements:
+- Keep MCP tools provider-agnostic.
+- Define a common AgentProvider interface, e.g.:
+  - startSession()
+  - sendMessage()
+  - streamEvents()
+  - cancel()
+  - closeSession()
+- Prefer persistent sessions instead of spawning a new CLI process for every prompt.
+- Support streamed responses/events.
+- Support cancellation and process cleanup.
+- Preserve agent session/thread identifiers.
+- Keep StreamerAI business logic independent from Codex/Claude-specific protocols.
+- Never expose StreamerAI secrets or direct media URLs unnecessarily to the agent.
+- Add configuration such as:
+agent: mode: local | api | disabled provider: codex | claude
+- Detect whether the selected local provider is installed and authenticated.
+- Return a clear capability/status response if unavailable.
+- Avoid shell command concatenation; use structured process spawning.
+- Add timeouts, lifecycle management, logs, and tests.
+- Design the provider abstraction so additional agents can be added later.
+Important architectural property:
+The same StreamerAI MCP tools must work regardless of whether they are called by:
+- external Codex/Claude via MCP,
+- or StreamerAI's own embedded local agent.
+First inspect the existing repository and reuse current abstractions where possible. Then implement the smallest clean architecture that establishes this bidirectional integration without coupling StreamerAI to one AI vendor.
+At completion provide:
+- files changed,
+- resulting architecture,
+- provider interfaces,
+- MCP integration,
+- Codex integration,
+- Claude integration,
+- security boundaries,
+- tests executed,
+- known limitations.
+
+Zajsti aby agenti využívali různé rulesety pro kontrolu úrovně sofitikovanosti vyhledávání, jak jsme již řešili a implementovali. 
+Také bychom měli zajistit aby v případě více dostupných agentů, byl aktivní vždy jen jeden, dle preferencí uživatele. 

@@ -43,6 +43,11 @@ export function DownloadButton({
   compact = false,
   deletable = false,
   disabled = false,
+  retry = false,
+  stopLabel = "Cancel",
+  className = "",
+  pending = false,
+  multiFile = false,
 }: {
   state: "idle" | "downloading" | "complete";
   progress: number | null;
@@ -51,31 +56,41 @@ export function DownloadButton({
   compact?: boolean;
   deletable?: boolean;
   disabled?: boolean;
+  retry?: boolean;
+  stopLabel?: string;
+  className?: string;
+  pending?: boolean;
+  multiFile?: boolean;
 }) {
   const percentage = Math.max(0, Math.min(100, progress ?? 0));
   const deleting = state === "complete" && deletable;
   return (
     <button
-      className={`download-button download-button--${state}${deleting ? " download-button--deletable" : ""}${compact ? " download-button--compact" : ""}${state === "downloading" && progress === null ? " download-button--indeterminate" : ""}`}
+      className={`download-button download-button--${state}${deleting ? " download-button--deletable" : ""}${compact ? " download-button--compact" : ""}${state === "downloading" && progress === null ? " download-button--indeterminate" : ""}${pending ? " download-button--pending" : ""}${className ? ` ${className}` : ""}`}
       type="button"
-      disabled={disabled}
+      disabled={disabled || pending}
+      aria-busy={pending || undefined}
       aria-label={
-        state === "downloading"
-          ? `Cancel ${label}`
+        pending
+          ? `Stopping ${label}`
+          : state === "downloading"
+          ? `${stopLabel} ${label}`
           : state === "complete"
             ? deleting
               ? `Delete saved offline copy of ${label}`
               : `Download ${label} again`
-            : `Download ${label}`
+            : `${retry ? "Retry" : "Download"} ${label}`
       }
       title={
-        state === "downloading"
-          ? `Cancel download${progress === null ? "" : ` · ${percentage}%`}`
+        pending
+          ? "Waiting for download to stop"
+          : state === "downloading"
+          ? `${stopLabel} download${progress === null ? "" : ` · ${Math.round(percentage)}%`}`
           : state === "complete"
             ? deleting
               ? "Delete saved offline copy"
               : "Saved offline"
-            : "Save offline"
+            : retry ? "Download remaining episodes" : "Save offline"
       }
       style={{ "--download-progress": `${percentage}%` } as CSSProperties}
       onClick={onClick}
@@ -94,6 +109,13 @@ export function DownloadButton({
           <DownloadGlyph checked={state === "complete"} />
         )
       )}
+      {multiFile && <span className="download-button__multifile" aria-hidden="true">
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="1.5" y="2.5" width="9" height="10" rx="1.2" />
+          <rect x="5.5" y="4.5" width="9" height="10" rx="1.2" />
+          <rect x="9.5" y="6.5" width="9" height="10" rx="1.2" />
+        </svg>
+      </span>}
     </button>
   );
 }

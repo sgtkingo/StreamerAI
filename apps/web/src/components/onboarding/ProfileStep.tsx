@@ -8,6 +8,8 @@ const preferences = [
   "Documentary",
   "Thriller",
   "Family",
+  "Fantasy",
+  "Anime",
 ];
 
 interface ProfileStepProps {

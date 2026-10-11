@@ -12,13 +12,16 @@ import { LibraryPage } from "./LibraryPage";
 import { ProfilePages, type ProfilePage } from "./ProfilePages";
 import { VideoPlayer } from "./VideoPlayer";
 import { TitleDetail } from "./TitleDetail";
+import { useDownloadManager } from "./DownloadManager";
+import { DownloadPage } from "./DownloadPage";
 
-type Route = "home" | "library" | ProfilePage;
+type Route = "home" | "library" | "downloads" | ProfilePage;
 
 function routeFromLocation(): Route {
   const path = window.location.pathname.slice(1);
   return [
     "library",
+    "downloads",
     "settings",
     "preferences",
     "account",
@@ -61,6 +64,7 @@ export function AppShell({
   const [detailEpisode, setDetailEpisode] = useState<EpisodeSelection | null>(
     null,
   );
+  const downloads = useDownloadManager();
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const profileMenuRef = useRef<HTMLDivElement>(null);
   const profileId = profile.id;
@@ -76,6 +80,12 @@ export function AppShell({
     },
     [],
   );
+  const downloadSeries = useCallback((title: CatalogTitle) => {
+    downloads?.activateBatch(title);
+  }, [downloads]);
+  useEffect(() => {
+    if (downloads?.libraryRevision) setLibraryVersion((value) => value + 1);
+  }, [downloads?.libraryRevision]);
   const playFromDetail = useCallback(
     async (
       title: CatalogTitle,
@@ -156,6 +166,14 @@ export function AppShell({
           >
             Library
           </button>
+          <button
+            type="button"
+            className={route === "downloads" ? "is-active" : ""}
+            aria-current={route === "downloads" ? "page" : undefined}
+            onClick={() => navigate("downloads")}
+          >
+            Download
+          </button>
         </nav>
         {route === "home" && (
           <nav aria-label="Home sections" className="section-nav">
@@ -235,6 +253,7 @@ export function AppShell({
           version={libraryVersion}
           onLibraryChanged={() => setLibraryVersion((value) => value + 1)}
           onOpenTitle={openDetail}
+          onDownloadSeries={downloadSeries}
           onPlaybackReady={(title, grant, episode) =>
             setActivePlayback({ title, grant, episode })
           }
@@ -247,11 +266,14 @@ export function AppShell({
           version={libraryVersion}
           onBackHome={() => navigate("home")}
           onOpenTitle={openDetail}
+          onDownloadSeries={downloadSeries}
           playbackEnabled={playbackEnabled}
           onPlaybackReady={(title, grant, episode) =>
             setActivePlayback({ title, grant, episode })
           }
         />
+      ) : route === "downloads" ? (
+        <DownloadPage onOpenTitle={openDetail} />
       ) : (
         <ProfilePages
           key={`${profile.id}:${route}`}

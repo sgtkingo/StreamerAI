@@ -6,7 +6,8 @@ import {
   titleLanguageLabel,
 } from "../title-language-label";
 import { SourceOriginStack, titleSourceProviderIds } from "./SourceIcon";
-import { DownloadGlyph } from "./DownloadButton";
+import { DownloadButton, DownloadGlyph } from "./DownloadButton";
+import { useDownloadManager } from "./DownloadManager";
 import { ComposingLabel } from "./ComposingLabel";
 import type { PlaybackCheckState } from "./usePlaybackChecks";
 
@@ -67,6 +68,7 @@ interface TitleCardProps {
     sourceId?: string,
   ) => void;
   onOpen?: (item: CatalogTitle, episode?: EpisodeSelection) => void;
+  onDownloadSeries?: (item: CatalogTitle) => void;
   onCheck?: (item: CatalogTitle, episode?: EpisodeSelection) => void;
   onAdd: (item: CatalogTitle) => void;
   onRemove?: (item: CatalogTitle) => void;
@@ -179,6 +181,7 @@ export function TitleCard({
   hero = false,
   onPlay,
   onOpen,
+  onDownloadSeries,
   onCheck,
   onAdd,
   onRemove,
@@ -186,6 +189,9 @@ export function TitleCard({
   pendingAction,
   playbackCheck,
 }: TitleCardProps) {
+  const downloadManager = useDownloadManager();
+  const batch = item.kind === "series" ? downloadManager?.batchFor(item) : undefined;
+  const movieDownload = item.kind === "movie" ? downloadManager?.movieFor(item) : undefined;
   const playable = titleHasPlayableVariant(item);
   const checkStatus = playbackCheck?.status ?? "checking";
   const checkedLanguages =
@@ -544,6 +550,35 @@ export function TitleCard({
           </div>
         )}
         <div className="title-card__actions">
+          {!episodeCode && item.kind === "series" && onDownloadSeries && (
+            <DownloadButton
+              compact
+              multiFile
+              className="title-card__download-button"
+              state={batch?.state ?? "idle"}
+              progress={batch?.progress ?? null}
+              pending={batch?.entry?.status === "stopping"}
+              deletable={batch?.action === "delete"}
+              retry={batch?.action === "retry"}
+              stopLabel="Stop"
+              label={`all available episodes of ${item.title}`}
+              onClick={() => onDownloadSeries(item)}
+            />
+          )}
+          {!episodeCode && item.kind === "movie" && downloadManager && movieDownload && (
+            <DownloadButton
+              compact
+              className="title-card__download-button"
+              state={movieDownload.state}
+              progress={movieDownload.progress}
+              pending={Boolean(movieDownload.entry?.currentJobId && downloadManager.stoppingJobIds.includes(movieDownload.entry.currentJobId))}
+              deletable={movieDownload.action === "delete"}
+              retry={movieDownload.action === "retry"}
+              label={item.title}
+              stopLabel="Stop"
+              onClick={() => downloadManager.activateMovie(item)}
+            />
+          )}
           {onOpen && (
             <button
               className="button button--secondary button--compact"

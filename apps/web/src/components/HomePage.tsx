@@ -29,6 +29,7 @@ interface HomePageProps {
     episode?: EpisodeSelection,
   ) => void;
   onOpenTitle: (item: CatalogTitle, episode?: EpisodeSelection) => void;
+  onDownloadSeries: (item: CatalogTitle) => void;
 }
 
 const searchMessages = [
@@ -60,6 +61,7 @@ export function HomePage({
   onLibraryChanged,
   onPlaybackReady,
   onOpenTitle,
+  onDownloadSeries,
 }: HomePageProps) {
   const [feed, setFeed] = useState<HomeFeed | null>(null);
   const [query, setQuery] = useState("");
@@ -900,6 +902,7 @@ export function HomePage({
               episodeSynopsis={displayGroups.bestMatch.episodeSynopsis}
               preferences={playbackPreferences}
               onOpen={onOpenTitle}
+              onDownloadSeries={onDownloadSeries}
               reason={displayGroups.bestMatch.reason}
               hero
               onPlay={play}
@@ -946,6 +949,7 @@ export function HomePage({
                     episodeSynopsis={episodeSynopsis}
                     preferences={playbackPreferences}
                     onOpen={onOpenTitle}
+                    onDownloadSeries={onDownloadSeries}
                     reason={reason}
                     onPlay={play}
                     onCheck={playbackChecks.check}
@@ -1017,6 +1021,7 @@ export function HomePage({
                     item={item}
                     preferences={playbackPreferences}
                     onOpen={onOpenTitle}
+                    onDownloadSeries={onDownloadSeries}
                     onPlay={play}
                     onCheck={playbackChecks.check}
                     playbackCheck={playbackChecks.stateFor(item)}

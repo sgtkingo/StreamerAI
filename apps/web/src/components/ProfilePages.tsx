@@ -32,6 +32,8 @@ const genres = [
   "Documentary",
   "Thriller",
   "Family",
+  "Fantasy",
+  "Anime",
 ];
 
 export function ProfilePages({
@@ -227,9 +229,9 @@ export function ProfilePages({
       </h1>
       {page === "settings" && (
         <div className="profile-page__sections">
-          <section className="profile-page__section" id="settings-language">
-            <p className="eyebrow">01 / Language</p>
-            <h2>Interface language</h2>
+          <section className="profile-page__section" id="settings-interface">
+            <p className="eyebrow">01 / Interface</p>
+            <h2>Language</h2>
             <label className="field field--compact">
               <span>Preferred interface language</span>
               <select

@@ -67,9 +67,14 @@ export class OfflineDownloadManager {
   }
 
   list(profileId: string): OfflineDownload[] {
+    const savedIds = new Set(
+      [...this.saved.values()].map((item) => item.job.id),
+    );
     const entries = [
       ...[...this.saved.values()].map((item) => item.job),
-      ...this.jobs.values(),
+      ...[...this.jobs.values()].filter(
+        (job) => job.state !== "complete" || savedIds.has(job.id),
+      ),
     ];
     return [...new Map(entries.map((job) => [job.id, job])).values()]
       .filter((job) => job.profileId === profileId)

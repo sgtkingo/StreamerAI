@@ -27,6 +27,7 @@ interface LibraryPageProps {
     episode?: EpisodeSelection,
   ) => void;
   onOpenTitle: (item: CatalogTitle) => void;
+  onDownloadSeries: (item: CatalogTitle) => void;
 }
 
 type KindFilter = "all" | "movie" | "series";
@@ -47,6 +48,7 @@ export function LibraryPage({
   playbackEnabled,
   onPlaybackReady,
   onOpenTitle,
+  onDownloadSeries,
 }: LibraryPageProps) {
   const [library, setLibrary] = useState<LibraryResponse | null>(null);
   const [libraryLoading, setLibraryLoading] = useState(true);
@@ -470,6 +472,7 @@ export function LibraryPage({
               item={entry.title}
               preferences={playbackPreferences}
               onOpen={onOpenTitle}
+              onDownloadSeries={onDownloadSeries}
               onPlay={play}
               onCheck={playbackChecks.check}
               playbackCheck={playbackChecks.stateFor(entry.title)}

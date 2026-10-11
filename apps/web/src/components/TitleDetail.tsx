@@ -1,4 +1,10 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import type {
   CatalogTitle,
   EpisodeSelection,
@@ -14,12 +20,14 @@ import { useToasts } from "./ToastProvider";
 import { playCardHoverTick } from "./TitleCard";
 import { ComposingDots, ComposingLabel } from "./ComposingLabel";
 import { DownloadButton } from "./DownloadButton";
+import { useDownloadManager } from "./DownloadManager";
 
 interface Props {
   api: StreamerApi;
   profileId: string;
   title: CatalogTitle;
   initialEpisode?: EpisodeSelection;
+  seriesDownloadRequestId?: number;
   playbackEnabled: boolean;
   suspended?: boolean;
   onClose: () => void;
@@ -36,6 +44,25 @@ interface Props {
 const isDownloadableSource = (source: TitleSource) =>
   source.providerId === "webshare" &&
   /\.(mkv|avi|mp4|m4v|mov|webm|mpg|mpeg|ts|m2ts)$/i.test(source.releaseName);
+
+const seriesDownloadLocks = new Map<string, Promise<void>>();
+
+type SeriesDownloadProgress = {
+  requestId: number;
+  status:
+    | "preparing"
+    | "choosing-folder"
+    | "downloading"
+    | "complete"
+    | "partial"
+    | "failed"
+    | "cancelled";
+  total: number;
+  completed: number;
+  currentEpisode?: EpisodeSelection;
+  failed: number;
+  message?: string;
+};
 
 function PlayActionContent({ label }: { label: string }) {
   return (
@@ -76,6 +103,7 @@ export function TitleDetail({
   profileId,
   title,
   initialEpisode,
+  seriesDownloadRequestId = 0,
   playbackEnabled,
   suspended = false,
   onClose,
@@ -86,6 +114,7 @@ export function TitleDetail({
   const [detail, setDetail] = useState<Detail | null>(null);
   const [error, setError] = useState("");
   const { showToast } = useToasts();
+  const downloadManager = useDownloadManager();
   const [selectedSeason, setSelectedSeason] = useState<number | null>(
     initialEpisode?.seasonNumber ?? null,
   );
@@ -96,7 +125,14 @@ export function TitleDetail({
   const [localRoots, setLocalRoots] = useState<{ id: string; path: string }[]>(
     [],
   );
+  const [localRootsLoaded, setLocalRootsLoaded] = useState(false);
   const [offlineJobs, setOfflineJobs] = useState<OfflineDownload[]>([]);
+  const [offlineJobsLoaded, setOfflineJobsLoaded] = useState(false);
+  const [seriesDownloadProgress, setSeriesDownloadProgress] =
+    useState<SeriesDownloadProgress | null>(null);
+  const [localSeriesDownloadRequestId, setLocalSeriesDownloadRequestId] =
+    useState(0);
+  const localSeriesDownloadRequestCounter = useRef(0);
   const [preferredSourceId, setPreferredSourceId] = useState<string | null>(
     null,
   );
@@ -111,6 +147,12 @@ export function TitleDetail({
     sourceId: string;
     rootId: string;
     label: string;
+    batchRequestId?: never;
+  } | {
+    sourceId?: never;
+    rootId: string;
+    label: string;
+    batchRequestId: number;
   } | null>(null);
   const downloadDialogOpenRef = useRef(false);
   downloadDialogOpenRef.current =
@@ -118,6 +160,7 @@ export function TitleDetail({
   const refreshedOfflineJobs = useRef(new Set<string>());
   const reportedOfflineFailures = useRef(new Set<string>());
   const startedOfflineJobs = useRef(new Set<string>());
+  const handledSeriesDownloadRequests = useRef(new Set<number>());
   const [openSourceFor, setOpenSourceFor] = useState<string | null>(null);
   const [forceSearch, setForceSearch] = useState<
     { status: "searching" } | { status: "done"; message: string } | null
@@ -136,6 +179,27 @@ export function TitleDetail({
   selectedEpisodeRef.current = selectedEpisode;
   const initialSeasonNumber = initialEpisode?.seasonNumber;
   const initialEpisodeNumber = initialEpisode?.episodeNumber;
+  const activeSeriesDownloadRequestId = Math.max(
+    seriesDownloadRequestId,
+    localSeriesDownloadRequestId,
+  );
+  const requestWholeSeriesDownload = () => {
+    if (downloadManager) {
+      downloadManager.activateBatch(detail?.title ?? title);
+      return;
+    }
+    const requestId =
+      Math.max(
+        seriesDownloadRequestId,
+        localSeriesDownloadRequestId,
+        localSeriesDownloadRequestCounter.current,
+      ) + 1;
+    localSeriesDownloadRequestCounter.current = requestId;
+    setLocalSeriesDownloadRequestId(requestId);
+  };
+  useEffect(() => {
+    if (downloadManager) setOfflineJobs(downloadManager.jobs);
+  }, [downloadManager?.jobs]);
 
   useEffect(() => {
     if (error) showToast(error, "error");
@@ -148,13 +212,21 @@ export function TitleDetail({
         if (!active) return;
         setLocalRoots(config.roots);
       })
-      .catch(() => undefined);
+      .catch(() => undefined)
+      .finally(() => {
+        if (active) setLocalRootsLoaded(true);
+      });
     void api
       .getOfflineDownloads(profileId)
       .then((response) => {
-        if (active) setOfflineJobs(response.items);
+        if (active) {
+          setOfflineJobs(response.items);
+          setOfflineJobsLoaded(true);
+        }
       })
-      .catch(() => undefined);
+      .catch(() => {
+        if (active) setOfflineJobsLoaded(true);
+      });
     return () => {
       active = false;
     };
@@ -347,6 +419,13 @@ export function TitleDetail({
         event.preventDefault();
         if (downloadDialogOpenRef.current) {
           setConfirmDelete(null);
+          if (chooseRoot?.batchRequestId !== undefined) {
+            setSeriesDownloadProgress((progress) =>
+              progress?.requestId === chooseRoot.batchRequestId
+                ? { ...progress, status: "cancelled" }
+                : progress,
+            );
+          }
           setChooseRoot(null);
         } else if (openSourceForRef.current !== null) setOpenSourceFor(null);
         else if (selectedEpisodeRef.current !== null) {
@@ -382,7 +461,7 @@ export function TitleDetail({
       releaseScrollLock();
       previous?.focus();
     };
-  }, [onClose, suspended]);
+  }, [chooseRoot, onClose, suspended]);
 
   useLayoutEffect(() => {
     if (!suspended && dialogRef.current) {
@@ -416,6 +495,17 @@ export function TitleDetail({
   const shownSeason =
     seasons.find((season) => season.seasonNumber === selectedSeason) ??
     seasons[0];
+  const bulkView = downloadManager?.batchFor(current);
+  const bulkProgress = downloadManager
+    ? bulkView?.entry && {
+        ...bulkView.entry,
+        completed: bulkView.entry.processed,
+        message: bulkView.entry.error,
+      }
+    : seriesDownloadProgress;
+  const seasonView = shownSeason
+    ? downloadManager?.batchFor(current, shownSeason.seasonNumber)
+    : undefined;
   const episodeCode = selectedEpisode
     ? `S${String(selectedEpisode.seasonNumber).padStart(2, "0")}E${String(selectedEpisode.episodeNumber).padStart(2, "0")}`
     : null;
@@ -427,7 +517,8 @@ export function TitleDetail({
         )
     : null;
   const sourcesFor = (episode?: EpisodeSelection) =>
-    (current.sources ?? []).filter((source) =>
+    [...new Map([...(current.sources ?? []), ...(downloadManager?.details[current.id]?.title.sources ?? [])]
+      .map((source) => [source.id, source])).values()].filter((source) =>
       episode
         ? source.seasonNumber === episode.seasonNumber &&
           source.episodeNumber === episode.episodeNumber
@@ -492,12 +583,351 @@ export function TitleDetail({
       );
       startedOfflineJobs.current.add(job.id);
       setOfflineJobs((jobs) => [...jobs, job]);
+      void downloadManager?.refresh();
     } catch (reason) {
       showToast(safeErrorMessage(reason), "error");
     } finally {
       setDownloadBusy(false);
     }
   };
+  const runSeriesDownloadBatch = useCallback(
+    async (requestId: number, rootId: string) => {
+      if (!detail?.series || current.kind !== "series") return;
+      const episodes = detail.series.seasons
+        .flatMap((season) => season.episodes)
+        .filter((episode) => episode.availability === "available")
+        .sort(
+          (a, b) =>
+            a.seasonNumber - b.seasonNumber ||
+            a.episodeNumber - b.episodeNumber,
+        );
+      if (episodes.length === 0) {
+        const message = "There are no available episodes to download.";
+        setSeriesDownloadProgress({
+          requestId,
+          status: "failed",
+          total: 0,
+          completed: 0,
+          failed: 0,
+          message,
+        });
+        showToast(message, "error");
+        return;
+      }
+      if (localRoots.length === 0) {
+        const message =
+          "Connect a Local folder or drive in Settings before downloading.";
+        setSeriesDownloadProgress({
+          requestId,
+          status: "failed",
+          total: episodes.length,
+          completed: 0,
+          failed: 0,
+          message,
+        });
+        showToast(message, "error");
+        return;
+      }
+
+      const lockKey = `${profileId}:${current.id}`;
+      const previousBatch = seriesDownloadLocks.get(lockKey);
+      let releaseBatch: () => void = () => {};
+      const batchLock = new Promise<void>((resolve) => {
+        releaseBatch = () => resolve();
+      });
+      seriesDownloadLocks.set(lockKey, batchLock);
+      if (previousBatch) {
+        setSeriesDownloadProgress({
+          requestId,
+          status: "preparing",
+          total: episodes.length,
+          completed: 0,
+          failed: 0,
+        });
+      }
+      if (previousBatch) await previousBatch;
+
+      setSeriesDownloadProgress({
+        requestId,
+        status: "downloading",
+        total: episodes.length,
+        completed: 0,
+        failed: 0,
+      });
+      setDownloadBusy(true);
+      let workingDetail = detail;
+      let knownJobs = [...offlineJobs];
+      let completed = 0;
+      let failed = 0;
+      const refreshProgress = (episode?: EpisodeSelection) =>
+        setSeriesDownloadProgress({
+          requestId,
+          status: "downloading",
+          total: episodes.length,
+          completed,
+          currentEpisode: episode,
+          failed,
+        });
+
+      try {
+        if (previousBatch) {
+          const refreshed = await api.getOfflineDownloads(profileId);
+          knownJobs = refreshed.items;
+          setOfflineJobs(refreshed.items);
+        }
+        for (const episode of episodes) {
+          refreshProgress(episode);
+          const selection = {
+            seasonNumber: episode.seasonNumber,
+            episodeNumber: episode.episodeNumber,
+          };
+          const localCopy = (workingDetail.title.sources ?? []).some(
+            (source) =>
+              source.providerId === "local-files" &&
+              source.seasonNumber === selection.seasonNumber &&
+              source.episodeNumber === selection.episodeNumber,
+          );
+          if (localCopy) {
+            completed += 1;
+            refreshProgress();
+            continue;
+          }
+
+          let sources = (workingDetail.title.sources ?? []).filter(
+            (source) =>
+              isDownloadableSource(source) &&
+              source.seasonNumber === selection.seasonNumber &&
+              source.episodeNumber === selection.episodeNumber,
+          );
+          if (sources.length === 0) {
+            try {
+              const search = await api.forceEpisodeSearch(
+                profileId,
+                current.id,
+                selection,
+              );
+              workingDetail = search.detail;
+              setDetail(search.detail);
+              sources = search.sources.filter(isDownloadableSource);
+            } catch {
+              failed += 1;
+              completed += 1;
+              refreshProgress();
+              continue;
+            }
+          }
+          if (sources.length === 0) {
+            failed += 1;
+            completed += 1;
+            refreshProgress();
+            continue;
+          }
+
+          const episodeJobs = (sourceId: string) =>
+            knownJobs.filter(
+              (job) => job.titleId === current.id && job.sourceId === sourceId,
+            );
+          const source =
+            sources.find((candidate) =>
+              episodeJobs(candidate.id).some((job) => job.state === "complete"),
+            ) ??
+            sources.find((candidate) =>
+              episodeJobs(candidate.id).some(
+                (job) => job.state === "downloading",
+              ),
+            ) ??
+            sources[0]!;
+          let job = episodeJobs(source.id).find(
+            (candidate) => candidate.state === "complete",
+          );
+          if (job) {
+            completed += 1;
+            onAddedRef.current();
+            refreshProgress();
+            continue;
+          }
+          job = episodeJobs(source.id).find(
+            (candidate) => candidate.state === "downloading",
+          );
+          if (!job) {
+            try {
+              job = await api.startOfflineDownload(
+                profileId,
+                current.id,
+                source.id,
+                rootId,
+              );
+              startedOfflineJobs.current.add(job.id);
+              knownJobs = [...knownJobs, job];
+              setOfflineJobs(knownJobs);
+            } catch {
+              failed += 1;
+              completed += 1;
+              refreshProgress();
+              continue;
+            }
+          }
+
+          while (job.state === "downloading") {
+            await new Promise((resolve) => window.setTimeout(resolve, 1200));
+            try {
+              const response = await api.getOfflineDownloads(profileId);
+              knownJobs = response.items;
+              setOfflineJobs(response.items);
+              job =
+                response.items.find((candidate) => candidate.id === job!.id) ?? {
+                  ...job,
+                  state: "failed",
+                  error: "Download job disappeared before it finished.",
+                };
+            } catch {
+              job = {
+                ...job,
+                state: "failed",
+                error: "Download progress could not be checked.",
+              };
+            }
+          }
+          if (job.state === "complete") {
+            completed += 1;
+            onAddedRef.current();
+          } else {
+            failed += 1;
+            completed += 1;
+          }
+          refreshProgress();
+        }
+        const status =
+          failed === 0
+            ? "complete"
+            : completed > failed
+              ? "partial"
+              : "failed";
+        const message =
+          failed === 0
+            ? `All ${episodes.length} available episodes are saved offline.`
+            : `${completed - failed} of ${episodes.length} episodes were saved; ${failed} could not be downloaded.`;
+        setSeriesDownloadProgress({
+          requestId,
+          status,
+          total: episodes.length,
+          completed: episodes.length,
+          failed,
+          message,
+        });
+        showToast(message, failed === 0 ? "success" : "error");
+      } catch (reason) {
+        const message = safeErrorMessage(reason);
+        setSeriesDownloadProgress({
+          requestId,
+          status: completed > failed ? "partial" : "failed",
+          total: episodes.length,
+          completed,
+          failed: Math.max(failed, episodes.length - completed),
+          message,
+        });
+        showToast(message, "error");
+      } finally {
+        setDownloadBusy(false);
+        releaseBatch();
+        if (seriesDownloadLocks.get(lockKey) === batchLock)
+          seriesDownloadLocks.delete(lockKey);
+      }
+    },
+    [
+      api,
+      current.id,
+      current.kind,
+      detail,
+      localRoots.length,
+      offlineJobs,
+      profileId,
+      showToast,
+    ],
+  );
+  useEffect(() => {
+    if (
+      downloadManager ||
+      activeSeriesDownloadRequestId <= 0 ||
+      handledSeriesDownloadRequests.current.has(activeSeriesDownloadRequestId) ||
+      !detail ||
+      !localRootsLoaded ||
+      !offlineJobsLoaded
+    )
+      return;
+    const series = detail.series;
+    const episodes = series?.seasons.flatMap((season) => season.episodes) ?? [];
+    if (
+      series?.status === "searching" ||
+      episodes.some((episode) => episode.availability === "searching")
+    ) {
+      setSeriesDownloadProgress({
+        requestId: activeSeriesDownloadRequestId,
+        status: "preparing",
+        total: episodes.filter((episode) => episode.availability === "available")
+          .length,
+        completed: 0,
+        failed: 0,
+      });
+      return;
+    }
+    handledSeriesDownloadRequests.current.add(activeSeriesDownloadRequestId);
+    const availableCount = episodes.filter(
+      (episode) => episode.availability === "available",
+    ).length;
+    if (availableCount === 0) {
+      const message = "There are no available episodes to download.";
+      setSeriesDownloadProgress({
+        requestId: activeSeriesDownloadRequestId,
+        status: "failed",
+        total: 0,
+        completed: 0,
+        failed: 0,
+        message,
+      });
+      showToast(message, "error");
+      return;
+    }
+    if (localRoots.length === 0) {
+      const message =
+        "Connect a Local folder or drive in Settings before downloading.";
+      setSeriesDownloadProgress({
+        requestId: activeSeriesDownloadRequestId,
+        status: "failed",
+        total: availableCount,
+        completed: 0,
+        failed: 0,
+        message,
+      });
+      showToast(message, "error");
+      return;
+    }
+    if (localRoots.length > 1) {
+      setSeriesDownloadProgress({
+        requestId: activeSeriesDownloadRequestId,
+        status: "choosing-folder",
+        total: availableCount,
+        completed: 0,
+        failed: 0,
+      });
+      setChooseRoot({
+        batchRequestId: activeSeriesDownloadRequestId,
+        rootId: localRoots[0]!.id,
+        label: `all available episodes of ${current.title}`,
+      });
+      return;
+    }
+    void runSeriesDownloadBatch(activeSeriesDownloadRequestId, localRoots[0]!.id);
+  }, [
+    current.title,
+    detail,
+    localRoots,
+    localRootsLoaded,
+    offlineJobsLoaded,
+    runSeriesDownloadBatch,
+    activeSeriesDownloadRequestId,
+    showToast,
+  ]);
   const download = async (
     episode?: EpisodeSelection,
     explicitSource?: TitleSource,
@@ -507,6 +937,7 @@ export function TitleDetail({
     if (state.active) {
       try {
         await api.cancelOfflineDownload(profileId, state.active.id);
+        void downloadManager?.refresh();
       } catch (reason) {
         showToast(safeErrorMessage(reason), "error");
       }
@@ -576,6 +1007,7 @@ export function TitleDetail({
       const remove = api.deleteOfflineDownload ?? api.cancelOfflineDownload;
       await remove(profileId, downloadId);
       setOfflineJobs((jobs) => jobs.filter((job) => job.id !== downloadId));
+      void downloadManager?.refresh();
       onAdded();
       try {
         const updated = await api.getTitleDetail(profileId, title.id);
@@ -802,6 +1234,39 @@ export function TitleDetail({
                   : "Loading episode details…")
               : current.synopsis}
           </p>
+          {bulkProgress && bulkProgress.status !== "stopped" && bulkProgress.status !== "cancelled" && (
+            <div
+              className={`title-detail__series-download title-detail__series-download--${bulkProgress.status}`}
+              role="status"
+              aria-live="polite"
+            >
+              <span>
+                {bulkProgress.status === "preparing"
+                  ? `Preparing to download available episodes…`
+                  : bulkProgress.status === "confirming"
+                    ? "Confirm the series download to continue."
+                  : bulkProgress.status === "choosing-folder"
+                    ? "Choose a folder for the series download."
+                    : bulkProgress.status === "downloading"
+                      ? `Downloading ${bulkProgress.currentEpisode ? `S${String(bulkProgress.currentEpisode.seasonNumber).padStart(2, "0")}E${String(bulkProgress.currentEpisode.episodeNumber).padStart(2, "0")}` : "episodes"} · ${bulkProgress.completed} of ${bulkProgress.total}`
+                      : bulkProgress.status === "stopping" ? "Stopping download…"
+                      : bulkProgress.message ??
+                        (bulkProgress.status === "complete" ? "Available episodes saved." : "Some episodes could not be saved.")}
+              </span>
+              {(bulkProgress.status === "downloading" || bulkProgress.status === "stopping") && (
+                <span
+                  className="title-detail__series-download-progress"
+                  aria-hidden="true"
+                >
+                  <span
+                    style={{
+                      width: `${bulkView?.progress ?? (bulkProgress.total > 0 ? (bulkProgress.completed / bulkProgress.total) * 100 : 0)}%`,
+                    }}
+                  />
+                </span>
+              )}
+            </div>
+          )}
           {!selectedEpisode && (
             <div className="title-detail__ratings">
               {current.ratings.map((rating) => (
@@ -976,7 +1441,21 @@ export function TitleDetail({
               <span className="in-library">✓ In Library</span>
             )}
           </div>
-          {(current.kind === "movie" || selectedEpisode) && playbackEnabled && (
+          {current.kind === "series" && !selectedEpisode ? (
+            <div className="title-detail__hero-download">
+              <DownloadButton
+                multiFile
+                state={bulkView?.state ?? "idle"}
+                progress={bulkView?.progress ?? null}
+                pending={bulkView?.entry?.status === "stopping"}
+                deletable={bulkView?.action === "delete"}
+                retry={bulkView?.action === "retry"}
+                stopLabel="Stop"
+                label={`all available episodes of ${current.title}`}
+                onClick={requestWholeSeriesDownload}
+              />
+            </div>
+          ) : (current.kind === "movie" || selectedEpisode) && playbackEnabled ? (
             <div className="title-detail__hero-download">
               <DownloadButton
                 state={downloadStateFor(selectedEpisode ?? undefined).state}
@@ -995,7 +1474,7 @@ export function TitleDetail({
                 onClick={() => void download(selectedEpisode ?? undefined)}
               />
             </div>
-          )}
+          ) : null}
         </div>
         {current.kind === "series" && selectedEpisode && (
           <div className="title-detail__body title-detail__episode-details">
@@ -1087,6 +1566,21 @@ export function TitleDetail({
           <div className="title-detail__body">
             <div className="title-detail__heading">
               <h3>Seasons & episodes</h3>
+              {shownSeason && downloadManager && <div className="title-detail__season-download">
+                <span>Season {shownSeason.seasonNumber}</span>
+                <DownloadButton
+                  compact
+                  multiFile
+                  state={seasonView?.state ?? "idle"}
+                  progress={seasonView?.progress ?? null}
+                  pending={seasonView?.entry?.status === "stopping"}
+                  deletable={seasonView?.action === "delete"}
+                  retry={seasonView?.action === "retry"}
+                  stopLabel="Stop"
+                  label={`Season ${shownSeason.seasonNumber} of ${current.title}`}
+                  onClick={() => downloadManager.activateBatch(current, shownSeason.seasonNumber)}
+                />
+              </div>}
               {detail?.series?.status !== "complete" && (
                 <button
                   className={`button button--secondary button--compact title-detail__find-episodes${detail?.series?.status === "searching" ? " is-searching" : ""}`}
@@ -1423,7 +1917,20 @@ export function TitleDetail({
               </select>
             </label>
             <div>
-              <button type="button" onClick={() => setChooseRoot(null)}>
+              <button
+                type="button"
+                onClick={() => {
+                  const choice = chooseRoot;
+                  setChooseRoot(null);
+                  if (choice.batchRequestId !== undefined) {
+                    setSeriesDownloadProgress((progress) =>
+                      progress?.requestId === choice.batchRequestId
+                        ? { ...progress, status: "cancelled" }
+                        : progress,
+                    );
+                  }
+                }}
+              >
                 Cancel
               </button>
               <button
@@ -1432,10 +1939,19 @@ export function TitleDetail({
                 onClick={() => {
                   const choice = chooseRoot;
                   setChooseRoot(null);
-                  void launchDownload(choice.sourceId, choice.rootId);
+                  if (choice.batchRequestId !== undefined) {
+                    void runSeriesDownloadBatch(
+                      choice.batchRequestId,
+                      choice.rootId,
+                    );
+                  } else {
+                    void launchDownload(choice.sourceId, choice.rootId);
+                  }
                 }}
               >
-                Start download
+                {chooseRoot.batchRequestId !== undefined
+                  ? "Download series"
+                  : "Start download"}
               </button>
             </div>
           </div>
