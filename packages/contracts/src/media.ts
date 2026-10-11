@@ -134,6 +134,8 @@ export const CatalogTitleSchema = z
     ratings: z.array(SourceRatingSchema).max(12),
     matchPercent: z.number().int().min(0).max(100).nullable(),
     availability: AvailabilityStateSchema,
+    /** Profile-specific search priority, populated by the application service. */
+    priority: z.enum(["low", "high"]).optional(),
     availabilityProvider: z.string().trim().min(1).max(80).nullable(),
     availabilityCheckedAt: z.string().datetime({ offset: true }).nullable(),
     formats: z.array(MediaFormatSchema).max(24),

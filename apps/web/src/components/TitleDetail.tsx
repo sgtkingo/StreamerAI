@@ -18,9 +18,10 @@ import { sourceLabel } from "../source-label";
 import { SourceIcon, sourceName } from "./SourceIcon";
 import { useToasts } from "./ToastProvider";
 import { playCardHoverTick } from "./TitleCard";
-import { ComposingDots, ComposingLabel } from "./ComposingLabel";
+import { ComposingDots } from "./ComposingLabel";
 import { DownloadButton } from "./DownloadButton";
 import { useDownloadManager } from "./DownloadManager";
+import { retryPlaybackCheck } from "./retry-playback-check";
 
 interface Props {
   api: StreamerApi;
@@ -39,6 +40,7 @@ interface Props {
     sourceId?: string,
   ) => Promise<void>;
   onAdded: () => void;
+  onPriorityChanged?: () => void;
 }
 
 const isDownloadableSource = (source: TitleSource) =>
@@ -110,6 +112,7 @@ export function TitleDetail({
   onOpenRelated,
   onPlay,
   onAdded,
+  onPriorityChanged,
 }: Props) {
   const [detail, setDetail] = useState<Detail | null>(null);
   const [error, setError] = useState("");
@@ -122,6 +125,8 @@ export function TitleDetail({
     useState<EpisodeSelection | null>(initialEpisode ?? null);
   const [playing, setPlaying] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
+  const [titlePriority, setTitlePriority] = useState(title.priority ?? "low");
+  const [priorityBusy, setPriorityBusy] = useState(false);
   const [localRoots, setLocalRoots] = useState<{ id: string; path: string }[]>(
     [],
   );
@@ -143,20 +148,23 @@ export function TitleDetail({
     downloadId: string;
     label: string;
   } | null>(null);
-  const [chooseRoot, setChooseRoot] = useState<{
-    sourceId: string;
-    rootId: string;
-    label: string;
-    batchRequestId?: never;
-  } | {
-    sourceId?: never;
-    rootId: string;
-    label: string;
-    batchRequestId: number;
-  } | null>(null);
+  const [chooseRoot, setChooseRoot] = useState<
+    | {
+        sourceId: string;
+        rootId: string;
+        label: string;
+        batchRequestId?: never;
+      }
+    | {
+        sourceId?: never;
+        rootId: string;
+        label: string;
+        batchRequestId: number;
+      }
+    | null
+  >(null);
   const downloadDialogOpenRef = useRef(false);
-  downloadDialogOpenRef.current =
-    confirmDelete !== null || chooseRoot !== null;
+  downloadDialogOpenRef.current = confirmDelete !== null || chooseRoot !== null;
   const refreshedOfflineJobs = useRef(new Set<string>());
   const reportedOfflineFailures = useRef(new Set<string>());
   const startedOfflineJobs = useRef(new Set<string>());
@@ -292,8 +300,11 @@ export function TitleDetail({
     }
   }, [offlineJobs, showToast]);
   const [movieStatus, setMovieStatus] = useState<
-    "checking" | "ready" | "unavailable"
+    "checking" | "ready" | "unavailable" | "failed"
   >("checking");
+  const [episodeRetryStatuses, setEpisodeRetryStatuses] = useState<
+    Record<string, "checking" | "ready" | "unavailable" | "failed">
+  >({});
   const closeRef = useRef<HTMLButtonElement>(null);
   const backRef = useRef<HTMLButtonElement>(null);
   const dialogRef = useRef<HTMLElement>(null);
@@ -322,6 +333,7 @@ export function TitleDetail({
     setOpenSourceFor(null);
     setForceSearch(null);
     setEpisodeSearches({});
+    setEpisodeRetryStatuses({});
     const load = async () => {
       try {
         const result = await api.getTitleDetail(profileId, title.id);
@@ -390,6 +402,13 @@ export function TitleDetail({
 
   useEffect(() => {
     if (title.kind !== "movie" || !playbackEnabled) return;
+    if (
+      title.availability === "unavailable" ||
+      (title.availability === "unknown" && title.availabilityCheckedAt !== null)
+    ) {
+      setMovieStatus("unavailable");
+      return;
+    }
     let active = true;
     void api
       .checkPlayback(profileId, title.id)
@@ -402,7 +421,15 @@ export function TitleDetail({
     return () => {
       active = false;
     };
-  }, [api, playbackEnabled, profileId, title.id, title.kind]);
+  }, [
+    api,
+    playbackEnabled,
+    profileId,
+    title.availability,
+    title.availabilityCheckedAt,
+    title.id,
+    title.kind,
+  ]);
 
   useEffect(() => {
     if (suspended) return;
@@ -491,6 +518,9 @@ export function TitleDetail({
   }, [selectedEpisode, selectedSeason, detail?.series, suspended]);
 
   const current = detail?.title ?? title;
+  useEffect(() => {
+    setTitlePriority(current.priority ?? "low");
+  }, [current.id, current.priority]);
   const seasons = detail?.series?.seasons ?? [];
   const shownSeason =
     seasons.find((season) => season.seasonNumber === selectedSeason) ??
@@ -517,8 +547,16 @@ export function TitleDetail({
         )
     : null;
   const sourcesFor = (episode?: EpisodeSelection) =>
-    [...new Map([...(current.sources ?? []), ...(downloadManager?.details[current.id]?.title.sources ?? [])]
-      .map((source) => [source.id, source])).values()].filter((source) =>
+    [
+      ...new Map(
+        [
+          ...(current.sources ?? []),
+          ...(downloadManager?.details[current.id]?.title.sources ?? []).filter(
+            (source) => source.providerId !== "local-files",
+          ),
+        ].map((source) => [source.id, source]),
+      ).values(),
+    ].filter((source) =>
       episode
         ? source.seasonNumber === episode.seasonNumber &&
           source.episodeNumber === episode.episodeNumber
@@ -569,10 +607,7 @@ export function TitleDetail({
           : null,
     };
   };
-  const launchDownload = async (
-    sourceId: string,
-    rootId: string,
-  ) => {
+  const launchDownload = async (sourceId: string, rootId: string) => {
     setDownloadBusy(true);
     try {
       const job = await api.startOfflineDownload(
@@ -774,12 +809,13 @@ export function TitleDetail({
               const response = await api.getOfflineDownloads(profileId);
               knownJobs = response.items;
               setOfflineJobs(response.items);
-              job =
-                response.items.find((candidate) => candidate.id === job!.id) ?? {
-                  ...job,
-                  state: "failed",
-                  error: "Download job disappeared before it finished.",
-                };
+              job = response.items.find(
+                (candidate) => candidate.id === job!.id,
+              ) ?? {
+                ...job,
+                state: "failed",
+                error: "Download job disappeared before it finished.",
+              };
             } catch {
               job = {
                 ...job,
@@ -798,11 +834,7 @@ export function TitleDetail({
           refreshProgress();
         }
         const status =
-          failed === 0
-            ? "complete"
-            : completed > failed
-              ? "partial"
-              : "failed";
+          failed === 0 ? "complete" : completed > failed ? "partial" : "failed";
         const message =
           failed === 0
             ? `All ${episodes.length} available episodes are saved offline.`
@@ -849,7 +881,9 @@ export function TitleDetail({
     if (
       downloadManager ||
       activeSeriesDownloadRequestId <= 0 ||
-      handledSeriesDownloadRequests.current.has(activeSeriesDownloadRequestId) ||
+      handledSeriesDownloadRequests.current.has(
+        activeSeriesDownloadRequestId,
+      ) ||
       !detail ||
       !localRootsLoaded ||
       !offlineJobsLoaded
@@ -864,8 +898,9 @@ export function TitleDetail({
       setSeriesDownloadProgress({
         requestId: activeSeriesDownloadRequestId,
         status: "preparing",
-        total: episodes.filter((episode) => episode.availability === "available")
-          .length,
+        total: episodes.filter(
+          (episode) => episode.availability === "available",
+        ).length,
         completed: 0,
         failed: 0,
       });
@@ -917,7 +952,10 @@ export function TitleDetail({
       });
       return;
     }
-    void runSeriesDownloadBatch(activeSeriesDownloadRequestId, localRoots[0]!.id);
+    void runSeriesDownloadBatch(
+      activeSeriesDownloadRequestId,
+      localRoots[0]!.id,
+    );
   }, [
     current.title,
     detail,
@@ -936,7 +974,8 @@ export function TitleDetail({
     const state = downloadStateFor(episode, explicitSource);
     if (state.active) {
       try {
-        await api.cancelOfflineDownload(profileId, state.active.id);
+        if (downloadManager) await downloadManager.stopSource(state.active.id);
+        else await api.cancelOfflineDownload(profileId, state.active.id);
         void downloadManager?.refresh();
       } catch (reason) {
         showToast(safeErrorMessage(reason), "error");
@@ -1007,7 +1046,7 @@ export function TitleDetail({
       const remove = api.deleteOfflineDownload ?? api.cancelOfflineDownload;
       await remove(profileId, downloadId);
       setOfflineJobs((jobs) => jobs.filter((job) => job.id !== downloadId));
-      void downloadManager?.refresh();
+      if (downloadManager) setOfflineJobs(await downloadManager.refresh());
       onAdded();
       try {
         const updated = await api.getTitleDetail(profileId, title.id);
@@ -1034,8 +1073,14 @@ export function TitleDetail({
     ? episodeSearches[selectedEpisodeKey]
     : undefined;
   const episodePlayable =
-    episodeDetail?.availability === "available" ||
-    (selectedEpisode !== null && sourcesFor(selectedEpisode).length > 0);
+    selectedEpisodeKey !== null &&
+    (episodeRetryStatuses[selectedEpisodeKey] === "unavailable" ||
+      episodeRetryStatuses[selectedEpisodeKey] === "failed")
+      ? false
+      : (selectedEpisodeKey !== null &&
+          episodeRetryStatuses[selectedEpisodeKey] === "ready") ||
+        episodeDetail?.availability === "available" ||
+        (selectedEpisode !== null && sourcesFor(selectedEpisode).length > 0);
   const openEpisode = (episode: EpisodeSelection) => {
     navigationFocusRef.current = "back";
     setSelectedSeason(episode.seasonNumber);
@@ -1091,6 +1136,35 @@ export function TitleDetail({
       setAdding(false);
     }
   };
+  const togglePriority = async () => {
+    setPriorityBusy(true);
+    try {
+      const result = await api.toggleTitlePriority(profileId, current.id);
+      setTitlePriority(result.priority);
+      setDetail((value) =>
+        value
+          ? { ...value, title: { ...value.title, priority: result.priority } }
+          : value,
+      );
+      if (
+        result.priority === "high" &&
+        current.kind === "series" &&
+        current.seriesCoverage?.complete !== true &&
+        current.metadataProvider !== "local-files" &&
+        playbackEnabled
+      ) {
+        const refreshed = await api
+          .getTitleDetail(profileId, current.id)
+          .catch(() => undefined);
+        if (refreshed) setDetail(refreshed);
+      }
+      onPriorityChanged?.();
+    } catch {
+      showToast("Could not update title priority.", "error");
+    } finally {
+      setPriorityBusy(false);
+    }
+  };
   const searchAgain = async () => {
     if (forceSearch?.status === "searching") return;
     if (openSourceFor === "force") {
@@ -1122,6 +1196,42 @@ export function TitleDetail({
       const message = safeErrorMessage(searchError);
       setForceSearch({ status: "done", message });
       setError(message);
+    }
+  };
+  const retryMovie = async () => {
+    if (movieStatus === "checking") return;
+    setError("");
+    setMovieStatus("checking");
+    try {
+      const result = await retryPlaybackCheck(api, profileId, current);
+      if (result.detail) setDetail(result.detail);
+      setMovieStatus(result.ready ? "ready" : "unavailable");
+    } catch (retryError) {
+      setMovieStatus("failed");
+      setError(safeErrorMessage(retryError));
+    }
+  };
+  const retryEpisode = async (episode: EpisodeSelection) => {
+    const key = `${episode.seasonNumber}:${episode.episodeNumber}`;
+    if (episodeRetryStatuses[key] === "checking") return;
+    setError("");
+    setEpisodeRetryStatuses((statuses) => ({
+      ...statuses,
+      [key]: "checking",
+    }));
+    try {
+      const result = await retryPlaybackCheck(api, profileId, current, episode);
+      if (result.detail) setDetail(result.detail);
+      setEpisodeRetryStatuses((statuses) => ({
+        ...statuses,
+        [key]: result.ready ? "ready" : "unavailable",
+      }));
+    } catch (retryError) {
+      setEpisodeRetryStatuses((statuses) => ({
+        ...statuses,
+        [key]: "failed",
+      }));
+      setError(safeErrorMessage(retryError));
     }
   };
   const searchEpisode = async (episode: EpisodeSelection) => {
@@ -1158,6 +1268,20 @@ export function TitleDetail({
   };
 
   if (suspended) return null;
+
+  const priorityButton = (
+    <button
+      className={`title-card__priority title-detail__priority${titlePriority === "high" ? " is-high" : ""}`}
+      type="button"
+      aria-label={`${titlePriority === "high" ? "Remove high priority from" : "Set high priority for"} ${current.title}`}
+      aria-pressed={titlePriority === "high"}
+      title={titlePriority === "high" ? "High priority" : "Low priority"}
+      disabled={priorityBusy}
+      onClick={() => void togglePriority()}
+    >
+      <span aria-hidden="true">{titlePriority === "high" ? "★" : "☆"}</span>
+    </button>
+  );
 
   return (
     <div
@@ -1234,39 +1358,45 @@ export function TitleDetail({
                   : "Loading episode details…")
               : current.synopsis}
           </p>
-          {bulkProgress && bulkProgress.status !== "stopped" && bulkProgress.status !== "cancelled" && (
-            <div
-              className={`title-detail__series-download title-detail__series-download--${bulkProgress.status}`}
-              role="status"
-              aria-live="polite"
-            >
-              <span>
-                {bulkProgress.status === "preparing"
-                  ? `Preparing to download available episodes…`
-                  : bulkProgress.status === "confirming"
-                    ? "Confirm the series download to continue."
-                  : bulkProgress.status === "choosing-folder"
-                    ? "Choose a folder for the series download."
-                    : bulkProgress.status === "downloading"
-                      ? `Downloading ${bulkProgress.currentEpisode ? `S${String(bulkProgress.currentEpisode.seasonNumber).padStart(2, "0")}E${String(bulkProgress.currentEpisode.episodeNumber).padStart(2, "0")}` : "episodes"} · ${bulkProgress.completed} of ${bulkProgress.total}`
-                      : bulkProgress.status === "stopping" ? "Stopping download…"
-                      : bulkProgress.message ??
-                        (bulkProgress.status === "complete" ? "Available episodes saved." : "Some episodes could not be saved.")}
-              </span>
-              {(bulkProgress.status === "downloading" || bulkProgress.status === "stopping") && (
-                <span
-                  className="title-detail__series-download-progress"
-                  aria-hidden="true"
-                >
-                  <span
-                    style={{
-                      width: `${bulkView?.progress ?? (bulkProgress.total > 0 ? (bulkProgress.completed / bulkProgress.total) * 100 : 0)}%`,
-                    }}
-                  />
+          {bulkProgress &&
+            bulkProgress.status !== "stopped" &&
+            bulkProgress.status !== "cancelled" && (
+              <div
+                className={`title-detail__series-download title-detail__series-download--${bulkProgress.status}`}
+                role="status"
+                aria-live="polite"
+              >
+                <span>
+                  {bulkProgress.status === "preparing"
+                    ? `Preparing to download available episodes…`
+                    : bulkProgress.status === "confirming"
+                      ? "Confirm the series download to continue."
+                      : bulkProgress.status === "choosing-folder"
+                        ? "Choose a folder for the series download."
+                        : bulkProgress.status === "downloading"
+                          ? `Downloading ${bulkProgress.currentEpisode ? `S${String(bulkProgress.currentEpisode.seasonNumber).padStart(2, "0")}E${String(bulkProgress.currentEpisode.episodeNumber).padStart(2, "0")}` : "episodes"} · ${bulkProgress.completed} of ${bulkProgress.total}`
+                          : bulkProgress.status === "stopping"
+                            ? "Stopping download…"
+                            : (bulkProgress.message ??
+                              (bulkProgress.status === "complete"
+                                ? "Available episodes saved."
+                                : "Some episodes could not be saved."))}
                 </span>
-              )}
-            </div>
-          )}
+                {(bulkProgress.status === "downloading" ||
+                  bulkProgress.status === "stopping") && (
+                  <span
+                    className="title-detail__series-download-progress"
+                    aria-hidden="true"
+                  >
+                    <span
+                      style={{
+                        width: `${bulkView?.progress ?? (bulkProgress.total > 0 ? (bulkProgress.completed / bulkProgress.total) * 100 : 0)}%`,
+                      }}
+                    />
+                  </span>
+                )}
+              </div>
+            )}
           {!selectedEpisode && (
             <div className="title-detail__ratings">
               {current.ratings.map((rating) => (
@@ -1295,6 +1425,29 @@ export function TitleDetail({
                 )}
               </button>
             )}
+            {selectedEpisode &&
+              playbackEnabled &&
+              !episodePlayable &&
+              (episodeDetail?.availability === "unavailable" ||
+                (selectedEpisodeKey !== null &&
+                  (episodeRetryStatuses[selectedEpisodeKey] === "unavailable" ||
+                    episodeRetryStatuses[selectedEpisodeKey] ===
+                      "failed"))) && (
+                <button
+                  className="button button--secondary button--compact"
+                  type="button"
+                  disabled={
+                    selectedEpisodeKey !== null &&
+                    episodeRetryStatuses[selectedEpisodeKey] === "checking"
+                  }
+                  onClick={() => void retryEpisode(selectedEpisode)}
+                >
+                  {selectedEpisodeKey !== null &&
+                  episodeRetryStatuses[selectedEpisodeKey] === "checking"
+                    ? "Checking…"
+                    : "Try again"}
+                </button>
+              )}
             {selectedEpisode && (
               <>
                 <button
@@ -1324,8 +1477,10 @@ export function TitleDetail({
               <button
                 className={`button button--primary button--compact${movieStatus === "checking" ? " button--checking" : ""}${movieStatus === "ready" && playing === null ? " button--play-action" : ""}`}
                 type="button"
-                disabled={movieStatus !== "ready" || playing !== null}
-                onClick={() => void play()}
+                disabled={movieStatus === "checking" || playing !== null}
+                onClick={() =>
+                  movieStatus === "ready" ? void play() : void retryMovie()
+                }
               >
                 {movieStatus === "ready" ? (
                   playing === "movie" ? (
@@ -1344,7 +1499,7 @@ export function TitleDetail({
                 ) : movieStatus === "checking" ? (
                   "Checking"
                 ) : (
-                  "Currently unavailable"
+                  "Try again"
                 )}
               </button>
             )}
@@ -1443,10 +1598,12 @@ export function TitleDetail({
           </div>
           {current.kind === "series" && !selectedEpisode ? (
             <div className="title-detail__hero-download">
+              {priorityButton}
               <DownloadButton
                 multiFile
                 state={bulkView?.state ?? "idle"}
                 progress={bulkView?.progress ?? null}
+                preparing={bulkView?.entry?.status === "preparing"}
                 pending={bulkView?.entry?.status === "stopping"}
                 deletable={bulkView?.action === "delete"}
                 retry={bulkView?.action === "retry"}
@@ -1455,8 +1612,10 @@ export function TitleDetail({
                 onClick={requestWholeSeriesDownload}
               />
             </div>
-          ) : (current.kind === "movie" || selectedEpisode) && playbackEnabled ? (
+          ) : (current.kind === "movie" || selectedEpisode) &&
+            playbackEnabled ? (
             <div className="title-detail__hero-download">
+              {priorityButton}
               <DownloadButton
                 state={downloadStateFor(selectedEpisode ?? undefined).state}
                 deletable={Boolean(
@@ -1566,41 +1725,47 @@ export function TitleDetail({
           <div className="title-detail__body">
             <div className="title-detail__heading">
               <h3>Seasons & episodes</h3>
-              {shownSeason && downloadManager && <div className="title-detail__season-download">
-                <span>Season {shownSeason.seasonNumber}</span>
-                <DownloadButton
-                  compact
-                  multiFile
-                  state={seasonView?.state ?? "idle"}
-                  progress={seasonView?.progress ?? null}
-                  pending={seasonView?.entry?.status === "stopping"}
-                  deletable={seasonView?.action === "delete"}
-                  retry={seasonView?.action === "retry"}
-                  stopLabel="Stop"
-                  label={`Season ${shownSeason.seasonNumber} of ${current.title}`}
-                  onClick={() => downloadManager.activateBatch(current, shownSeason.seasonNumber)}
-                />
-              </div>}
-              {detail?.series?.status !== "complete" && (
+              {shownSeason && downloadManager && (
+                <div className="title-detail__season-download">
+                  <span>Season {shownSeason.seasonNumber}</span>
+                  <DownloadButton
+                    compact
+                    multiFile
+                    multiFileCount={2}
+                    state={seasonView?.state ?? "idle"}
+                    progress={seasonView?.progress ?? null}
+                    preparing={seasonView?.entry?.status === "preparing"}
+                    pending={seasonView?.entry?.status === "stopping"}
+                    deletable={seasonView?.action === "delete"}
+                    retry={seasonView?.action === "retry"}
+                    stopLabel="Stop"
+                    label={`Season ${shownSeason.seasonNumber} of ${current.title}`}
+                    onClick={() =>
+                      downloadManager.activateBatch(
+                        current,
+                        shownSeason.seasonNumber,
+                      )
+                    }
+                  />
+                </div>
+              )}
+              {detail?.series?.status !== "complete" &&
+                detail?.series?.status !== "searching" && (
                 <button
-                  className={`button button--secondary button--compact title-detail__find-episodes${detail?.series?.status === "searching" ? " is-searching" : ""}`}
+                  className="button button--secondary button--compact title-detail__find-episodes"
                   type="button"
-                  disabled={
-                    !playbackEnabled || detail?.series?.status === "searching"
-                  }
+                  disabled={!playbackEnabled}
                   onClick={() => {
                     setError("");
                     void api
                       .getTitleDetail(profileId, title.id, true)
                       .then(setDetail)
-                      .catch(() => setError("Episode search could not restart."));
+                      .catch(() =>
+                        setError("Episode search could not restart."),
+                      );
                   }}
                 >
-                  {detail?.series?.status === "searching" ? (
-                    <ComposingLabel />
-                  ) : (
-                    "Try to find more episodes"
-                  )}
+                  Try to find more episodes
                 </button>
               )}
             </div>
@@ -1620,11 +1785,8 @@ export function TitleDetail({
                   {seasons.map((season) => (
                     <button
                       key={season.seasonNumber}
-                      className={
-                        shownSeason?.seasonNumber === season.seasonNumber
-                          ? "is-active"
-                          : ""
-                      }
+                      className={`${shownSeason?.seasonNumber === season.seasonNumber ? "is-active" : ""}${season.episodes.length === 0 || season.episodes.some((episode) => episode.availability !== "available") ? " is-incomplete" : ""}`}
+                      title={season.episodes.length === 0 || season.episodes.some((episode) => episode.availability !== "available") ? "Some episodes are not available yet" : undefined}
                       type="button"
                       onClick={() => setSelectedSeason(season.seasonNumber)}
                     >
@@ -1640,10 +1802,21 @@ export function TitleDetail({
                     };
                     const key = `${episode.seasonNumber}:${episode.episodeNumber}`;
                     const search = episodeSearches[key];
+                    const retryStatus = episodeRetryStatuses[key];
+                    const availability =
+                      retryStatus === "ready"
+                        ? "available"
+                        : retryStatus === "unavailable"
+                          ? "unavailable"
+                          : retryStatus === "failed"
+                            ? "failed"
+                            : retryStatus === "checking"
+                              ? "searching"
+                              : episode.availability;
                     return (
                       <li
                         key={episode.episodeNumber}
-                        className={`title-detail__episode title-detail__episode--${episode.availability}`}
+                        className={`title-detail__episode title-detail__episode--${availability}`}
                       >
                         <div>
                           <strong>
@@ -1652,10 +1825,12 @@ export function TitleDetail({
                           {episode.airDate && <small>{episode.airDate}</small>}
                         </div>
                         <span>
-                          {episode.availability === "searching" ? (
+                          {availability === "searching" ? (
                             <ComposingDots />
-                          ) : episode.availability === "available" ? (
+                          ) : availability === "available" ? (
                             "Ready"
+                          ) : availability === "failed" ? (
+                            "Check failed"
                           ) : (
                             "Unavailable"
                           )}
@@ -1670,51 +1845,60 @@ export function TitleDetail({
                           >
                             Details
                           </button>
-                          {episode.availability === "available" &&
+                          {availability === "available" && playbackEnabled && (
+                            <button
+                              className={`button button--primary button--compact${playing === `${episode.seasonNumber}:${episode.episodeNumber}` ? "" : " button--play-action"}`}
+                              type="button"
+                              data-episode={`${episode.seasonNumber}:${episode.episodeNumber}`}
+                              disabled={playing !== null}
+                              onClick={() =>
+                                void play(
+                                  {
+                                    seasonNumber: episode.seasonNumber,
+                                    episodeNumber: episode.episodeNumber,
+                                  },
+                                  episode.title,
+                                )
+                              }
+                            >
+                              {playing ===
+                              `${episode.seasonNumber}:${episode.episodeNumber}` ? (
+                                "Starting…"
+                              ) : current.progressPercent !== null &&
+                                current.progressPercent >= 2 &&
+                                current.resumeEpisode?.seasonNumber ===
+                                  episode.seasonNumber &&
+                                current.resumeEpisode?.episodeNumber ===
+                                  episode.episodeNumber ? (
+                                <PlayActionContent label="Continue" />
+                              ) : (
+                                <PlayActionContent label="Play" />
+                              )}
+                            </button>
+                          )}
+                          {availability === "available" && playbackEnabled && (
+                            <DownloadButton
+                              compact
+                              state={downloadStateFor(selection).state}
+                              deletable={Boolean(
+                                downloadStateFor(selection).saved,
+                              )}
+                              progress={downloadStateFor(selection).progress}
+                              label={`${current.title} S${String(episode.seasonNumber).padStart(2, "0")}E${String(episode.episodeNumber).padStart(2, "0")}`}
+                              disabled={downloadBusy}
+                              onClick={() => void download(selection)}
+                            />
+                          )}
+                          {(availability === "unavailable" ||
+                            availability === "failed") &&
                             playbackEnabled && (
                               <button
-                                className={`button button--primary button--compact${playing === `${episode.seasonNumber}:${episode.episodeNumber}` ? "" : " button--play-action"}`}
+                                className="button button--secondary button--compact"
                                 type="button"
-                                data-episode={`${episode.seasonNumber}:${episode.episodeNumber}`}
-                                disabled={playing !== null}
-                                onClick={() =>
-                                  void play(
-                                    {
-                                      seasonNumber: episode.seasonNumber,
-                                      episodeNumber: episode.episodeNumber,
-                                    },
-                                    episode.title,
-                                  )
-                                }
+                                onClick={() => void retryEpisode(selection)}
                               >
-                                {playing ===
-                                `${episode.seasonNumber}:${episode.episodeNumber}` ? (
-                                  "Starting…"
-                                ) : current.progressPercent !== null &&
-                                  current.progressPercent >= 2 &&
-                                  current.resumeEpisode?.seasonNumber ===
-                                    episode.seasonNumber &&
-                                  current.resumeEpisode?.episodeNumber ===
-                                    episode.episodeNumber ? (
-                                  <PlayActionContent label="Continue" />
-                                ) : (
-                                  <PlayActionContent label="Play" />
-                                )}
+                                Try again
                               </button>
-                            )}
-                          {episode.availability === "available" &&
-                            playbackEnabled && (
-                              <DownloadButton
-                                compact
-                                state={downloadStateFor(selection).state}
-                                deletable={Boolean(
-                                  downloadStateFor(selection).saved,
-                                )}
-                                progress={downloadStateFor(selection).progress}
-                                label={`${current.title} S${String(episode.seasonNumber).padStart(2, "0")}E${String(episode.episodeNumber).padStart(2, "0")}`}
-                                disabled={downloadBusy}
-                                onClick={() => void download(selection)}
-                              />
                             )}
                           <button
                             className={`title-detail__force-search title-detail__episode-search${search?.status === "searching" ? " is-searching" : ""}`}

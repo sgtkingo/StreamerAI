@@ -54,6 +54,93 @@ const movie: CatalogTitle = {
 };
 
 describe("TitleCard sources", () => {
+  it("toggles the title's priority from the card", async () => {
+    const user = userEvent.setup();
+    const onPriority = vi.fn().mockResolvedValue("high");
+    render(
+      <TitleCard
+        item={movie}
+        preferences={DEFAULT_PLAYBACK_PREFERENCES}
+        playbackCheck={{ status: "ready" }}
+        onPlay={vi.fn()}
+        onPriority={onPriority}
+        onAdd={vi.fn()}
+      />,
+    );
+
+    const button = screen.getByRole("button", {
+      name: "Set high priority for Example",
+    });
+    await user.click(button);
+    expect(onPriority).toHaveBeenCalledWith(movie);
+    expect(
+      await screen.findByRole("button", {
+        name: "Remove high priority from Example",
+      }),
+    ).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("stops the searching animation when high priority is turned off", async () => {
+    const user = userEvent.setup();
+    const series: CatalogTitle = {
+      ...movie,
+      kind: "series",
+      priority: "high",
+      seriesSearchActive: true,
+      seriesCoverage: {
+        seasonsAvailable: 1,
+        seasonsTotal: 2,
+        episodesAvailable: 1,
+        episodesTotal: 3,
+        complete: false,
+        nextEpisodeLabel: "S01 E01",
+      },
+    };
+    const onPriority = vi.fn().mockResolvedValue("low");
+    const { container } = render(
+      <TitleCard
+        item={series}
+        preferences={DEFAULT_PLAYBACK_PREFERENCES}
+        playbackCheck={{ status: "ready" }}
+        onPlay={vi.fn()}
+        onPriority={onPriority}
+        onAdd={vi.fn()}
+      />,
+    );
+    const card = container.querySelector(".title-card")!;
+    expect(card).toHaveClass("title-card--searching");
+    await user.click(
+      screen.getByRole("button", { name: "Remove high priority from Example" }),
+    );
+    expect(card).not.toHaveClass("title-card--searching");
+    expect(
+      await screen.findByRole("button", {
+        name: "Set high priority for Example",
+      }),
+    ).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("offers a direct retry for an unavailable episode card", async () => {
+    const user = userEvent.setup();
+    const episode = { seasonNumber: 1, episodeNumber: 2 };
+    const series = { ...movie, kind: "series" as const };
+    const onRetry = vi.fn();
+    render(
+      <TitleCard
+        item={series}
+        episode={episode}
+        preferences={DEFAULT_PLAYBACK_PREFERENCES}
+        playbackCheck={{ status: "failed", message: "Unavailable" }}
+        onPlay={vi.fn()}
+        onRetry={onRetry}
+        onAdd={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    expect(onRetry).toHaveBeenCalledWith(series, episode);
+  });
+
   it("opens and plays the episode attached to a search result", async () => {
     const user = userEvent.setup();
     const episode = { seasonNumber: 1, episodeNumber: 5 };

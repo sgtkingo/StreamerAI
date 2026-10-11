@@ -75,14 +75,18 @@ export function AppShell({
   }, []);
   const openDetail = useCallback(
     (title: CatalogTitle, episode?: EpisodeSelection) => {
+      void api.recordTitleOpen?.(profileId, title.id).catch(() => undefined);
       setDetailTitle(title);
       setDetailEpisode(episode ?? null);
     },
-    [],
+    [api, profileId],
   );
-  const downloadSeries = useCallback((title: CatalogTitle) => {
-    downloads?.activateBatch(title);
-  }, [downloads]);
+  const downloadSeries = useCallback(
+    (title: CatalogTitle) => {
+      downloads?.activateBatch(title);
+    },
+    [downloads],
+  );
   useEffect(() => {
     if (downloads?.libraryRevision) setLibraryVersion((value) => value + 1);
   }, [downloads?.libraryRevision]);
@@ -301,6 +305,7 @@ export function AppShell({
           onOpenRelated={openDetail}
           onPlay={playFromDetail}
           onAdded={() => setLibraryVersion((value) => value + 1)}
+          onPriorityChanged={() => setLibraryVersion((value) => value + 1)}
         />
       )}
       {activePlayback && (

@@ -15,6 +15,21 @@ export function playableEpisodes(
     .sort((left, right) => order(left) - order(right));
 }
 
+/** Keep missing aired episodes in sequence so playback can retry their sources. */
+export function knownEpisodes(
+  episodes: readonly SeriesEpisodeDetail[],
+  today = new Date().toISOString().slice(0, 10),
+): SeriesEpisodeDetail[] {
+  return episodes
+    .filter(
+      (item) =>
+        item.availability === "available" ||
+        item.airDate === null ||
+        item.airDate <= today,
+    )
+    .sort((left, right) => order(left) - order(right));
+}
+
 export function adjacentEpisode(
   episodes: readonly SeriesEpisodeDetail[],
   current: EpisodeSelection | undefined,

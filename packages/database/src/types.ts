@@ -122,6 +122,7 @@ export type CanonicalTitleData = Omit<
   | "progressPercent"
   | "resumePositionSeconds"
   | "resumeEpisode"
+  | "priority"
 >;
 
 export interface CanonicalTitleRecord extends CanonicalTitleData {

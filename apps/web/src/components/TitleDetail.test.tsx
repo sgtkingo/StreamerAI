@@ -60,6 +60,196 @@ const title = {
 } satisfies CatalogTitle;
 
 describe("TitleDetail", () => {
+  it("shows the plain download icon in the episode list after deleting its offline copy", async () => {
+    const user = userEvent.setup();
+    let deleted = false;
+    const remote = {
+      id: "a".repeat(32),
+      providerId: "webshare" as const,
+      candidateId: "file-1",
+      releaseName: "Sample.Show.S01E01.mkv",
+      sizeBytes: 100,
+      format: title.formats[0]!,
+      seasonNumber: 1,
+      episodeNumber: 1,
+      checkedAt: "2026-09-29T20:00:00.000Z",
+    };
+    const local = { ...remote, id: "b".repeat(32), providerId: "local-files" as const };
+    const makeDetail = (): Detail => ({
+      title: { ...title, sources: deleted ? [remote] : [remote, local] },
+      related: [],
+      series: {
+        status: "complete",
+        seasons: [{
+          seasonNumber: 1,
+          title: "Season One",
+          episodes: [{
+            seasonNumber: 1,
+            episodeNumber: 1,
+            title: "Pilot",
+            airDate: null,
+            availability: "available",
+          }],
+        }],
+      },
+    });
+    const job = {
+      id: "job-1",
+      profileId: "default",
+      titleId: title.id,
+      sourceId: remote.id,
+      rootId: "root-1",
+      state: "complete" as const,
+      bytes: 100,
+      totalBytes: 100,
+      error: null,
+    };
+    const api = {
+      ...offlineApi,
+      getTitleDetail: vi.fn().mockImplementation(async () => makeDetail()),
+      getOfflineDownloads: vi.fn().mockImplementation(async () => ({ items: deleted ? [] : [job] })),
+      deleteOfflineDownload: vi.fn().mockImplementation(async () => { deleted = true; }),
+    } as unknown as StreamerApi;
+    render(<TitleDetail
+      api={api}
+      profileId="default"
+      title={title}
+      playbackEnabled
+      onClose={vi.fn()}
+      onOpenRelated={vi.fn()}
+      onPlay={vi.fn()}
+      onAdded={vi.fn()}
+    />);
+
+    await user.click(await screen.findByRole("button", { name: "Delete saved offline copy of Sample Show S01E01" }));
+    await user.click(screen.getByRole("button", { name: "Delete file" }));
+    const button = await screen.findByRole("button", { name: "Download Sample Show S01E01" });
+    expect(button).toHaveClass("download-button--idle");
+    expect(button.querySelector(".download-glyph__check")).toBeNull();
+  });
+
+  it("lets a movie retry a failed playback check from its detail", async () => {
+    const user = userEvent.setup();
+    const movie: CatalogTitle = {
+      ...title,
+      kind: "movie",
+      seriesCoverage: null,
+      availability: "unavailable",
+    };
+    const api = {
+      ...offlineApi,
+      getTitleDetail: vi.fn().mockResolvedValue({
+        title: movie,
+        related: [],
+        series: null,
+      }),
+      checkPlayback: vi.fn().mockResolvedValue({ ok: true }),
+      forceTitleSearch: vi.fn(),
+    } as unknown as StreamerApi;
+    render(
+      <TitleDetail
+        api={api}
+        profileId="default"
+        title={movie}
+        playbackEnabled
+        onClose={vi.fn()}
+        onOpenRelated={vi.fn()}
+        onPlay={vi.fn().mockResolvedValue(undefined)}
+        onAdded={vi.fn()}
+      />,
+    );
+
+    const dialog = await screen.findByRole("dialog", {
+      name: "Details for Sample Show",
+    });
+    expect(api.checkPlayback).not.toHaveBeenCalled();
+    await user.click(
+      await within(dialog).findByRole("button", { name: "Try again" }),
+    );
+    expect(api.forceTitleSearch).not.toHaveBeenCalled();
+    expect(
+      await within(dialog).findByRole("button", { name: "Play" }),
+    ).toBeEnabled();
+  });
+
+  it("retries an unavailable episode from the episode list", async () => {
+    const user = userEvent.setup();
+    const unavailable: Detail = {
+      title,
+      related: [],
+      series: {
+        status: "unavailable",
+        seasons: [
+          {
+            seasonNumber: 1,
+            title: "Season One",
+            episodes: [
+              {
+                seasonNumber: 1,
+                episodeNumber: 2,
+                title: "Next",
+                airDate: "2021-01-08",
+                availability: "unavailable",
+              },
+            ],
+          },
+        ],
+      },
+    };
+    const available: Detail = {
+      ...unavailable,
+      series: {
+        ...unavailable.series!,
+        status: "complete",
+        seasons: [
+          {
+            ...unavailable.series!.seasons[0]!,
+            episodes: [
+              {
+                ...unavailable.series!.seasons[0]!.episodes[0]!,
+                availability: "available",
+              },
+            ],
+          },
+        ],
+      },
+    };
+    const api = {
+      ...offlineApi,
+      getTitleDetail: vi.fn().mockResolvedValue(unavailable),
+      checkPlayback: vi
+        .fn()
+        .mockRejectedValueOnce(new Error("missing"))
+        .mockResolvedValueOnce({ ok: true }),
+      forceEpisodeSearch: vi
+        .fn()
+        .mockResolvedValue({ detail: available, sources: [{}] }),
+    } as unknown as StreamerApi;
+    render(
+      <TitleDetail
+        api={api}
+        profileId="default"
+        title={title}
+        playbackEnabled
+        onClose={vi.fn()}
+        onOpenRelated={vi.fn()}
+        onPlay={vi.fn().mockResolvedValue(undefined)}
+        onAdded={vi.fn()}
+      />,
+    );
+
+    const dialog = await screen.findByRole("dialog", {
+      name: "Details for Sample Show",
+    });
+    await user.click(within(dialog).getByRole("button", { name: "Try again" }));
+    expect(api.forceEpisodeSearch).toHaveBeenCalledWith("default", title.id, {
+      seasonNumber: 1,
+      episodeNumber: 2,
+    });
+    expect(api.checkPlayback).toHaveBeenCalledTimes(2);
+    expect(await within(dialog).findByText("Ready")).toBeInTheDocument();
+  });
+
   it("opens an episode detail with its database synopsis and navigates back", async () => {
     const user = userEvent.setup();
     const onPlay = vi.fn().mockResolvedValue(undefined);

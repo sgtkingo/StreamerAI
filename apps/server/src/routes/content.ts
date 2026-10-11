@@ -380,6 +380,42 @@ export function registerContentRoutes(
     },
   );
 
+  app.post(
+    "/api/v1/profiles/:profileId/titles/:titleId/open",
+    { schema: { params: titleParamsSchema } },
+    async (request, reply) => {
+      const { profileId, titleId } = request.params as {
+        profileId: string;
+        titleId: string;
+      };
+      try {
+        return {
+          priority: dependencies.core.recordTitleOpen(profileId, titleId),
+        };
+      } catch (error) {
+        return sendDomainError(reply, error);
+      }
+    },
+  );
+
+  app.post(
+    "/api/v1/profiles/:profileId/titles/:titleId/priority",
+    { schema: { params: titleParamsSchema } },
+    async (request, reply) => {
+      const { profileId, titleId } = request.params as {
+        profileId: string;
+        titleId: string;
+      };
+      try {
+        return {
+          priority: dependencies.core.toggleTitlePriority(profileId, titleId),
+        };
+      } catch (error) {
+        return sendDomainError(reply, error);
+      }
+    },
+  );
+
   app.get(
     "/api/v1/profiles/:profileId/titles/:titleId/preferred-source",
     {

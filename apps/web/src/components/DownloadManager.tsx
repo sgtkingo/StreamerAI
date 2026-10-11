@@ -17,6 +17,7 @@ import type { OfflineDownload, StreamerApi } from "../api/client";
 import { safeErrorMessage } from "../api/client";
 import { useToasts } from "./ToastProvider";
 import { formatDownloadSize } from "./download-size";
+import { refreshMissingEpisodesForDownload } from "./batch-availability";
 
 const downloadable = (source: TitleSource) =>
   source.providerId === "webshare" &&
@@ -216,41 +217,42 @@ export function DownloadProvider({
   const stopBatch = useCallback(
     (titleId: string, seasonNumber?: number) => {
       const key = batchKey(titleId, seasonNumber);
-      const run = runs.current.get(key);
-      if (run) {
+      const keys = seasonNumber === undefined
+        ? [...runs.current.keys()].filter((candidate) => candidate.startsWith(`${titleId}:`))
+        : [key];
+      for (const activeKey of keys) {
+        const run = runs.current.get(activeKey);
+        if (!run) continue;
         run.stopped = true;
-        updateBatch(key, { status: "stopping" });
-        if (run.currentJobId)
-          void api
-            .cancelOfflineDownload(profileId, run.currentJobId)
-            .then(() => refresh())
-            .catch((error) => showToast(safeErrorMessage(error), "error"));
-      } else {
-        const detail = details[titleId];
-        for (const job of jobsRef.current.filter((item) => {
-          if (item.titleId !== titleId || item.state !== "downloading")
-            return false;
-          if (seasonNumber === undefined) return true;
-          const source = detail?.title.sources?.find(
-            (candidate) => candidate.id === item.sourceId,
-          );
-          return source?.seasonNumber === seasonNumber;
-        }))
-          void api
-            .cancelOfflineDownload(profileId, job.id)
-            .then(() => refresh())
-            .catch((error) => showToast(safeErrorMessage(error), "error"));
-        updateBatch(key, { status: "stopped" });
+        updateBatch(activeKey, { status: "stopping" });
       }
-      if (folderPromptRef.current?.label === key) {
-        runs.current.delete(key);
+      if (keys.every((activeKey) => !runs.current.has(activeKey)))
         updateBatch(key, { status: "stopped" });
+      const sourceById = new Map(details[titleId]?.title.sources?.map((source) => [source.id, source]));
+      const currentJobIds = new Set(keys.map((activeKey) => runs.current.get(activeKey)?.currentJobId).filter((id): id is string => Boolean(id)));
+      const activeJobs = jobsRef.current.filter((job) =>
+        job.titleId === titleId &&
+        job.state === "downloading" &&
+        (seasonNumber === undefined ||
+          currentJobIds.has(job.id) ||
+          sourceById.get(job.sourceId)?.seasonNumber === seasonNumber),
+      );
+      for (const jobId of new Set([...currentJobIds, ...activeJobs.map((job) => job.id)]))
+        void api.cancelOfflineDownload(profileId, jobId)
+          .then(() => refresh())
+          .catch((error) => showToast(safeErrorMessage(error), "error"));
+      const stoppedKeys = new Set([...keys, key]);
+      if (folderPromptRef.current && stoppedKeys.has(folderPromptRef.current.label)) {
+        const promptKey = folderPromptRef.current.label;
+        runs.current.delete(promptKey);
+        updateBatch(promptKey, { status: "stopped" });
         folderPromptRef.current = null;
         setFolderPrompt(null);
       }
-      if (batchPromptRef.current?.key === key) {
-        runs.current.delete(key);
-        updateBatch(key, { status: "stopped" });
+      if (batchPromptRef.current && stoppedKeys.has(batchPromptRef.current.key)) {
+        const promptKey = batchPromptRef.current.key;
+        runs.current.delete(promptKey);
+        updateBatch(promptKey, { status: "stopped" });
         batchPromptRef.current = null;
         setBatchPrompt(null);
       }
@@ -379,6 +381,13 @@ export function DownloadProvider({
       };
       try {
         let detail = await api.getTitleDetail(profileId, title.id);
+        detail = await refreshMissingEpisodesForDownload(
+          api,
+          profileId,
+          detail,
+          seasonNumber,
+          () => run.stopped,
+        );
         setDetails((current) => ({ ...current, [title.id]: detail }));
         if (run.stopped) return finish("stopped");
         const episodes =
@@ -670,6 +679,12 @@ export function DownloadProvider({
 
   const stopSource = useCallback(
     async (jobId: string) => {
+      const batch = [...runs.current.entries()].find(([, run]) => run.currentJobId === jobId);
+      if (batch) {
+        const [key, run] = batch;
+        run.stopped = true;
+        updateBatch(key, { status: "stopping" });
+      }
       setStoppingJobIds((current) => current.includes(jobId) ? current : [...current, jobId]);
       try {
         await api.cancelOfflineDownload(profileId, jobId);
@@ -679,7 +694,7 @@ export function DownloadProvider({
         throw error;
       }
     },
-    [api, profileId, refresh],
+    [api, profileId, refresh, updateBatch],
   );
   const requestSource = useCallback(
     (title: CatalogTitle, source: TitleSource, replaceExisting = false) => {

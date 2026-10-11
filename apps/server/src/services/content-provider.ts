@@ -60,9 +60,11 @@ export interface StreamerContentProvider {
     profileId: string,
     title: CatalogTitle,
     retry?: boolean,
+    allowAutomaticSearch?: boolean,
   ): Promise<SeriesDetail>;
   isSeriesSearchActive?(titleId: string): boolean;
   activeSeriesSearchCount?(): number;
+  cancelSeriesSearch?(titleId: string): void;
   /** Explicit title-wide media recheck; automatic episode discovery remains independent. */
   forceSearchTitle?(
     profileId: string,

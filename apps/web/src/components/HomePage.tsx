@@ -121,6 +121,72 @@ export function HomePage({
     }
   }, [api, profileId]);
 
+  const togglePriority = useCallback(
+    async (item: CatalogTitle) => {
+      const { priority } = await api.toggleTitlePriority(profileId, item.id);
+      const startsSeriesSearch =
+        priority === "high" &&
+        item.kind === "series" &&
+        item.seriesCoverage?.complete !== true &&
+        item.metadataProvider !== "local-files" &&
+        (feed?.mode === "live" || result?.mode === "live");
+      let updatedTitle: CatalogTitle = { ...item, priority };
+      if (priority === "low") updatedTitle.seriesSearchActive = false;
+      if (startsSeriesSearch) {
+        const detail = await api
+          .getTitleDetail(profileId, item.id)
+          .catch(() => undefined);
+        updatedTitle = {
+          ...(detail?.title ?? updatedTitle),
+          priority,
+          seriesSearchActive: true,
+        };
+      }
+
+      setFeed((current) =>
+        current
+          ? {
+              ...current,
+              sections: current.sections.map((section) => ({
+                ...section,
+                items: section.items.map((candidate) =>
+                  candidate.id === item.id ? updatedTitle : candidate,
+                ),
+              })),
+            }
+          : current,
+      );
+      setResult((current) => {
+        if (!current) return current;
+        const updateTitle = (candidate: CatalogTitle) =>
+          candidate.id === item.id ? updatedTitle : candidate;
+        return {
+          ...current,
+          bestMatch: current.bestMatch
+            ? {
+                ...current.bestMatch,
+                title: updateTitle(current.bestMatch.title),
+              }
+            : null,
+          available: current.available.map((entry) => ({
+            ...entry,
+            title: updateTitle(entry.title),
+          })),
+          unavailable: current.unavailable.map((entry) => ({
+            ...entry,
+            title: updateTitle(entry.title),
+          })),
+          unverified: current.unverified.map((entry) => ({
+            ...entry,
+            title: updateTitle(entry.title),
+          })),
+        };
+      });
+      return priority;
+    },
+    [api, feed?.mode, profileId, result?.mode],
+  );
+
   useEffect(() => {
     void loadHome();
   }, [loadHome, version]);
@@ -907,6 +973,8 @@ export function HomePage({
               hero
               onPlay={play}
               onCheck={playbackChecks.check}
+              onRetry={playbackChecks.retry}
+              onPriority={togglePriority}
               playbackCheck={playbackChecks.stateFor(
                 displayGroups.bestMatch.title,
                 displayGroups.bestMatch.episode,
@@ -953,6 +1021,8 @@ export function HomePage({
                     reason={reason}
                     onPlay={play}
                     onCheck={playbackChecks.check}
+                    onRetry={playbackChecks.retry}
+                    onPriority={togglePriority}
                     playbackCheck={playbackChecks.stateFor(title, episode)}
                     onAdd={add}
                     playbackEnabled={resultMode === "live"}
@@ -1024,6 +1094,8 @@ export function HomePage({
                     onDownloadSeries={onDownloadSeries}
                     onPlay={play}
                     onCheck={playbackChecks.check}
+                    onRetry={playbackChecks.retry}
+                    onPriority={togglePriority}
                     playbackCheck={playbackChecks.stateFor(item)}
                     onAdd={add}
                     playbackEnabled={feed.mode === "live"}

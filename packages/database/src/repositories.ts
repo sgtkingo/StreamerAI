@@ -213,6 +213,7 @@ function validateCanonicalTitle(
     inLibrary: _inLibrary,
     matchPercent: _matchPercent,
     progressPercent: _progressPercent,
+    priority: _priority,
     ...data
   } = parsed;
   return data;

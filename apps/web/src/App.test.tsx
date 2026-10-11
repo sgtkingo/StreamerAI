@@ -164,6 +164,8 @@ function createApi(): StreamerApi {
       series: null,
       related: [],
     })),
+    recordTitleOpen: vi.fn().mockResolvedValue({ priority: "low" }),
+    toggleTitlePriority: vi.fn().mockResolvedValue({ priority: "high" }),
     forceTitleSearch: vi
       .fn()
       .mockResolvedValue({ detail: null, foundSources: 0 }),

@@ -248,6 +248,28 @@ function numberedSeriesStructure() {
 }
 
 describe("LiveContentCoordinator", () => {
+  it("retries a transient media search failure before declaring a miss", async () => {
+    const dependencies = coordinatorDependencies();
+    vi.mocked(dependencies.media.search).mockRejectedValueOnce(
+      new Error("temporary provider conflict"),
+    );
+    const coordinator = await seriesCoordinator(dependencies);
+
+    const response = await coordinator.discoverFast(
+      {
+        profileId: "default",
+        sessionId: "transient-search",
+        message: "Agent title one",
+        idempotencyKey: "transient-search-request",
+      },
+      NOW,
+    );
+    expect(
+      vi.mocked(dependencies.media.search).mock.calls.length,
+    ).toBeGreaterThan(1);
+    expect(response.bestMatch?.title.sources?.length).toBeGreaterThan(0);
+  });
+
   it("keeps mirrors from different media connectors and falls back across them", async () => {
     const dependencies = coordinatorDependencies();
     dependencies.media.descriptor = () =>
@@ -1105,6 +1127,7 @@ describe("LiveContentCoordinator", () => {
   });
 
   it("fills an episode guide in the background while an already verified episode stays playable", async () => {
+    const saveEpisodeCandidate = vi.fn();
     const preview = new PreviewContentProvider()
       .bootstrapTitles()
       .find((item) => item.kind === "series")!;
@@ -1199,6 +1222,7 @@ describe("LiveContentCoordinator", () => {
         timeoutMs: 60_000,
       },
       localeForProfile: () => "en",
+      saveEpisodeCandidate,
       now: () => new Date(NOW),
     });
     await coordinator.getSeriesDetail("default", title);
@@ -1218,6 +1242,11 @@ describe("LiveContentCoordinator", () => {
       }),
       expect.anything(),
     );
+    expect(saveEpisodeCandidate).toHaveBeenCalledWith(
+      title.id,
+      { seasonNumber: 1, episodeNumber: 1 },
+      { providerId: "webshare", candidateId: "episode-1" },
+    );
     await coordinator.preparePlayback("default", title, {
       seasonNumber: 1,
       episodeNumber: 1,
@@ -1228,12 +1257,60 @@ describe("LiveContentCoordinator", () => {
       }),
       expect.anything(),
     );
+    coordinator.cancelSeriesSearch(title.id);
+    expect(coordinator.isSeriesSearchActive(title.id)).toBe(false);
     releaseSecond([second]);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    await vi.waitFor(async () => {
+      const detail = await coordinator.getSeriesDetail("default", title);
+      expect(detail.status).toBe("partial");
+      expect(detail.seasons[0]?.episodes[1]?.availability).toBe("unavailable");
+    });
+    expect(saveEpisodeCandidate).not.toHaveBeenCalledWith(
+      title.id,
+      { seasonNumber: 1, episodeNumber: 2 },
+      { providerId: "webshare", candidateId: "episode-2" },
+    );
+    await coordinator.getSeriesDetail("default", title, true);
     await vi.waitFor(async () => {
       expect((await coordinator.getSeriesDetail("default", title)).status).toBe(
         "complete",
       );
     });
+    const searchesBeforeRestart = vi.mocked(media.search).mock.calls.length;
+    const restored = new LiveContentCoordinator({
+      agent: {} as AgentProvider,
+      metadata,
+      media,
+      integrationStateStore: await connectedStateStore(),
+      inference: {
+        provider: "ollama",
+        baseUrl: "http://127.0.0.1:11434",
+        model: "qwen3.5:4b",
+        minimumVersion: "0.5.0",
+        contextTokens: 4096,
+        maxOutputTokens: 512,
+        timeoutMs: 60_000,
+      },
+      localeForProfile: () => "en",
+      loadEpisodeCandidates: () =>
+        saveEpisodeCandidate.mock.calls.map(([, episode, ref]) => ({
+          episode,
+          ref,
+        })),
+      now: () => new Date(NOW),
+    });
+    const afterRestart = await restored.getSeriesDetail(
+      "default",
+      title,
+      false,
+      false,
+    );
+    expect(afterRestart.status).toBe("complete");
+    expect(
+      afterRestart.seasons[0]?.episodes.map((episode) => episode.availability),
+    ).toEqual(["available", "available"]);
+    expect(media.search).toHaveBeenCalledTimes(searchesBeforeRestart);
   });
   it("finds a mystery from catalog genres without asking the 4B model to invent titles", async () => {
     const dependencies = coordinatorDependencies();

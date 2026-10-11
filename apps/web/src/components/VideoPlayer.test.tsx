@@ -917,7 +917,10 @@ describe("VideoPlayer output and episode flow", () => {
     const onPlayEpisode = vi.fn().mockResolvedValue(undefined);
     render(
       <VideoPlayer
-        api={api({ getTitleDetail })}
+        api={api({
+          getTitleDetail,
+          checkPlayback: vi.fn().mockResolvedValue({}),
+        })}
         profileId="default"
         title={seriesTitle}
         grant={{ ...grant, titleId: seriesTitle.id }}
@@ -936,14 +939,144 @@ describe("VideoPlayer output and episode flow", () => {
       await Promise.resolve();
     });
     expect(screen.getByText("Starting in 5 seconds")).toBeInTheDocument();
+    const fill = screen
+      .getByRole("button", { name: "Play now" })
+      .querySelector(".video-player__next-play-progress");
+    expect(fill).toBeInTheDocument();
     for (let second = 0; second < 5; second += 1) {
       await act(async () => {
         await vi.advanceTimersByTimeAsync(1000);
       });
+      if (second === 0) {
+        expect(screen.getByText("Starting in 4 seconds")).toBeInTheDocument();
+        expect(
+          screen
+            .getByRole("button", { name: "Play now" })
+            .querySelector(".video-player__next-play-progress"),
+        ).toBe(fill);
+      }
     }
     expect(onPlayEpisode).toHaveBeenCalledWith(
       { seasonNumber: 1, episodeNumber: 2 },
       "Second story",
+    );
+  });
+
+  it("requests the missing next episode before a later available episode", async () => {
+    const seriesTitle: CatalogTitle = {
+      ...baseTitle,
+      id: "sai:tmdb:series:42",
+      kind: "series",
+      availability: "partial",
+    };
+    const episodes: SeriesEpisodeDetail[] = [
+      {
+        seasonNumber: 1,
+        episodeNumber: 1,
+        title: "Pilot",
+        airDate: null,
+        availability: "available",
+      },
+      {
+        seasonNumber: 1,
+        episodeNumber: 2,
+        title: "Missing",
+        airDate: null,
+        availability: "unavailable",
+      },
+      {
+        seasonNumber: 1,
+        episodeNumber: 3,
+        title: "Later",
+        airDate: null,
+        availability: "available",
+      },
+    ];
+    const onPlayEpisode = vi.fn().mockResolvedValue(undefined);
+    let finishMissingCheck!: () => void;
+    const missingCheck = new Promise<void>((resolve) => {
+      finishMissingCheck = resolve;
+    });
+    const checkPlayback = vi
+      .fn()
+      .mockImplementation(
+        async (
+          _profileId: string,
+          _titleId: string,
+          selection: { episodeNumber: number },
+        ) => {
+          if (selection.episodeNumber === 2) {
+            await missingCheck;
+            throw new Error("Unavailable");
+          }
+          return {};
+        },
+      );
+    const forceEpisodeSearch = vi.fn().mockResolvedValue({ sources: [] });
+    render(
+      <VideoPlayer
+        api={api({
+          getTitleDetail: vi.fn().mockResolvedValue({
+            title: seriesTitle,
+            series: {
+              status: "partial",
+              seasons: [{ seasonNumber: 1, title: null, episodes }],
+            },
+            related: [],
+          }),
+          checkPlayback,
+          forceEpisodeSearch,
+        })}
+        profileId="default"
+        title={seriesTitle}
+        grant={{ ...grant, titleId: seriesTitle.id }}
+        episode={{ seasonNumber: 1, episodeNumber: 1 }}
+        preferences={DEFAULT_PLAYBACK_PREFERENCES}
+        onPlayEpisode={onPlayEpisode}
+        onClose={vi.fn()}
+      />,
+    );
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Play next episode, season 1, episode 2",
+      }),
+    );
+    const nextDialog = await screen.findByRole("group", {
+      name: "Next episode",
+    });
+    expect(nextDialog).toHaveTextContent("S01E02 · Missing");
+    expect(nextDialog).toHaveTextContent("Checking episode availability");
+    const checkingButton = screen.getByRole("button", {
+      name: "Checking next episode",
+    });
+    expect(checkingButton).toBeDisabled();
+    expect(
+      checkingButton.querySelectorAll(".video-player__next-check-dots i"),
+    ).toHaveLength(3);
+    expect(onPlayEpisode).not.toHaveBeenCalled();
+    await act(async () => finishMissingCheck());
+    expect(
+      await screen.findByText("Starting in 5 seconds"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/S01E02 could not be played and will be skipped/),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Next episode" })).toBe(
+      nextDialog,
+    );
+    const playNow = screen.getByRole("button", { name: "Play now" });
+    expect(playNow).toBeEnabled();
+    expect(
+      playNow.querySelector(".video-player__next-play-progress"),
+    ).toBeInTheDocument();
+    expect(forceEpisodeSearch).toHaveBeenCalledWith("default", seriesTitle.id, {
+      seasonNumber: 1,
+      episodeNumber: 2,
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Play now" }));
+    expect(onPlayEpisode).toHaveBeenCalledWith(
+      { seasonNumber: 1, episodeNumber: 3 },
+      "Later",
     );
   });
 });

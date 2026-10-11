@@ -1,5 +1,5 @@
 import Fastify, { type FastifyBaseLogger, type FastifyInstance } from "fastify";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import {
@@ -7,6 +7,8 @@ import {
   type StreamerDatabase,
 } from "@streamer-ai/database";
 import type {
+  EpisodeSelection,
+  MediaCandidateRef,
   MediaProvider,
   MetadataProvider,
   ProviderRegistry,
@@ -255,6 +257,31 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
       );
     providerIds.add(descriptor.id);
   }
+  type SavedEpisodeCandidate = {
+    episode: EpisodeSelection;
+    ref: MediaCandidateRef;
+  };
+  const episodeCandidateKey = (titleId: string) =>
+    `series-candidates:${createHash("sha256").update(titleId).digest("hex")}`;
+  const loadEpisodeCandidates = (titleId: string): SavedEpisodeCandidate[] =>
+    database.settings.get<SavedEpisodeCandidate[]>(episodeCandidateKey(titleId)) ?? [];
+  const saveEpisodeCandidate = (
+    titleId: string,
+    episode: EpisodeSelection,
+    ref: MediaCandidateRef,
+  ) => {
+    const known = loadEpisodeCandidates(titleId);
+    if (known.some((item) =>
+      item.episode.seasonNumber === episode.seasonNumber &&
+      item.episode.episodeNumber === episode.episodeNumber &&
+      item.ref.providerId === ref.providerId &&
+      item.ref.candidateId === ref.candidateId
+    )) return;
+    database.settings.set(
+      episodeCandidateKey(titleId),
+      [...known, { episode, ref }].slice(-1_000),
+    );
+  };
   const contentProvider =
     options.contentProvider ??
     (environment === "production"
@@ -269,10 +296,19 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
           inferenceForProfile: configForProfile,
           localeForProfile: (profileId) =>
             database.profiles.get(profileId)?.locale ?? "en",
+          loadEpisodeCandidates,
+          saveEpisodeCandidate,
           now,
         })
       : undefined);
   const core = new StreamerCore(database, now, contentProvider);
+  const availabilityTimer =
+    environment === "test"
+      ? null
+      : setInterval(() => {
+          void core.runScheduledAvailabilityChecks();
+        }, 60_000);
+  availabilityTimer?.unref();
   const app =
     options.logger === false
       ? Fastify({ logger: false, bodyLimit: 64 * 1024 })
@@ -460,6 +496,7 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
   });
 
   app.addHook("onClose", async () => {
+    if (availabilityTimer) clearInterval(availabilityTimer);
     await offlineDownloads.close();
     await localMediaLibrary.close();
   });

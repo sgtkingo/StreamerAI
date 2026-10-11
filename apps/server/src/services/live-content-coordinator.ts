@@ -113,6 +113,7 @@ interface SeriesSearchJob {
   failed: boolean;
   finished: boolean;
   lastAttemptAt?: number;
+  controller?: AbortController;
 }
 
 function episodeKey(titleId: string, episode: EpisodeSelection): string {
@@ -132,6 +133,15 @@ export interface LiveContentCoordinatorOptions {
   inference: RuntimeConfig["inference"];
   inferenceForProfile?: (profileId: string) => RuntimeConfig["inference"];
   localeForProfile: (profileId: string) => "cs" | "en" | "de";
+  loadEpisodeCandidates?: (titleId: string) => Array<{
+    episode: EpisodeSelection;
+    ref: MediaCandidateRef;
+  }>;
+  saveEpisodeCandidate?: (
+    titleId: string,
+    episode: EpisodeSelection,
+    ref: MediaCandidateRef,
+  ) => void;
   now?: () => Date;
 }
 
@@ -700,6 +710,12 @@ export class LiveContentCoordinator implements StreamerContentProvider {
   ) => RuntimeConfig["inference"];
   readonly #localeForProfile: LiveContentCoordinatorOptions["localeForProfile"];
   readonly #now: () => Date;
+  readonly #loadEpisodeCandidates: NonNullable<
+    LiveContentCoordinatorOptions["loadEpisodeCandidates"]
+  >;
+  readonly #saveEpisodeCandidate: NonNullable<
+    LiveContentCoordinatorOptions["saveEpisodeCandidate"]
+  >;
   readonly #playbackCandidates = new Map<string, MediaCandidateRef[]>();
   readonly #seriesJobs = new Map<string, SeriesSearchJob>();
   readonly #manualSeriesSearches = new Set<string>();
@@ -715,6 +731,9 @@ export class LiveContentCoordinator implements StreamerContentProvider {
     this.#inferenceForProfile =
       options.inferenceForProfile ?? (() => this.#inference);
     this.#localeForProfile = options.localeForProfile;
+    this.#loadEpisodeCandidates = options.loadEpisodeCandidates ?? (() => []);
+    this.#saveEpisodeCandidate =
+      options.saveEpisodeCandidate ?? (() => undefined);
     this.#now = options.now ?? (() => new Date());
   }
 
@@ -862,9 +881,10 @@ export class LiveContentCoordinator implements StreamerContentProvider {
       ];
     });
     const policy = discoveryInstructionPolicy({
-      model: this.#inferenceForProfile((context.profileId ?? "default")).model,
-      contextTokens: this.#inferenceForProfile((context.profileId ?? "default")).contextTokens,
-      maxOutputTokens: this.#inferenceForProfile((context.profileId ?? "default"))
+      model: this.#inferenceForProfile(context.profileId ?? "default").model,
+      contextTokens: this.#inferenceForProfile(context.profileId ?? "default")
+        .contextTokens,
+      maxOutputTokens: this.#inferenceForProfile(context.profileId ?? "default")
         .maxOutputTokens,
       locale,
     });
@@ -877,8 +897,9 @@ export class LiveContentCoordinator implements StreamerContentProvider {
     // Roughly three characters per token leaves room for schema and output.
     const inputBudget = Math.max(
       400,
-      (this.#inferenceForProfile((context.profileId ?? "default")).contextTokens -
-        this.#inferenceForProfile((context.profileId ?? "default")).maxOutputTokens -
+      (this.#inferenceForProfile(context.profileId ?? "default").contextTokens -
+        this.#inferenceForProfile(context.profileId ?? "default")
+          .maxOutputTokens -
         400) *
         3,
     );
@@ -934,14 +955,15 @@ export class LiveContentCoordinator implements StreamerContentProvider {
     ];
     const generation = await this.#agent.generateStructured<unknown>(
       {
-        model: this.#inferenceForProfile((context.profileId ?? "default")).model,
+        model: this.#inferenceForProfile(context.profileId ?? "default").model,
         messages: agentMessages,
         outputSchemaName: "streamer_ai_discovery_candidates",
         outputJsonSchema: AGENT_SCHEMA,
         allowedToolNames: [],
         temperature: policy.temperature,
-        maxOutputTokens: this.#inferenceForProfile((context.profileId ?? "default"))
-          .maxOutputTokens,
+        maxOutputTokens: this.#inferenceForProfile(
+          context.profileId ?? "default",
+        ).maxOutputTokens,
       },
       context,
     );
@@ -988,7 +1010,8 @@ export class LiveContentCoordinator implements StreamerContentProvider {
       try {
         const retry = await this.#agent.generateStructured<unknown>(
           {
-            model: this.#inferenceForProfile((context.profileId ?? "default")).model,
+            model: this.#inferenceForProfile(context.profileId ?? "default")
+              .model,
             messages: [
               ...agentMessages.slice(0, -1),
               {
@@ -1003,8 +1026,9 @@ export class LiveContentCoordinator implements StreamerContentProvider {
             outputJsonSchema: AGENT_SCHEMA,
             allowedToolNames: [],
             temperature: policy.retryTemperature,
-            maxOutputTokens: this.#inferenceForProfile((context.profileId ?? "default"))
-              .maxOutputTokens,
+            maxOutputTokens: this.#inferenceForProfile(
+              context.profileId ?? "default",
+            ).maxOutputTokens,
           },
           context,
         );
@@ -1259,9 +1283,10 @@ export class LiveContentCoordinator implements StreamerContentProvider {
     conversation?: DiscoveryConversationContext,
   ): Promise<ValidatedCandidate[]> {
     const policy = discoveryInstructionPolicy({
-      model: this.#inferenceForProfile((context.profileId ?? "default")).model,
-      contextTokens: this.#inferenceForProfile((context.profileId ?? "default")).contextTokens,
-      maxOutputTokens: this.#inferenceForProfile((context.profileId ?? "default"))
+      model: this.#inferenceForProfile(context.profileId ?? "default").model,
+      contextTokens: this.#inferenceForProfile(context.profileId ?? "default")
+        .contextTokens,
+      maxOutputTokens: this.#inferenceForProfile(context.profileId ?? "default")
         .maxOutputTokens,
       locale: this.#localeForProfile(request.profileId),
     });
@@ -1291,7 +1316,8 @@ export class LiveContentCoordinator implements StreamerContentProvider {
     try {
       const result = await this.#agent.generateStructured<unknown>(
         {
-          model: this.#inferenceForProfile((context.profileId ?? "default")).model,
+          model: this.#inferenceForProfile(context.profileId ?? "default")
+            .model,
           messages: [
             {
               role: "system",
@@ -1324,7 +1350,8 @@ export class LiveContentCoordinator implements StreamerContentProvider {
           allowedToolNames: [],
           temperature: 0.15,
           maxOutputTokens: Math.min(
-            this.#inferenceForProfile((context.profileId ?? "default")).maxOutputTokens,
+            this.#inferenceForProfile(context.profileId ?? "default")
+              .maxOutputTokens,
             160,
           ),
         },
@@ -1385,7 +1412,10 @@ export class LiveContentCoordinator implements StreamerContentProvider {
       !directEpisode &&
       thematicIntent &&
       (
-        await this.activeProviders(this.#metadataProviders, (context.profileId ?? "default"))
+        await this.activeProviders(
+          this.#metadataProviders,
+          context.profileId ?? "default",
+        )
       ).some(([, provider]) => typeof provider.discover === "function")
     ) {
       // The full pass will search by genre. A title-text search and unrelated
@@ -1669,6 +1699,7 @@ export class LiveContentCoordinator implements StreamerContentProvider {
     profileId: string,
     title: CatalogTitle,
     retry = false,
+    allowAutomaticSearch = true,
   ): Promise<SeriesDetail> {
     if (title.metadataProvider === "local-files") {
       const seasons = new Map<number, Map<number, string>>();
@@ -1717,6 +1748,18 @@ export class LiveContentCoordinator implements StreamerContentProvider {
           { providerId: source.providerId, candidateId: source.candidateId },
         ]);
       }
+      for (const { episode, ref } of this.#loadEpisodeCandidates(title.id)) {
+        const key = episodeKey(title.id, episode);
+        const known = storedCandidates.get(key) ?? [];
+        if (
+          !known.some(
+            (candidate) =>
+              candidate.providerId === ref.providerId &&
+              candidate.candidateId === ref.candidateId,
+          )
+        )
+          storedCandidates.set(key, [...known, ref]);
+      }
       job = {
         candidates: storedCandidates,
         running: false,
@@ -1724,6 +1767,24 @@ export class LiveContentCoordinator implements StreamerContentProvider {
         finished: false,
       };
       this.#seriesJobs.set(title.id, job);
+    }
+    if (!allowAutomaticSearch && !retry && !job.structure) {
+      const ref = titleMetadataRef(title);
+      if (ref) {
+        try {
+          job.structure = await this.metadataProvider(
+            ref.providerId,
+          ).getSeriesStructure(
+            ref,
+            this.scopedContext(
+              ref.providerId,
+              this.playbackContext(profileId, title),
+            ),
+          );
+        } catch {
+          job.failed = true;
+        }
+      }
     }
     const now = this.#now().getTime();
     const allEpisodesFound =
@@ -1748,23 +1809,35 @@ export class LiveContentCoordinator implements StreamerContentProvider {
     const stale =
       job.lastAttemptAt === undefined ||
       now - job.lastAttemptAt >= refreshAfter;
-    if (!job.running && (retry || stale || (!job.finished && !job.failed))) {
+    if (
+      !job.running &&
+      (retry ||
+        (allowAutomaticSearch && (stale || (!job.finished && !job.failed))))
+    ) {
       const refreshStructure =
         job.structure === undefined || retry || job.lastAttemptAt !== undefined;
       job.running = true;
       job.failed = false;
       job.finished = false;
       job.lastAttemptAt = now;
+      const controller = new AbortController();
+      job.controller = controller;
       void this.searchSeriesEpisodes(
         profileId,
         title,
         job,
         refreshStructure,
-      ).catch(() => {
-        job.failed = true;
-        job.running = false;
-        job.lastAttemptAt = this.#now().getTime();
-      });
+        controller.signal,
+      )
+        .catch(() => {
+          if (job.controller !== controller) return;
+          job.failed = true;
+          job.running = false;
+          job.lastAttemptAt = this.#now().getTime();
+        })
+        .finally(() => {
+          if (job.controller === controller) job.controller = undefined;
+        });
     }
     const seasons =
       job.structure?.seasons.map((season) => ({
@@ -1823,6 +1896,18 @@ export class LiveContentCoordinator implements StreamerContentProvider {
       if (job.running) activeIds.add(titleId);
     }
     return activeIds.size;
+  }
+
+  cancelSeriesSearch(titleId: string): void {
+    const job = this.#seriesJobs.get(titleId);
+    if (!job?.running) return;
+    const controller = job.controller;
+    job.controller = undefined;
+    job.running = false;
+    job.failed = false;
+    job.finished = true;
+    job.lastAttemptAt = this.#now().getTime();
+    controller?.abort();
   }
 
   async forceSearchTitle(
@@ -2013,25 +2098,29 @@ export class LiveContentCoordinator implements StreamerContentProvider {
     title: CatalogTitle,
     job: SeriesSearchJob,
     refreshStructure = false,
+    signal?: AbortSignal,
   ): Promise<void> {
-    const context = this.playbackContext(profileId, title);
+    const context = { ...this.playbackContext(profileId, title), signal };
     let hadErrors = false;
     if (!job.structure || refreshStructure) {
       const ref = titleMetadataRef(title);
       if (!ref) throw new Error("Series metadata reference is unavailable.");
-      job.structure = await this.metadataProvider(
+      const structure = await this.metadataProvider(
         ref.providerId,
       ).getSeriesStructure(ref, this.scopedContext(ref.providerId, context));
+      signal?.throwIfAborted();
+      job.structure = structure;
     }
     for (const season of job.structure.seasons) {
       for (const episode of season.episodes) {
+        signal?.throwIfAborted();
         const selection = {
           seasonNumber: season.seasonNumber,
           episodeNumber: episode.episodeNumber,
         };
         const key = episodeKey(title.id, selection);
         if (
-          (job.candidates.get(key)?.length ?? 0) >= 8 ||
+          (job.candidates.get(key)?.length ?? 0) > 0 ||
           (episode.airDate &&
             episode.airDate > this.#now().toISOString().slice(0, 10))
         )
@@ -2057,6 +2146,7 @@ export class LiveContentCoordinator implements StreamerContentProvider {
           selection,
           job.structure,
         )) {
+          signal?.throwIfAborted();
           let results: MediaCandidate[];
           try {
             const searched = await this.searchMedia(
@@ -2074,13 +2164,16 @@ export class LiveContentCoordinator implements StreamerContentProvider {
               },
               episodeContext,
             );
+            signal?.throwIfAborted();
             results = searched.candidates;
             if (!searched.allSucceeded) searchFailed = true;
           } catch {
+            signal?.throwIfAborted();
             searchFailed = true;
             continue;
           }
           for (const candidate of results) {
+            signal?.throwIfAborted();
             if (found.length >= 8) break;
             const parsed = episodeNumber(
               candidate.releaseName,
@@ -2107,9 +2200,16 @@ export class LiveContentCoordinator implements StreamerContentProvider {
                 candidate.ref,
                 this.scopedContext(candidate.ref.providerId, episodeContext),
               );
+              signal?.throwIfAborted();
               found.push(candidate.ref);
               job.candidates.set(key, [...found]);
+              try {
+                this.#saveEpisodeCandidate(title.id, selection, candidate.ref);
+              } catch {
+                // Search results remain usable if persistence is temporarily busy.
+              }
             } catch {
+              signal?.throwIfAborted();
               // Restricted or non-video files are never displayed as playable.
             }
           }
@@ -2121,6 +2221,7 @@ export class LiveContentCoordinator implements StreamerContentProvider {
         if (found.length === 0 && searchFailed) hadErrors = true;
       }
     }
+    signal?.throwIfAborted();
     job.running = false;
     job.finished = !hadErrors;
     job.failed = hadErrors;
@@ -2376,7 +2477,7 @@ export class LiveContentCoordinator implements StreamerContentProvider {
   private scopedContext(id: string, context: ProviderContext): ProviderContext {
     return {
       ...context,
-      secretRef: this.#secretRefForProvider(id, (context.profileId ?? "default")),
+      secretRef: this.#secretRefForProvider(id, context.profileId ?? "default"),
     };
   }
 
@@ -2392,7 +2493,7 @@ export class LiveContentCoordinator implements StreamerContentProvider {
   ): Promise<MetadataCandidate[]> {
     const providers = await this.activeProviders(
       this.#metadataProviders,
-      (context.profileId ?? "default"),
+      context.profileId ?? "default",
     );
     if (providers.length === 0)
       throw new Error("No metadata provider is connected.");
@@ -2435,7 +2536,7 @@ export class LiveContentCoordinator implements StreamerContentProvider {
   ): Promise<MetadataCandidate[]> {
     const providers = await this.activeProviders(
       this.#metadataProviders,
-      (context.profileId ?? "default"),
+      context.profileId ?? "default",
     );
     if (providers.length === 0)
       throw new Error("No metadata provider is connected.");
@@ -2471,7 +2572,10 @@ export class LiveContentCoordinator implements StreamerContentProvider {
     context: ProviderContext,
   ): Promise<MetadataCandidate[] | null> {
     const providers = (
-      await this.activeProviders(this.#metadataProviders, (context.profileId ?? "default"))
+      await this.activeProviders(
+        this.#metadataProviders,
+        context.profileId ?? "default",
+      )
     ).filter(([, provider]) => typeof provider.discover === "function");
     if (providers.length === 0) return null;
     const kinds = intent.kind ? [intent.kind] : (["movie", "series"] as const);
@@ -2537,14 +2641,27 @@ export class LiveContentCoordinator implements StreamerContentProvider {
   ): Promise<{ candidates: MediaCandidate[]; allSucceeded: boolean }> {
     const providers = await this.activeProviders(
       this.#mediaProviders,
-      (context.profileId ?? "default"),
+      context.profileId ?? "default",
     );
     if (providers.length === 0)
       throw new Error("No media provider is connected.");
     const settled = await Promise.allSettled(
-      providers.map(([id, provider]) =>
-        provider.search(request, this.scopedContext(id, context)),
-      ),
+      providers.map(async ([id, provider]) => {
+        for (let attempt = 0; ; attempt += 1) {
+          context.signal?.throwIfAborted();
+          try {
+            return await provider.search(
+              request,
+              this.scopedContext(id, context),
+            );
+          } catch (error) {
+            if (attempt >= 3) throw error;
+            await new Promise<void>((resolve) =>
+              setTimeout(resolve, 300 * 2 ** attempt),
+            );
+          }
+        }
+      }),
     );
     context.signal?.throwIfAborted();
     const batches: MediaCandidate[][] = [];

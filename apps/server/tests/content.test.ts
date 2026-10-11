@@ -57,6 +57,52 @@ describe("provider-neutral content API", () => {
     });
   });
 
+  it("stores a title priority and records explicit detail opens", async () => {
+    const instance = app();
+    const home = await instance.inject({
+      method: "GET",
+      url: "/api/v1/home?profileId=default",
+    });
+    const title = home
+      .json()
+      .sections.flatMap(
+        (section: { items: Array<{ id: string }> }) => section.items,
+      )[0];
+    expect(title.priority).toBe("low");
+    const path = `/api/v1/profiles/default/titles/${encodeURIComponent(title.id)}`;
+
+    const toggled = await instance.inject({
+      method: "POST",
+      url: `${path}/priority`,
+    });
+    expect(toggled.json()).toEqual({ priority: "high" });
+    const lowered = await instance.inject({
+      method: "POST",
+      url: `${path}/priority`,
+    });
+    expect(lowered.json()).toEqual({ priority: "low" });
+    for (let index = 0; index < 3; index += 1) {
+      const opened = await instance.inject({
+        method: "POST",
+        url: `${path}/open`,
+      });
+      expect(opened.statusCode).toBe(200);
+    }
+    const refreshed = await instance.inject({
+      method: "GET",
+      url: "/api/v1/home?profileId=default",
+    });
+    expect(
+      refreshed
+        .json()
+        .sections.flatMap(
+          (section: { items: Array<{ id: string; priority: string }> }) =>
+            section.items,
+        )
+        .find((item: { id: string }) => item.id === title.id)?.priority,
+    ).toBe("high");
+  });
+
   it("keeps discovery groups canonical, distinct and explicit about preview facts", async () => {
     const instance = app();
     const payload = {

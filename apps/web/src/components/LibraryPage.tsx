@@ -110,6 +110,43 @@ export function LibraryPage({
     }
   }, [api, profileId]);
 
+  const togglePriority = useCallback(
+    async (item: CatalogTitle) => {
+      const { priority } = await api.toggleTitlePriority(profileId, item.id);
+      const startsSeriesSearch =
+        priority === "high" &&
+        item.kind === "series" &&
+        item.seriesCoverage?.complete !== true &&
+        playbackEnabled &&
+        item.metadataProvider !== "local-files";
+      setLibrary((current) =>
+        current
+          ? {
+              ...current,
+              items: current.items.map((entry) =>
+                entry.title.id === item.id
+                  ? {
+                      ...entry,
+                      title: {
+                        ...entry.title,
+                        priority,
+                        seriesSearchActive: startsSeriesSearch
+                          ? true
+                          : priority === "low"
+                            ? false
+                            : entry.title.seriesSearchActive,
+                      },
+                    }
+                  : entry,
+              ),
+            }
+          : current,
+      );
+      return priority;
+    },
+    [api, playbackEnabled, profileId],
+  );
+
   useEffect(() => {
     const activeIds =
       library?.items
@@ -475,6 +512,8 @@ export function LibraryPage({
               onDownloadSeries={onDownloadSeries}
               onPlay={play}
               onCheck={playbackChecks.check}
+              onRetry={playbackChecks.retry}
+              onPriority={togglePriority}
               playbackCheck={playbackChecks.stateFor(entry.title)}
               onAdd={() => undefined}
               onRemove={remove}

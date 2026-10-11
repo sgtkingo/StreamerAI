@@ -193,6 +193,14 @@ export interface StreamerApi {
     titleId: string,
     retry?: boolean,
   ): Promise<TitleDetail>;
+  recordTitleOpen(
+    profileId: string,
+    titleId: string,
+  ): Promise<{ priority: "low" | "high" }>;
+  toggleTitlePriority(
+    profileId: string,
+    titleId: string,
+  ): Promise<{ priority: "low" | "high" }>;
   forceTitleSearch(
     profileId: string,
     titleId: string,
@@ -663,6 +671,16 @@ export const apiClient: StreamerApi = {
   getTitleDetail: (profileId, titleId, retry = false) =>
     request<TitleDetail>(
       `/profiles/${encodeURIComponent(profileId)}/titles/${encodeURIComponent(titleId)}${retry ? "?retry=true" : ""}`,
+    ),
+  recordTitleOpen: (profileId, titleId) =>
+    request<{ priority: "low" | "high" }>(
+      `/profiles/${encodeURIComponent(profileId)}/titles/${encodeURIComponent(titleId)}/open`,
+      { method: "POST" },
+    ),
+  toggleTitlePriority: (profileId, titleId) =>
+    request<{ priority: "low" | "high" }>(
+      `/profiles/${encodeURIComponent(profileId)}/titles/${encodeURIComponent(titleId)}/priority`,
+      { method: "POST" },
     ),
   forceTitleSearch: (profileId, titleId) =>
     request<{ detail: TitleDetail; foundSources: number }>(

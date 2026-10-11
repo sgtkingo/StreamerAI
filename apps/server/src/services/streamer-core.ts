@@ -34,6 +34,7 @@ import {
   type StreamerContentProvider,
 } from "./content-provider.js";
 import { PreferredSourceStore } from "./preferred-source-store.js";
+import { TitlePriorityStore } from "./title-priority-store.js";
 import {
   excludeWatchedTitles,
   normalizeWatchedTitle,
@@ -50,6 +51,7 @@ function storageTitle(item: CatalogTitle) {
     resumePositionSeconds: _resumePositionSeconds,
     resumeEpisode: _resumeEpisode,
     seriesSearchActive: _seriesSearchActive,
+    priority: _priority,
     ...stored
   } = item;
   return stored;
@@ -85,6 +87,9 @@ export class StreamerCore {
   private readonly activeDiscoveries = new Map<string, AbortController>();
   private readonly cancelledDiscoveries = new Map<string, number>();
   private readonly preferredSources: PreferredSourceStore;
+  private readonly priorities: TitlePriorityStore;
+  private scheduledChecksRunning = false;
+  private scheduledProfileCursor = 0;
 
   constructor(
     private readonly database: StreamerDatabase,
@@ -92,6 +97,7 @@ export class StreamerCore {
     private readonly contentProvider: StreamerContentProvider = new PreviewContentProvider(),
   ) {
     this.preferredSources = new PreferredSourceStore(database);
+    this.priorities = new TitlePriorityStore(database, now);
     for (const item of contentProvider.bootstrapTitles()) {
       this.database.titles.upsert(storageTitle(item));
     }
@@ -112,6 +118,45 @@ export class StreamerCore {
     if (this.database.profiles.get(profileId) === null) {
       throw new UnknownProfileError(profileId);
     }
+  }
+
+  toggleTitlePriority(profileId: string, titleId: string): "low" | "high" {
+    this.requireProfile(profileId);
+    const stored = this.database.titles.get(titleId);
+    if (stored === null) throw new UnknownTitleError(titleId);
+    const priority = this.priorities.toggle(profileId, titleId);
+    if (priority === "low") this.contentProvider.cancelSeriesSearch?.(titleId);
+    if (priority === "high" && this.contentProvider.mode === "live") {
+      this.priorities.noteExplicitCheck(profileId, titleId);
+      const { createdAt: _createdAt, updatedAt: _updatedAt, ...data } = stored;
+      const title = this.decorateTitle(
+        profileId,
+        CatalogTitleSchema.parse({
+          ...data,
+          inLibrary: false,
+          matchPercent: null,
+          progressPercent: null,
+        }),
+      );
+      if (title.kind === "series" && !title.seriesCoverage?.complete) {
+        void this.contentProvider
+          .getSeriesDetail?.(profileId, title, true)
+          .catch(() => undefined);
+      } else if (title.kind === "movie" && title.availability !== "available") {
+        void this.refreshMovieAvailability(profileId, titleId).catch(
+          () => undefined,
+        );
+      }
+    }
+    return priority;
+  }
+
+  recordTitleOpen(profileId: string, titleId: string): "low" | "high" {
+    this.requireProfile(profileId);
+    if (this.database.titles.get(titleId) === null)
+      throw new UnknownTitleError(titleId);
+    this.priorities.opened(profileId, titleId);
+    return this.priorities.priority(profileId, titleId);
   }
 
   preferredSourceId(
@@ -298,17 +343,89 @@ export class StreamerCore {
       seen.add(title.id);
       if (
         title.kind !== "series" ||
-        !title.seriesCoverage ||
-        title.seriesCoverage.complete ||
+        title.seriesCoverage?.complete ||
         title.metadataProvider === "local-files" ||
         this.contentProvider.isSeriesSearchActive?.(title.id)
       )
         continue;
+      if (!this.priorities.claimDue(profileId, title)) continue;
       void this.contentProvider
-        .getSeriesDetail(profileId, title)
+        .getSeriesDetail(profileId, title, true)
         .catch(() => undefined);
       active = this.contentProvider.activeSeriesSearchCount?.() ?? active + 1;
       startedVisibleSearch = true;
+    }
+  }
+
+  private async refreshMovieAvailability(
+    profileId: string,
+    titleId: string,
+  ): Promise<void> {
+    try {
+      await this.checkPlayback(profileId, titleId);
+    } catch {
+      await this.forceTitleSearch(profileId, titleId);
+    }
+  }
+
+  /** Run a small due batch independent of whether a browser is open. */
+  async runScheduledAvailabilityChecks(): Promise<number> {
+    if (this.scheduledChecksRunning || this.contentProvider.mode !== "live")
+      return 0;
+    this.scheduledChecksRunning = true;
+    try {
+      const work: Array<Promise<unknown>> = [];
+      const titles = this.database.titles.list();
+      const profiles = this.database.profiles.list();
+      const offset = this.scheduledProfileCursor % Math.max(1, profiles.length);
+      this.scheduledProfileCursor += 1;
+      for (const profile of [
+        ...profiles.slice(offset),
+        ...profiles.slice(0, offset),
+      ]) {
+        const prioritized = titles
+          .map((stored) => ({
+            stored,
+            high: this.priorities.priority(profile.id, stored.id) === "high",
+          }))
+          .sort((a, b) => Number(b.high) - Number(a.high));
+        for (const { stored } of prioritized) {
+          if (work.length >= 2) break;
+          if (stored.metadataProvider === "local-files") continue;
+          if (stored.kind === "movie" && stored.availability === "available")
+            continue;
+          if (this.contentProvider.isSeriesSearchActive?.(stored.id)) continue;
+          const {
+            createdAt: _createdAt,
+            updatedAt: _updatedAt,
+            ...data
+          } = stored;
+          const title = this.decorateTitle(
+            profile.id,
+            CatalogTitleSchema.parse({
+              ...data,
+              inLibrary: false,
+              matchPercent: null,
+              progressPercent: null,
+            }),
+          );
+          if (!this.priorities.claimDue(profile.id, title)) continue;
+          work.push(
+            title.kind === "series"
+              ? (this.contentProvider.getSeriesDetail?.(
+                  profile.id,
+                  title,
+                  true,
+                ) ?? Promise.resolve())
+              : this.refreshMovieAvailability(profile.id, title.id),
+          );
+        }
+        if (work.length >= 2) break;
+      }
+      await Promise.allSettled(work);
+      return work.length;
+    } finally {
+      this.scheduledChecksRunning = false;
     }
   }
 
@@ -762,6 +879,7 @@ export class StreamerCore {
     retry = false,
   ): Promise<TitleDetail> {
     this.requireProfile(profileId);
+    if (retry) this.priorities.noteExplicitCheck(profileId, titleId);
     const stored = this.database.titles.get(titleId);
     if (stored === null) throw new UnknownTitleError(titleId);
     const { createdAt: _createdAt, updatedAt: _updatedAt, ...data } = stored;
@@ -807,7 +925,14 @@ export class StreamerCore {
       });
     const series =
       title.kind === "series" && this.contentProvider.getSeriesDetail
-        ? await this.contentProvider.getSeriesDetail(profileId, title, retry)
+        ? await this.contentProvider.getSeriesDetail(
+            profileId,
+            title,
+            retry,
+            retry ||
+              this.contentProvider.isSeriesSearchActive?.(title.id) === true ||
+              this.priorities.claimDue(profileId, title),
+          )
         : null;
     if (series && series.seasons.length > 0 && title.formats.length > 0) {
       const episodes = series.seasons.flatMap((season) => season.episodes);
@@ -853,6 +978,7 @@ export class StreamerCore {
     titleId: string,
   ): Promise<{ detail: TitleDetail; foundSources: number }> {
     this.requireProfile(profileId);
+    this.priorities.noteExplicitCheck(profileId, titleId);
     const stored = this.database.titles.get(titleId);
     if (stored === null) throw new UnknownTitleError(titleId);
     if (
@@ -892,6 +1018,7 @@ export class StreamerCore {
     episode: EpisodeSelection,
   ): Promise<{ detail: TitleDetail; sources: TitleSource[] }> {
     this.requireProfile(profileId);
+    this.priorities.noteExplicitCheck(profileId, titleId);
     const stored = this.database.titles.get(titleId);
     if (stored === null) throw new UnknownTitleError(titleId);
     if (
@@ -1095,7 +1222,26 @@ export class StreamerCore {
       }
       playback = PlaybackGrantSchema.parse(result);
     } catch {
-      throw new PlaybackRecheckError(titleId);
+      if (
+        !episode ||
+        sourceId !== undefined ||
+        this.contentProvider.forceSearchEpisode === undefined
+      )
+        throw new PlaybackRecheckError(titleId);
+      try {
+        this.priorities.noteExplicitCheck(profileId, titleId);
+        const sources = await this.contentProvider.forceSearchEpisode(
+          profileId,
+          title,
+          episode,
+        );
+        if (sources.length === 0) throw new PlaybackRecheckError(titleId);
+        playback = PlaybackGrantSchema.parse(
+          await this.contentProvider.preparePlayback(profileId, title, episode),
+        );
+      } catch {
+        throw new PlaybackRecheckError(titleId);
+      }
     }
     const nowDate = this.now();
     if (
@@ -1173,6 +1319,7 @@ export class StreamerCore {
         occurredAt: now,
       });
     });
+    this.priorities.played(profileId, titleId, episode);
     return { eventId, library: this.library(profileId) };
   }
 
@@ -1265,6 +1412,7 @@ export class StreamerCore {
               episodeNumber: latestPosition.episodeNumber,
             }
           : null,
+      priority: this.priorities.priority(profileId, item.id),
     });
   }
 

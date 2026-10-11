@@ -85,15 +85,19 @@ I found some ideas, but none could be validated reliably. Is this what you had i
 
 DONE: Subtitles vyvolávájí Loading subtitles - to není UI přívětívé a navíc se titulky nenačtou v některých případech. Nechápu jaktože titulk dělají takvý problém. Přijde mi že po seek se zase načítají odznovu a zas  časují. Jaktože to ve VLC jde bez problému a okamžitě?  
 
-- Měli bychom uživatelům umožnit stáhnout komplet celý seiál (všechny dostupné episody, synchronně one-by-one) stejně jako film - tlačítko download na kartě. 
+DONE: - Měli bychom uživatelům umožnit stáhnout komplet celý seiál (všechny dostupné episody, synchronně one-by-one) stejně jako film - tlačítko download na kartě. 
 
-- Návrh optimalizace: Pokud je nějaký titul Unavaible (i díl seriálu), dohledávání už nebude automatické ale jen na vyžádání uživatelem. U filmu přes Check tlačítko jako nyní, u seriálu Try find more episodes pro vechny díly (jako nyní) nebo kliknutím na tlačíto "Try again" přímo u konkterétního Unavaible dílu (UI pro kartu i seznam episod). Ušetříme tím opakované dotazy na server. Co si o tom myslíš? 
+DONE: - Návrh optimalizace: Pokud je nějaký titul Unavaible (i díl seriálu), dohledávání už nebude automatické ale jen na vyžádání uživatelem. U filmu přes Check tlačítko jako nyní, u seriálu Try find more episodes pro vechny díly (jako nyní) nebo kliknutím na tlačíto "Try again" přímo u konkterétního Unavaible dílu (UI pro kartu i seznam episod). Ušetříme tím opakované dotazy na server. Co si o tom myslíš? 
 
-Dobrá, udělal bych to takto: pokud dohledání selže, systém se ho pokusí ještě 3x zopakova s krátkým časovým odstupem, a až poté hdefinitně označí za Unavailable . Co se týče rozdílu mezi přehratelností a novým hledáním zdrojů, měli bychom to stejnotit a to tak že:
-1. První se ověří přehratelnost, pokud selže tak bod 2
-2. Hledají se znovu nové zdroje, pokud nejsou nalezeny tak bod 3
-3. Takový titul se označí znovu za "Unavailable" - nedostupný, další pokud musí být vyvolán manuálně pomocí "Try Again" (retry check). 
-Souhlas?
+Měli bychom udělat optimalizaci inteligentní, zavedeme dva mechanismy:
+- Priority: Jak moc prioritní je pro uživatele tento titul? Jak moc se má systém snažit o dohledání? Priorita je buď nízká nebo vysoká, defaultně je u všech titulů nízká, na vysokou se nastaví jen v případě, že uživatel buď: ručně klikl na "priority" tlačítko (ikona) v kartě titulu, nebo systém vyhodnotí titul jako prioritní tím že s ním uživatel často interaguje (často ho otevírá, pouští třeba další díly serier atd. )
+
+- Namátkovost: Tituly které mají low priority se pokusí dohledat pouze při vytvoření (sekvence více dotazů pro zamezení selhání kvůli případnému konfliktu či selhání serveru), poté se titul uspí a namátkově prohledá třeba jen jednou denně v náhodný čas (náhodný čas je důležitý pro minimalizaci konfliktů). 
+
+Eventy které vyvolají okamžité dohledání a kontrolu dostupnosti, i u Unavaible titulů: 
+- Ruční akce uživatele
+- Pokus o přehrání dalšího dílu v sérii (přehrávač zkusí dohledat i případný chybějící díl v serii)
+- Pokus o masové stažení všech dílů v serii / session (při stahování se pokusí mass download znovuzzkontrolovat dostupnost u nedostupných)
 
 - Potřebujeme dodělat konektory pro remote agenty: ChatGPT, Claude, Geminy, Grok, Kimi, DeepSeek... Nabízejí se dvě možnosti: API a MCP. Bylo by dobré kdyby StreamerAI uměl obě varianty. 
  U MCP bych rád tento hybrdní mod:
@@ -118,7 +122,7 @@ StreamerAI ├── MCP Server │   └── StreamerAI tools ├── Agent
 Requirements:
 - Keep MCP tools provider-agnostic.
 - Define a common AgentProvider interface, e.g.:
-  - startSession()
+  - startSession()-
   - sendMessage()
   - streamEvents()
   - cancel()
@@ -154,3 +158,5 @@ At completion provide:
 
 Zajsti aby agenti využívali různé rulesety pro kontrolu úrovně sofitikovanosti vyhledávání, jak jsme již řešili a implementovali. 
 Také bychom měli zajistit aby v případě více dostupných agentů, byl aktivní vždy jen jeden, dle preferencí uživatele. 
+
+Proved analýzu nasazení a proveditelnost.

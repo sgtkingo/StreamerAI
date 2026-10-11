@@ -2,6 +2,7 @@ import { useCallback, useRef, useState } from "react";
 import type { CatalogTitle, EpisodeSelection } from "@streamer-ai/contracts";
 import type { StreamerApi } from "../api/client";
 import { safeErrorMessage } from "../api/client";
+import { retryPlaybackCheck } from "./retry-playback-check";
 
 export type PlaybackCheckState =
   | { status: "checking" }
@@ -73,6 +74,22 @@ export function usePlaybackChecks(api: StreamerApi, profileId: string) {
       const key = checkKey(title, episode);
       const current = statesRef.current.get(key);
       if (current?.status === "checking" || current?.status === "ready") return;
+      if (
+        title.availability === "unavailable" ||
+        (title.availability === "unknown" &&
+          title.availabilityCheckedAt !== null)
+      ) {
+        if (current?.status !== "failed") {
+          const next = new Map(statesRef.current);
+          next.set(key, {
+            status: "failed",
+            message: "Currently unavailable. Try again to check for sources.",
+          });
+          statesRef.current = next;
+          setStates(next);
+        }
+        return;
+      }
       const next = new Map(statesRef.current);
       next.set(key, { status: "checking" });
       statesRef.current = next;
@@ -81,6 +98,43 @@ export function usePlaybackChecks(api: StreamerApi, profileId: string) {
       pumpRef.current();
     },
     [],
+  );
+
+  const retry = useCallback(
+    (title: CatalogTitle, episode?: EpisodeSelection) => {
+      const key = checkKey(title, episode);
+      if (statesRef.current.get(key)?.status === "checking") return;
+      const checking = new Map(statesRef.current);
+      checking.set(key, { status: "checking" });
+      statesRef.current = checking;
+      setStates(checking);
+      void retryPlaybackCheck(api, profileId, title, episode)
+        .then((result) => {
+          const next = new Map(statesRef.current);
+          next.set(
+            key,
+            result.ready
+              ? {
+                  status: "ready",
+                  audioLanguages: result.check?.audioLanguages,
+                  subtitleLanguages: result.check?.subtitleLanguages,
+                }
+              : {
+                  status: "failed",
+                  message: "No playable source found. Try again later.",
+                },
+          );
+          statesRef.current = next;
+          setStates(next);
+        })
+        .catch((error: unknown) => {
+          const next = new Map(statesRef.current);
+          next.set(key, { status: "failed", message: safeErrorMessage(error) });
+          statesRef.current = next;
+          setStates(next);
+        });
+    },
+    [api, profileId],
   );
 
   const markFailed = useCallback(
@@ -95,5 +149,5 @@ export function usePlaybackChecks(api: StreamerApi, profileId: string) {
 
   const stateFor = (title: CatalogTitle, episode?: EpisodeSelection) =>
     states.get(checkKey(title, episode));
-  return { check, markFailed, stateFor };
+  return { check, retry, markFailed, stateFor };
 }

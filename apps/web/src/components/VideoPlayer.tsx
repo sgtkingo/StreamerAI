@@ -17,7 +17,12 @@ import {
   preferredEmbeddedSubtitle,
 } from "../playback-preferences";
 import { Brand } from "./Brand";
-import { adjacentEpisode, playableEpisodes } from "./episode-sequence";
+import {
+  adjacentEpisode,
+  knownEpisodes,
+  playableEpisodes,
+} from "./episode-sequence";
+import { retryPlaybackCheck } from "./retry-playback-check";
 import { subtitleFileToVtt } from "./subtitle-file";
 import {
   canonicalSubtitleWindowStart,
@@ -116,7 +121,7 @@ export function VideoPlayer({
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const controlsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const canAutoHideRef = useRef(false);
-  const skipNextEpisodeRef = useRef(false);
+  const nextCheckIdRef = useRef(0);
   const subtitleWindowsRef = useRef(new Map<number, SubtitleWindow>());
   const subtitleRequestsRef = useRef(new Map<number, AbortController>());
   const subtitleGenerationRef = useRef(0);
@@ -169,6 +174,11 @@ export function VideoPlayer({
     number | null
   >(null);
   const [findingNextEpisode, setFindingNextEpisode] = useState(false);
+  const [checkingEpisode, setCheckingEpisode] =
+    useState<SeriesEpisodeDetail | null>(null);
+  const [queuedEpisode, setQueuedEpisode] =
+    useState<SeriesEpisodeDetail | null>(null);
+  const [nextEpisodeNotice, setNextEpisodeNotice] = useState("");
   const [episodeSwitching, setEpisodeSwitching] = useState(false);
   const [episodeError, setEpisodeError] = useState("");
 
@@ -219,7 +229,7 @@ export function VideoPlayer({
       .getTitleDetail(profileId, title.id)
       .then((detail) => {
         if (!active) return;
-        const episodes = playableEpisodes(
+        const episodes = knownEpisodes(
           detail.series?.seasons.flatMap((season) => season.episodes) ?? [],
         );
         setAvailableEpisodes(episodes);
@@ -238,11 +248,15 @@ export function VideoPlayer({
   }, [api, profileId, title.id, title.kind, episode, episodeTitle]);
 
   const previousEpisode = adjacentEpisode(
-    availableEpisodes,
+    playableEpisodes(availableEpisodes),
     episode,
     "previous",
   );
   const nextEpisode = adjacentEpisode(availableEpisodes, episode, "next");
+  const shownNextEpisode =
+    checkingEpisode ??
+    queuedEpisode ??
+    (findingNextEpisode ? nextEpisode : null);
 
   const playEpisode = useCallback(
     async (item: SeriesEpisodeDetail) => {
@@ -269,6 +283,83 @@ export function VideoPlayer({
     },
     [episodeSwitching, hasEnded, onPlayEpisode],
   );
+
+  const cancelNextEpisode = useCallback(() => {
+    nextCheckIdRef.current += 1;
+    setFindingNextEpisode(false);
+    setCheckingEpisode(null);
+    setQueuedEpisode(null);
+    setNextEpisodeCountdown(null);
+    setNextEpisodeNotice("");
+  }, []);
+
+  const verifyNextEpisode = useCallback(async () => {
+    if (title.kind !== "series" || !episode) return;
+    const checkId = ++nextCheckIdRef.current;
+    setFindingNextEpisode(true);
+    setCheckingEpisode(null);
+    setQueuedEpisode(null);
+    setNextEpisodeCountdown(null);
+    setNextEpisodeNotice("");
+    let known = availableEpisodes;
+    try {
+      const detail = await api.getTitleDetail(profileId, title.id);
+      if (nextCheckIdRef.current !== checkId) return;
+      known = knownEpisodes(
+        detail.series?.seasons.flatMap((season) => season.episodes) ?? [],
+      );
+      setAvailableEpisodes(known);
+    } catch {
+      // The guide already shown in the player can still be checked.
+    }
+    if (nextCheckIdRef.current !== checkId) return;
+    const first = adjacentEpisode(known, episode, "next");
+    if (!first) {
+      setFindingNextEpisode(false);
+      setNextEpisodeNotice("No further episode is available right now.");
+      return;
+    }
+    const laterAvailable = playableEpisodes(known).filter(
+      (candidate) =>
+        candidate.seasonNumber > first.seasonNumber ||
+        (candidate.seasonNumber === first.seasonNumber &&
+          candidate.episodeNumber > first.episodeNumber),
+    );
+    const candidates = [first, ...laterAvailable];
+    const skipped: SeriesEpisodeDetail[] = [];
+    for (const candidate of candidates) {
+      if (nextCheckIdRef.current !== checkId) return;
+      setCheckingEpisode(candidate);
+      try {
+        const result = await retryPlaybackCheck(api, profileId, title, {
+          seasonNumber: candidate.seasonNumber,
+          episodeNumber: candidate.episodeNumber,
+        });
+        if (nextCheckIdRef.current !== checkId) return;
+        if (result.ready) {
+          setFindingNextEpisode(false);
+          setCheckingEpisode(null);
+          setQueuedEpisode(candidate);
+          setNextEpisodeNotice(
+            skipped.length > 0
+              ? `${skipped.map((item) => `S${String(item.seasonNumber).padStart(2, "0")}E${String(item.episodeNumber).padStart(2, "0")}`).join(", ")} could not be played and will be skipped.`
+              : "Episode availability confirmed.",
+          );
+          setNextEpisodeCountdown(5);
+          return;
+        }
+      } catch {
+        if (nextCheckIdRef.current !== checkId) return;
+      }
+      skipped.push(candidate);
+    }
+    if (nextCheckIdRef.current !== checkId) return;
+    setFindingNextEpisode(false);
+    setCheckingEpisode(null);
+    setNextEpisodeNotice(
+      `${skipped.map((item) => `S${String(item.seasonNumber).padStart(2, "0")}E${String(item.episodeNumber).padStart(2, "0")}`).join(", ")} could not be played. No following episode is available right now.`,
+    );
+  }, [api, availableEpisodes, episode, profileId, title]);
 
   useEffect(() => {
     if (cleanupTimerRef.current !== null) {
@@ -331,13 +422,13 @@ export function VideoPlayer({
   }, [resumePrompt, resumeCountdown]);
 
   useEffect(() => {
-    if (nextEpisodeCountdown === null || !nextEpisode) return;
+    if (nextEpisodeCountdown === null || !queuedEpisode) return;
     const timer = window.setTimeout(() => {
-      if (nextEpisodeCountdown <= 1) void playEpisode(nextEpisode);
+      if (nextEpisodeCountdown <= 1) void playEpisode(queuedEpisode);
       else setNextEpisodeCountdown(nextEpisodeCountdown - 1);
     }, 1000);
     return () => window.clearTimeout(timer);
-  }, [nextEpisodeCountdown, nextEpisode, playEpisode]);
+  }, [nextEpisodeCountdown, queuedEpisode, playEpisode]);
 
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
@@ -345,6 +436,7 @@ export function VideoPlayer({
     const releaseScrollLock = lockBodyScroll();
     rootRef.current?.focus();
     return () => {
+      nextCheckIdRef.current += 1;
       releaseScrollLock();
       previous?.focus();
       for (const url of localUrls) URL.revokeObjectURL(url);
@@ -1026,29 +1118,7 @@ export function VideoPlayer({
                 setCaptionPosition(duration);
               }
               progressRef.current = 100;
-              skipNextEpisodeRef.current = false;
-              if (nextEpisode) {
-                setNextEpisodeCountdown(5);
-              } else if (title.kind === "series" && episode) {
-                setFindingNextEpisode(true);
-                void api
-                  .getTitleDetail(profileId, title.id)
-                  .then((detail) => {
-                    const refreshed = playableEpisodes(
-                      detail.series?.seasons.flatMap(
-                        (season) => season.episodes,
-                      ) ?? [],
-                    );
-                    setAvailableEpisodes(refreshed);
-                    if (
-                      !skipNextEpisodeRef.current &&
-                      adjacentEpisode(refreshed, episode, "next")
-                    )
-                      setNextEpisodeCountdown(5);
-                  })
-                  .catch(() => undefined)
-                  .finally(() => setFindingNextEpisode(false));
-              }
+              if (title.kind === "series" && episode) void verifyNextEpisode();
               void api
                 .savePlaybackProgress(grant.grantId, 100, duration, duration)
                 .catch(() => undefined);
@@ -1194,63 +1264,85 @@ export function VideoPlayer({
             </section>
           </div>
         )}
-        {nextEpisodeCountdown !== null && nextEpisode && (
+        {(findingNextEpisode ||
+          (nextEpisodeCountdown !== null && queuedEpisode) ||
+          (nextEpisodeNotice && !queuedEpisode)) && (
           <div className="video-player__next-episode-backdrop">
             <section
               className="video-player__next-episode"
               role="group"
               aria-label="Next episode"
               aria-live="polite"
+              aria-busy={findingNextEpisode || undefined}
             >
               <p className="video-player__eyebrow">Up next</p>
               <h3>
-                S{String(nextEpisode.seasonNumber).padStart(2, "0")}E
-                {String(nextEpisode.episodeNumber).padStart(2, "0")} ·{" "}
-                {nextEpisode.title}
+                {shownNextEpisode ? (
+                  <>
+                    S{String(shownNextEpisode.seasonNumber).padStart(2, "0")}E
+                    {String(shownNextEpisode.episodeNumber).padStart(2, "0")} ·{" "}
+                    {shownNextEpisode.title}
+                  </>
+                ) : findingNextEpisode ? (
+                  "Finding next episode…"
+                ) : (
+                  "No next episode available"
+                )}
               </h3>
-              <p>Starting in {nextEpisodeCountdown} seconds</p>
+              {findingNextEpisode ? (
+                <p role="status">Checking episode availability…</p>
+              ) : (
+                <>
+                  <p>{nextEpisodeNotice}</p>
+                  {nextEpisodeCountdown !== null && (
+                    <p>Starting in {nextEpisodeCountdown} seconds</p>
+                  )}
+                </>
+              )}
               <div className="video-player__next-episode-actions">
-                <button
-                  className="button button--primary button--play-action"
-                  type="button"
-                  disabled={episodeSwitching}
-                  onClick={() => void playEpisode(nextEpisode)}
-                >
-                  Play now
-                </button>
+                {(findingNextEpisode || queuedEpisode) && (
+                  <button
+                    className={`button button--primary button--play-action video-player__next-play${findingNextEpisode ? " is-checking" : ""}`}
+                    type="button"
+                    disabled={findingNextEpisode || episodeSwitching}
+                    aria-label={
+                      findingNextEpisode ? "Checking next episode" : "Play now"
+                    }
+                    aria-busy={findingNextEpisode || undefined}
+                    onClick={() =>
+                      queuedEpisode && void playEpisode(queuedEpisode)
+                    }
+                  >
+                    {findingNextEpisode ? (
+                      <span
+                        className="video-player__next-check-dots"
+                        aria-hidden="true"
+                      >
+                        <i />
+                        <i />
+                        <i />
+                      </span>
+                    ) : (
+                      <>
+                        <span
+                          className="video-player__next-play-progress"
+                          aria-hidden="true"
+                        />
+                        <span className="video-player__next-play-label">
+                          Play now
+                        </span>
+                      </>
+                    )}
+                  </button>
+                )}
                 <button
                   className="button button--secondary"
                   type="button"
-                  onClick={() => {
-                    skipNextEpisodeRef.current = true;
-                    setNextEpisodeCountdown(null);
-                  }}
+                  onClick={cancelNextEpisode}
                 >
-                  Cancel
+                  {findingNextEpisode || queuedEpisode ? "Cancel" : "Close"}
                 </button>
               </div>
-            </section>
-          </div>
-        )}
-        {findingNextEpisode && !nextEpisodeCountdown && (
-          <div className="video-player__next-episode-backdrop">
-            <section
-              className="video-player__next-episode"
-              role="status"
-              aria-label="Finding next episode"
-            >
-              <p className="video-player__eyebrow">Up next</p>
-              <h3>Checking for the next available episode…</h3>
-              <button
-                className="button button--secondary"
-                type="button"
-                onClick={() => {
-                  skipNextEpisodeRef.current = true;
-                  setFindingNextEpisode(false);
-                }}
-              >
-                Cancel autoplay
-              </button>
             </section>
           </div>
         )}
@@ -1372,7 +1464,7 @@ export function VideoPlayer({
                     type="button"
                     className="video-player__episode-button"
                     disabled={!nextEpisode || episodeSwitching}
-                    onClick={() => nextEpisode && void playEpisode(nextEpisode)}
+                    onClick={() => nextEpisode && void verifyNextEpisode()}
                     aria-label={
                       nextEpisode
                         ? `Play next episode, season ${nextEpisode.seasonNumber}, episode ${nextEpisode.episodeNumber}`

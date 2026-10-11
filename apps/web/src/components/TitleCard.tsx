@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { CatalogTitle, PlaybackPreferences } from "@streamer-ai/contracts";
 import type { EpisodeSelection } from "@streamer-ai/contracts";
 import {
@@ -8,7 +8,6 @@ import {
 import { SourceOriginStack, titleSourceProviderIds } from "./SourceIcon";
 import { DownloadButton, DownloadGlyph } from "./DownloadButton";
 import { useDownloadManager } from "./DownloadManager";
-import { ComposingLabel } from "./ComposingLabel";
 import type { PlaybackCheckState } from "./usePlaybackChecks";
 
 let cardHoverAudioContext: AudioContext | null = null;
@@ -70,6 +69,8 @@ interface TitleCardProps {
   onOpen?: (item: CatalogTitle, episode?: EpisodeSelection) => void;
   onDownloadSeries?: (item: CatalogTitle) => void;
   onCheck?: (item: CatalogTitle, episode?: EpisodeSelection) => void;
+  onRetry?: (item: CatalogTitle, episode?: EpisodeSelection) => void;
+  onPriority?: (item: CatalogTitle) => Promise<"low" | "high">;
   onAdd: (item: CatalogTitle) => void;
   onRemove?: (item: CatalogTitle) => void;
   playbackEnabled?: boolean;
@@ -126,8 +127,8 @@ function SeriesCoverageGlyph({
         total === 0
           ? "Episode coverage loading"
           : missing === 0
-          ? "All episodes found"
-          : `${missing} of ${total} episodes missing`
+            ? "All episodes found"
+            : `${missing} of ${total} episodes missing`
       }
       focusable="false"
     >
@@ -183,6 +184,8 @@ export function TitleCard({
   onOpen,
   onDownloadSeries,
   onCheck,
+  onRetry,
+  onPriority,
   onAdd,
   onRemove,
   playbackEnabled = true,
@@ -190,10 +193,28 @@ export function TitleCard({
   playbackCheck,
 }: TitleCardProps) {
   const downloadManager = useDownloadManager();
-  const batch = item.kind === "series" ? downloadManager?.batchFor(item) : undefined;
-  const movieDownload = item.kind === "movie" ? downloadManager?.movieFor(item) : undefined;
+  const batch =
+    item.kind === "series" ? downloadManager?.batchFor(item) : undefined;
+  const movieDownload =
+    item.kind === "movie" ? downloadManager?.movieFor(item) : undefined;
   const playable = titleHasPlayableVariant(item);
   const checkStatus = playbackCheck?.status ?? "checking";
+  const [priority, setPriority] = useState(item.priority ?? "low");
+  const [priorityBusy, setPriorityBusy] = useState(false);
+  const [priorityError, setPriorityError] = useState(false);
+  const [prioritySearchActive, setPrioritySearchActive] = useState(false);
+  const [prioritySearchSuppressed, setPrioritySearchSuppressed] =
+    useState(false);
+  useEffect(() => setPriority(item.priority ?? "low"), [item.priority]);
+  useEffect(() => {
+    if (item.priority === "high") setPrioritySearchSuppressed(false);
+  }, [item.priority]);
+  useEffect(() => {
+    if (item.seriesSearchActive) setPrioritySearchActive(false);
+  }, [item.seriesSearchActive]);
+  const seriesSearchActive =
+    !prioritySearchSuppressed &&
+    (item.seriesSearchActive || prioritySearchActive);
   const checkedLanguages =
     playbackCheck?.status === "ready" &&
     playbackCheck.audioLanguages &&
@@ -356,9 +377,8 @@ export function TitleCard({
     item.kind === "series" && !episodeCode ? "title-card--series" : "",
     episodeCode ? "title-card--episode" : "",
     item.kind === "series" &&
-    item.seriesCoverage &&
-    !item.seriesCoverage.complete &&
-    item.seriesSearchActive
+    item.seriesCoverage?.complete !== true &&
+    seriesSearchActive
       ? "title-card--searching"
       : "",
   ]
@@ -526,21 +546,26 @@ export function TitleCard({
                 : "Sorry, this title is currently unavailable."}
             </p>
           )}
-        {item.seriesCoverage && !episodeCode && (
-          <p className="series-coverage">
-            {item.seriesCoverage.seasonsAvailable}/
-            {item.seriesCoverage.seasonsTotal} seasons ·{" "}
-            {item.seriesCoverage.episodesAvailable}/
-            {item.seriesCoverage.episodesTotal} episodes
-            <span className="series-coverage__status">
-              <SeriesCoverageGlyph
-                available={item.seriesCoverage.episodesAvailable}
-                total={item.seriesCoverage.episodesTotal}
-              />
-              {item.seriesSearchActive && <ComposingLabel />}
-            </span>
-          </p>
-        )}
+        {!episodeCode &&
+          item.kind === "series" &&
+          (item.seriesCoverage || seriesSearchActive) && (
+            <p className="series-coverage">
+              {item.seriesCoverage && (
+                <>
+                  {item.seriesCoverage.seasonsAvailable}/
+                  {item.seriesCoverage.seasonsTotal} seasons ·{" "}
+                  {item.seriesCoverage.episodesAvailable}/
+                  {item.seriesCoverage.episodesTotal} episodes
+                </>
+              )}
+              <span className="series-coverage__status">
+                <SeriesCoverageGlyph
+                  available={item.seriesCoverage?.episodesAvailable ?? 0}
+                  total={item.seriesCoverage?.episodesTotal ?? 0}
+                />
+              </span>
+            </p>
+          )}
         {item.progressPercent !== null && (
           <div
             className="progress-track"
@@ -550,6 +575,48 @@ export function TitleCard({
           </div>
         )}
         <div className="title-card__actions">
+          {onPriority && (
+            <button
+              className={`title-card__priority${priority === "high" ? " is-high" : ""}`}
+              type="button"
+              aria-label={`${priority === "high" ? "Remove high priority from" : "Set high priority for"} ${item.title}`}
+              aria-pressed={priority === "high"}
+              title={priority === "high" ? "High priority" : "Low priority"}
+              disabled={priorityBusy}
+              onClick={() => {
+                setPriorityError(false);
+                const promoting = priority !== "high";
+                if (promoting) setPrioritySearchSuppressed(false);
+                else {
+                  setPrioritySearchActive(false);
+                  setPrioritySearchSuppressed(true);
+                }
+                if (
+                  promoting &&
+                  playbackEnabled &&
+                  item.kind === "series" &&
+                  item.seriesCoverage?.complete !== true &&
+                  item.metadataProvider !== "local-files"
+                ) {
+                  setPrioritySearchActive(true);
+                }
+                setPriorityBusy(true);
+                void onPriority(item)
+                  .then(setPriority)
+                  .catch(() => {
+                    setPrioritySearchActive(false);
+                    setPrioritySearchSuppressed(false);
+                    setPriorityError(true);
+                  })
+                  .finally(() => setPriorityBusy(false));
+              }}
+            >
+              <span aria-hidden="true">{priority === "high" ? "★" : "☆"}</span>
+            </button>
+          )}
+          {priorityError && (
+            <span role="alert">Could not update priority.</span>
+          )}
           {!episodeCode && item.kind === "series" && onDownloadSeries && (
             <DownloadButton
               compact
@@ -557,6 +624,7 @@ export function TitleCard({
               className="title-card__download-button"
               state={batch?.state ?? "idle"}
               progress={batch?.progress ?? null}
+              preparing={batch?.entry?.status === "preparing"}
               pending={batch?.entry?.status === "stopping"}
               deletable={batch?.action === "delete"}
               retry={batch?.action === "retry"}
@@ -565,20 +633,28 @@ export function TitleCard({
               onClick={() => onDownloadSeries(item)}
             />
           )}
-          {!episodeCode && item.kind === "movie" && downloadManager && movieDownload && (
-            <DownloadButton
-              compact
-              className="title-card__download-button"
-              state={movieDownload.state}
-              progress={movieDownload.progress}
-              pending={Boolean(movieDownload.entry?.currentJobId && downloadManager.stoppingJobIds.includes(movieDownload.entry.currentJobId))}
-              deletable={movieDownload.action === "delete"}
-              retry={movieDownload.action === "retry"}
-              label={item.title}
-              stopLabel="Stop"
-              onClick={() => downloadManager.activateMovie(item)}
-            />
-          )}
+          {!episodeCode &&
+            item.kind === "movie" &&
+            downloadManager &&
+            movieDownload && (
+              <DownloadButton
+                compact
+                className="title-card__download-button"
+                state={movieDownload.state}
+                progress={movieDownload.progress}
+                pending={Boolean(
+                  movieDownload.entry?.currentJobId &&
+                  downloadManager.stoppingJobIds.includes(
+                    movieDownload.entry.currentJobId,
+                  ),
+                )}
+                deletable={movieDownload.action === "delete"}
+                retry={movieDownload.action === "retry"}
+                label={item.title}
+                stopLabel="Stop"
+                onClick={() => downloadManager.activateMovie(item)}
+              />
+            )}
           {onOpen && (
             <button
               className="button button--secondary button--compact"
@@ -610,7 +686,9 @@ export function TitleCard({
               onClick={() =>
                 checkStatus === "ready"
                   ? onPlay(item, defaultEpisode)
-                  : openDetails()
+                  : episodeCode && checkStatus === "failed"
+                    ? onRetry?.(item, defaultEpisode)
+                    : openDetails()
               }
             >
               {checkStatus === "checking"
@@ -619,7 +697,9 @@ export function TitleCard({
                   ? "Starting…"
                   : checkStatus === "ready"
                     ? playAction
-                    : "Episodes"}
+                    : episodeCode && checkStatus === "failed"
+                      ? "Try again"
+                      : "Episodes"}
             </button>
           ) : (
             canShowPlayback &&
@@ -635,7 +715,13 @@ export function TitleCard({
                   if (checkStatus === "ready") playCardHoverTick();
                 }}
                 onClick={() =>
-                  checkStatus === "failed" ? onCheck?.(item) : onPlay(item)
+                  checkStatus === "failed"
+                    ? episode
+                      ? onRetry?.(item, episode)
+                      : onRetry?.(item)
+                    : episode
+                      ? onPlay(item, episode)
+                      : onPlay(item)
                 }
                 disabled={
                   pendingAction !== undefined || checkStatus === "checking"
@@ -646,7 +732,9 @@ export function TitleCard({
                   : pendingAction === "play"
                     ? "Starting…"
                     : checkStatus === "failed"
-                      ? "Retry check"
+                      ? episodeCode
+                        ? "Try again"
+                        : "Retry check"
                       : playAction}
               </button>
             )
