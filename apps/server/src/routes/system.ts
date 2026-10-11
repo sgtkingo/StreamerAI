@@ -13,6 +13,7 @@ import { TMDB_READ_TOKEN_SECRET_KEY } from "../integrations/tmdb-client.js";
 import { WEBSHARE_WST_SECRET_KEY } from "../integrations/webshare-client.js";
 import type { IntegrationStateStore } from "../stores/integration-state-store.js";
 import type { SecretStore } from "../stores/secret-store.js";
+import { profileSecretKey } from "../stores/secret-store.js";
 
 export interface SystemRouteDependencies {
   providerDescriptors?: readonly ProviderDescriptor[];
@@ -22,10 +23,15 @@ export interface SystemRouteDependencies {
   now: () => Date;
 }
 
-async function getTmdbStatus(dependencies: SystemRouteDependencies) {
+async function getTmdbStatus(
+  dependencies: SystemRouteDependencies,
+  profileId: string,
+) {
   const [hasSecret, state] = await Promise.all([
-    dependencies.secretStore.has(TMDB_READ_TOKEN_SECRET_KEY),
-    dependencies.integrationStateStore.get("tmdb"),
+    dependencies.secretStore.has(
+      profileSecretKey(profileId, TMDB_READ_TOKEN_SECRET_KEY),
+    ),
+    dependencies.integrationStateStore.get("tmdb", profileId),
   ]);
   const configured = hasSecret && state?.configured === true;
 
@@ -39,8 +45,14 @@ async function getTmdbStatus(dependencies: SystemRouteDependencies) {
   } as const;
 }
 
-async function getOllamaStatus(dependencies: SystemRouteDependencies) {
-  const state = await dependencies.integrationStateStore.get("ollama");
+async function getOllamaStatus(
+  dependencies: SystemRouteDependencies,
+  profileId: string,
+) {
+  const state = await dependencies.integrationStateStore.get(
+    "ollama",
+    profileId,
+  );
   return {
     configured: state?.configured === true,
     status: state?.status ?? "not_configured",
@@ -48,10 +60,15 @@ async function getOllamaStatus(dependencies: SystemRouteDependencies) {
   } as const;
 }
 
-async function getWebshareStatus(dependencies: SystemRouteDependencies) {
+async function getWebshareStatus(
+  dependencies: SystemRouteDependencies,
+  profileId: string,
+) {
   const [hasSecret, state] = await Promise.all([
-    dependencies.secretStore.has(WEBSHARE_WST_SECRET_KEY),
-    dependencies.integrationStateStore.get("webshare"),
+    dependencies.secretStore.has(
+      profileSecretKey(profileId, WEBSHARE_WST_SECRET_KEY),
+    ),
+    dependencies.integrationStateStore.get("webshare", profileId),
   ]);
   const configured = hasSecret && state?.configured === true;
   return {
@@ -108,12 +125,25 @@ export function registerSystemRoutes(
     });
   });
 
-  app.get("/api/v1/setup/status", async () => {
+  app.get("/api/v1/setup/status", async (request, reply) => {
+    const requestedProfileId = (request.query as { profileId?: unknown })
+      .profileId;
+    const profileId =
+      typeof requestedProfileId === "string" && requestedProfileId.length <= 120
+        ? requestedProfileId
+        : "default";
+    if (dependencies.database.profiles.get(profileId) === null)
+      return reply.code(404).send({
+        error: {
+          code: "PROFILE_NOT_FOUND",
+          message: "This profile is not available.",
+        },
+      });
     const [tmdb, webshare, ollama, states] = await Promise.all([
-      getTmdbStatus(dependencies),
-      getWebshareStatus(dependencies),
-      getOllamaStatus(dependencies),
-      dependencies.integrationStateStore.list(),
+      getTmdbStatus(dependencies, profileId),
+      getWebshareStatus(dependencies, profileId),
+      getOllamaStatus(dependencies, profileId),
+      dependencies.integrationStateStore.list(profileId),
     ]);
     const connectedIds = new Set(
       states
@@ -136,12 +166,17 @@ export function registerSystemRoutes(
           provider.id !== "webshare" &&
           connectedIds.has(provider.id),
       );
-    const profile = dependencies.database.profiles.get("default");
+    const profile = dependencies.database.profiles.get(profileId);
     const completionRecorded =
-      dependencies.database.settings.get<boolean>("setup.completed") === true;
+      profile?.preferences.onboardingComplete === true ||
+      (profileId === "default" &&
+        dependencies.database.settings.get<boolean>("setup.completed") ===
+          true);
     const localAiEnabled =
-      dependencies.database.settings.get<boolean>("setup.localAiEnabled") ===
-      true;
+      profile?.preferences.localAiEnabled === true ||
+      (profileId === "default" &&
+        dependencies.database.settings.get<boolean>("setup.localAiEnabled") ===
+          true);
     const complete = completionRecorded;
     const requiredSteps = [
       ...(!complete ? ["complete_profile"] : []),
@@ -206,9 +241,22 @@ export function registerSystemRoutes(
     };
   });
 
-  app.get("/api/v1/integrations", async () => {
-    const tmdb = await getTmdbStatus(dependencies);
-    const states = await dependencies.integrationStateStore.list();
+  app.get("/api/v1/integrations", async (request, reply) => {
+    const requestedProfileId = (request.query as { profileId?: unknown })
+      .profileId;
+    const profileId =
+      typeof requestedProfileId === "string" && requestedProfileId.length <= 120
+        ? requestedProfileId
+        : "default";
+    if (dependencies.database.profiles.get(profileId) === null)
+      return reply.code(404).send({
+        error: {
+          code: "PROFILE_NOT_FOUND",
+          message: "This profile is not available.",
+        },
+      });
+    const tmdb = await getTmdbStatus(dependencies, profileId);
+    const states = await dependencies.integrationStateStore.list(profileId);
     const byId = new Map(states.map((state) => [state.integrationId, state]));
     const descriptors = new Map<string, IntegrationDescriptor>(
       Object.values(INTEGRATION_DESCRIPTORS).map((descriptor) => [
@@ -255,7 +303,10 @@ export function registerSystemRoutes(
     "/api/v1/integrations/:integrationId/selection",
     async (request, reply) => {
       const params = request.params as { integrationId?: unknown };
-      const body = request.body as { selected?: unknown } | null;
+      const body = request.body as {
+        selected?: unknown;
+        profileId?: unknown;
+      } | null;
       if (
         typeof params.integrationId !== "string" ||
         typeof body?.selected !== "boolean"
@@ -285,15 +336,30 @@ export function registerSystemRoutes(
           },
         });
       }
-      if (body.selected) {
-        await dependencies.integrationStateStore.set({
-          integrationId: descriptor.id,
-          status: "action_required",
-          configured: false,
-          updatedAt: dependencies.now().toISOString(),
+      const profileId =
+        typeof body.profileId === "string" ? body.profileId : "default";
+      if (dependencies.database.profiles.get(profileId) === null)
+        return reply.code(404).send({
+          error: {
+            code: "PROFILE_NOT_FOUND",
+            message: "This profile is not available.",
+          },
         });
+      if (body.selected) {
+        await dependencies.integrationStateStore.set(
+          {
+            integrationId: descriptor.id,
+            status: "action_required",
+            configured: false,
+            updatedAt: dependencies.now().toISOString(),
+          },
+          profileId,
+        );
       } else {
-        await dependencies.integrationStateStore.delete(descriptor.id);
+        await dependencies.integrationStateStore.delete(
+          descriptor.id,
+          profileId,
+        );
       }
       return integrationCatalogItem(
         descriptor,

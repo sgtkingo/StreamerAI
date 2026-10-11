@@ -139,6 +139,7 @@ export class StreamerCore {
       genres: input.preferences,
       playback: input.playback,
       onboardingComplete: true,
+      localAiEnabled: input.localAiEnabled,
     };
     if (existing === null) {
       this.database.profiles.create({ ...input, preferences });
@@ -228,6 +229,8 @@ export class StreamerCore {
   }
 
   deleteViewerProfile(profileId: string): void {
+    this.requireProfile(profileId);
+    this.database.integrations.deleteProfile(profileId);
     if (!this.database.profiles.delete(profileId)) {
       throw new UnknownProfileError(profileId);
     }
@@ -290,8 +293,7 @@ export class StreamerCore {
     let startedVisibleSearch = false;
     const seen = new Set<string>();
     for (const title of titles) {
-      if (active >= 3 && (visibleSearchRunning || startedVisibleSearch))
-        break;
+      if (active >= 3 && (visibleSearchRunning || startedVisibleSearch)) break;
       if (seen.has(title.id)) continue;
       seen.add(title.id);
       if (

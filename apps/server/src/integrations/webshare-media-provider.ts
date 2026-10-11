@@ -152,8 +152,10 @@ export class WebshareMediaProvider implements MediaProvider {
     };
   }
 
-  async health(_context: ProviderContext): Promise<ProviderHealth> {
-    const configured = await this.#client.hasCredential();
+  async health(context: ProviderContext): Promise<ProviderHealth> {
+    const configured = await this.#client
+      .forProfile(context.profileId ?? "default")
+      .hasCredential();
     return ProviderHealthSchema.parse({
       status: configured ? "degraded" : "unavailable",
       checkedAt: this.#now().toISOString(),
@@ -177,10 +179,9 @@ export class WebshareMediaProvider implements MediaProvider {
     const query = `${request.originalTitle ?? request.title}${
       episode || request.year === null ? "" : ` ${request.year}`
     }${episode}`;
-    const result = await this.#client.search(
-      { query, limit: request.limit },
-      context.signal,
-    );
+    const result = await this.#client
+      .forProfile(context.profileId ?? "default")
+      .search({ query, limit: request.limit }, context.signal);
     const retrievedAt = this.#now().toISOString();
     return result.items
       .filter((item) => !item.passwordProtected)
@@ -207,10 +208,9 @@ export class WebshareMediaProvider implements MediaProvider {
     if (candidate.providerId !== "webshare") {
       throw new ProviderRequestError("webshare", "invalid-response", false);
     }
-    const file = await this.#client.fileInfo(
-      candidate.candidateId,
-      context.signal,
-    );
+    const file = await this.#client
+      .forProfile(context.profileId ?? "default")
+      .fileInfo(candidate.candidateId, context.signal);
     if (
       !file.downloadable ||
       file.passwordProtected ||
@@ -260,9 +260,9 @@ export class WebshareMediaProvider implements MediaProvider {
     if (variant.variantId !== request.variant.variantId) {
       throw new ProviderRequestError("webshare", "invalid-response", false);
     }
-    const directUrl = await this.#client.createVideoLink(
-      request.variant.candidateId,
-    );
+    const directUrl = await this.#client
+      .forProfile(context.profileId ?? "default")
+      .createVideoLink(request.variant.candidateId);
     const grantId = randomUUID();
     const expiresAt = new Date(this.#now().getTime() + 60_000).toISOString();
     const ticketUrl = await this.#issuePlaybackTicket({
@@ -296,12 +296,15 @@ export class WebshareMediaProvider implements MediaProvider {
     rawRequest: Parameters<
       NonNullable<MediaProvider["refreshPlaybackSource"]>
     >[0],
+    context: ProviderContext,
   ): Promise<string> {
     const request = PlaybackSourceRefreshRequestSchema.parse(rawRequest);
     if (request.candidate.providerId !== "webshare") {
       throw new ProviderRequestError("webshare", "invalid-response", false);
     }
-    return this.#client.createVideoLink(request.candidate.candidateId);
+    return this.#client
+      .forProfile(context.profileId ?? "default")
+      .createVideoLink(request.candidate.candidateId);
   }
 
   async checkPlayback(
@@ -314,12 +317,15 @@ export class WebshareMediaProvider implements MediaProvider {
     }
     const variant = await this.inspect(candidate, context);
     // createVideoLink performs a byte-range probe but does not issue a ticket.
-    const directUrl = await this.#client.createVideoLink(candidate.candidateId);
+    const directUrl = await this.#client
+      .forProfile(context.profileId ?? "default")
+      .createVideoLink(candidate.candidateId);
     if (!this.#probeMedia) return;
-    const cached = this.#languageCache.get(candidate.candidateId);
+    const cacheKey = `${context.profileId ?? "default"}:${candidate.candidateId}`;
+    const cached = this.#languageCache.get(cacheKey);
     if (cached && cached.expiresAt > this.#now().getTime())
       return cached.languages;
-    const active = this.#probeJobs.get(candidate.candidateId);
+    const active = this.#probeJobs.get(cacheKey);
     if (active) return active;
     const job = this.#probeMedia(directUrl)
       .then((media: PlaybackMediaInfo) => {
@@ -348,15 +354,15 @@ export class WebshareMediaProvider implements MediaProvider {
           const oldest = this.#languageCache.keys().next().value;
           if (oldest) this.#languageCache.delete(oldest);
         }
-        this.#languageCache.set(candidate.candidateId, {
+        this.#languageCache.set(cacheKey, {
           expiresAt: this.#now().getTime() + 10 * 60_000,
           languages,
         });
         return languages;
       })
       .catch(() => undefined)
-      .finally(() => this.#probeJobs.delete(candidate.candidateId));
-    this.#probeJobs.set(candidate.candidateId, job);
+      .finally(() => this.#probeJobs.delete(cacheKey));
+    this.#probeJobs.set(cacheKey, job);
     return job;
   }
 }

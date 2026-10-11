@@ -18,10 +18,7 @@ export interface ExternalSubtitleCandidate {
 
 export const MAX_EXTERNAL_SUBTITLE_BYTES = 5 * 1024 * 1024;
 
-type SubtitleClient = Pick<
-  WebshareClient,
-  "fileInfo" | "similarSubtitles" | "downloadFile"
->;
+type SubtitleClient = WebshareClient;
 
 const LANGUAGES: Readonly<Record<string, string>> = {
   cs: "cs",
@@ -391,13 +388,15 @@ export class WebshareExternalSubtitleService {
     mediaFileId: string,
     mediaFilename?: string,
     signal?: AbortSignal,
+    profileId = "default",
   ): Promise<ExternalSubtitleCandidate[]> {
     if (!validFileId(mediaFileId))
       throw new TypeError("Media file ID is invalid.");
+    const client = this.client.forProfile(profileId);
     const filename =
-      mediaFilename ?? (await this.client.fileInfo(mediaFileId, signal)).name;
+      mediaFilename ?? (await client.fileInfo(mediaFileId, signal)).name;
     if (!splitFilename(filename)) return [];
-    const items = await this.client.similarSubtitles(filename, signal);
+    const items = await client.similarSubtitles(filename, signal);
     const byFileId = new Map<string, ExternalSubtitleCandidate>();
     for (const item of items) {
       if (
@@ -437,10 +436,12 @@ export class WebshareExternalSubtitleService {
   async load(
     fileId: string,
     signal?: AbortSignal,
+    profileId = "default",
   ): Promise<{ filename: string; content: string }> {
     if (!validFileId(fileId))
       throw new TypeError("Subtitle file ID is invalid.");
-    const file = await this.client.fileInfo(fileId, signal);
+    const client = this.client.forProfile(profileId);
+    const file = await client.fileInfo(fileId, signal);
     const extension = subtitleExtension(file.name);
     if (
       !file.downloadable ||
@@ -454,7 +455,7 @@ export class WebshareExternalSubtitleService {
     ) {
       throw new ProviderRequestError("webshare", "forbidden", false);
     }
-    const bytes = await this.client.downloadFile(
+    const bytes = await client.downloadFile(
       fileId,
       MAX_EXTERNAL_SUBTITLE_BYTES,
       signal,

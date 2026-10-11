@@ -104,6 +104,7 @@ function connectionError(id: string, code: string): string {
 interface IntegrationManagerProps {
   api: StreamerApi;
   context: "onboarding" | "settings";
+  profileId?: string;
   category?: "services" | "agents";
   initialTmdbState?: ConnectionState;
   initialWebshareState?: ConnectionState;
@@ -266,6 +267,7 @@ function ActionIcon({
 export function IntegrationManager({
   api,
   context,
+  profileId = "default",
   category = "services",
   initialTmdbState,
   initialWebshareState,
@@ -308,7 +310,7 @@ export function IntegrationManager({
   useEffect(() => {
     let active = true;
     api
-      .getIntegrations()
+      .getIntegrations(profileId)
       .then((response) => {
         if (!active) return;
         setItems((current) => {
@@ -325,7 +327,7 @@ export function IntegrationManager({
     return () => {
       active = false;
     };
-  }, [api, discoveryRevision]);
+  }, [api, discoveryRevision, profileId]);
 
   const visible = (item: IntegrationCatalogItem) =>
     item.configured || item.selected || addedIds.includes(item.id);
@@ -367,6 +369,7 @@ export function IntegrationManager({
       const result = await api.connectLocalAgent({
         baseUrl: agentFormBaseUrl,
         model: agentFormModel,
+        profileId,
       });
       if (!result.ok) {
         setAgentFormError(
@@ -405,7 +408,11 @@ export function IntegrationManager({
     if (item.planned) {
       setWorkingId(item.id);
       try {
-        const updated = await api.setIntegrationSelected(item.id, true);
+        const updated = await api.setIntegrationSelected(
+          item.id,
+          true,
+          profileId,
+        );
         setItems((current) =>
           current.map((entry) =>
             entry.id === item.id
@@ -449,8 +456,8 @@ export function IntegrationManager({
     try {
       const result =
         id === "tmdb"
-          ? await api.connectTmdb(cleanToken)
-          : await api.connectWebshare(username.trim(), password);
+          ? await api.connectTmdb(cleanToken, profileId)
+          : await api.connectWebshare(username.trim(), password, profileId);
       setPassword("");
       setShowPassword(false);
       if (!result.ok) {
@@ -497,9 +504,9 @@ export function IntegrationManager({
     setMessage(null);
     try {
       if (item.planned) {
-        await api.setIntegrationSelected(item.id, false);
+        await api.setIntegrationSelected(item.id, false, profileId);
       } else if (item.configured) {
-        await api.disconnectIntegration(item.id);
+        await api.disconnectIntegration(item.id, profileId);
         onConnectionChange?.(item.id, false);
       }
       setItems((current) =>

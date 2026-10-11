@@ -16,13 +16,17 @@ import type { InferenceFetch } from "./integrations/ollama-preflight.js";
 import { type FetchLike } from "./integrations/tmdb-client.js";
 import type { ProviderFetch } from "./integrations/tmdb-api-client.js";
 import { TmdbApiClient } from "./integrations/tmdb-api-client.js";
+import { TMDB_READ_TOKEN_SECRET_KEY } from "./integrations/tmdb-client.js";
 import { TmdbMetadataProvider } from "./integrations/tmdb-metadata-provider.js";
-import { WebshareClient } from "./integrations/webshare-client.js";
+import {
+  WEBSHARE_WST_SECRET_KEY,
+  WebshareClient,
+} from "./integrations/webshare-client.js";
 import { WebshareMediaProvider } from "./integrations/webshare-media-provider.js";
 import { LocalMediaProvider } from "./integrations/local-media-provider.js";
 import { OllamaAgentProvider } from "./integrations/ollama-agent-provider.js";
 import {
-  MANUAL_AGENT_SETTING_KEY,
+  manualAgentSettingKey,
   parseManualAgentConfig,
   type ManualAgentConfig,
 } from "./integrations/manual-agent-config.js";
@@ -60,6 +64,7 @@ import {
 import {
   createSecretStore,
   EncryptedFileSecretStore,
+  profileSecretKey,
   type SecretStore,
 } from "./stores/secret-store.js";
 import { readRuntimeConfig, type RuntimeConfig } from "./runtime-config.js";
@@ -164,16 +169,26 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
     database = openStreamerDatabase({ filename, clock: now });
   }
   const activeInferenceConfig = { ...runtimeConfig.inference };
-  let manualAgent = false;
-  const storedAgent = database.settings.get<unknown>(MANUAL_AGENT_SETTING_KEY);
-  if (storedAgent !== null) {
-    try {
-      Object.assign(activeInferenceConfig, parseManualAgentConfig(storedAgent));
-      manualAgent = true;
-    } catch {
-      // Ignore invalid saved data and keep the configured default agent.
+  const profileInferenceConfigs = new Map<string, RuntimeConfig["inference"]>();
+  const configForProfile = (profileId: string) => {
+    const cached = profileInferenceConfigs.get(profileId);
+    if (cached) return cached;
+    const config = { ...runtimeConfig.inference };
+    const stored = database.settings.get<unknown>(
+      manualAgentSettingKey(profileId),
+    );
+    if (stored !== null) {
+      try {
+        Object.assign(config, parseManualAgentConfig(stored));
+      } catch {
+        // Invalid saved values leave this profile on the server defaults.
+      }
     }
-  }
+    profileInferenceConfigs.set(profileId, config);
+    return config;
+  };
+  const isManualAgent = (profileId: string) =>
+    database.settings.get<unknown>(manualAgentSettingKey(profileId)) !== null;
   const stores = createStores(options, database, environment, runtimeConfig);
   const playbackTicketStore =
     options.playbackTicketStore ?? new InMemoryPlaybackTicketStore(now);
@@ -223,6 +238,7 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
   );
   const agent = new OllamaAgentProvider({
     config: activeInferenceConfig,
+    configForProfile,
     now,
   });
   const providerDescriptors = [
@@ -247,9 +263,10 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
           metadata,
           media,
           integrationStateStore: stores.integrationStateStore,
-          secretRefForProvider: (providerId) =>
-            database.integrations.getSecretRef(providerId),
+          secretRefForProvider: (providerId, profileId) =>
+            database.integrations.getSecretRef(providerId, profileId),
           inference: activeInferenceConfig,
+          inferenceForProfile: configForProfile,
           localeForProfile: (profileId) =>
             database.profiles.get(profileId)?.locale ?? "en",
           now,
@@ -331,6 +348,18 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
     core,
     ensureLocalLibrary: (profileId) =>
       localMediaLibrary.ensureProfileLibrary(profileId),
+    onDeleteProfile: async (profileId) => {
+      await Promise.all([
+        stores.secretStore.delete(
+          profileSecretKey(profileId, TMDB_READ_TOKEN_SECRET_KEY),
+        ),
+        stores.secretStore.delete(
+          profileSecretKey(profileId, WEBSHARE_WST_SECRET_KEY),
+        ),
+      ]);
+      database.settings.delete(manualAgentSettingKey(profileId));
+      profileInferenceConfigs.delete(profileId);
+    },
   });
   registerLocalFilesRoutes(
     app,
@@ -368,7 +397,10 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
           profileId: ticket.profileId,
           locale: database.profiles.get(ticket.profileId)?.locale ?? "en",
           deadlineAt: new Date(now().getTime() + 15_000).toISOString(),
-          secretRef: database.integrations.getSecretRef(ticket.providerId),
+          secretRef: database.integrations.getSecretRef(
+            ticket.providerId,
+            ticket.profileId,
+          ),
         },
       );
     },
@@ -384,11 +416,11 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
       },
       localeForProfile: (profileId) =>
         database.profiles.get(profileId)?.locale ?? "en",
-      isEnabled: async (providerId) =>
-        (await stores.integrationStateStore.get(providerId))?.configured ===
-        true,
-      secretRefForProvider: (providerId) =>
-        database.integrations.getSecretRef(providerId),
+      isEnabled: async (providerId, profileId) =>
+        (await stores.integrationStateStore.get(providerId, profileId))
+          ?.configured === true,
+      secretRefForProvider: (providerId, ticket) =>
+        database.integrations.getSecretRef(providerId, ticket.profileId),
       onProviderFailure: (providerId, phase) =>
         app.log.warn(
           { code: "PLAYBACK_SUBTITLE_PROVIDER_FAILED", providerId, phase },
@@ -399,19 +431,22 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
   registerInferenceRoutes(app, {
     fetch: options.inferenceFetch ?? defaultInferenceFetch(),
     config: activeInferenceConfig,
+    configForProfile,
+    profileExists: (profileId) => database.profiles.get(profileId) !== null,
     integrationStateStore: stores.integrationStateStore,
     now,
-    isManualAgent: () => manualAgent,
-    saveManualAgent: (selection: ManualAgentConfig) => {
-      database.settings.set(MANUAL_AGENT_SETTING_KEY, selection);
-      Object.assign(activeInferenceConfig, selection);
-      manualAgent = true;
+    isManualAgent,
+    saveManualAgent: (selection: ManualAgentConfig, profileId: string) => {
+      database.settings.set(manualAgentSettingKey(profileId), selection);
+      profileInferenceConfigs.delete(profileId);
+      Object.assign(configForProfile(profileId), selection);
     },
   });
   registerTmdbRoutes(app, {
     fetch: options.fetch ?? defaultFetch(),
     secretStore: stores.secretStore,
     integrationStateStore: stores.integrationStateStore,
+    profileExists: (profileId) => database.profiles.get(profileId) !== null,
     timeoutMs: options.tmdbTimeoutMs ?? 8_000,
     now,
   });
@@ -419,6 +454,7 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
     fetch: options.providerFetch ?? defaultProviderFetch(),
     secretStore: stores.secretStore,
     integrationStateStore: stores.integrationStateStore,
+    profileExists: (profileId) => database.profiles.get(profileId) !== null,
     timeoutMs: 8_000,
     now,
   });

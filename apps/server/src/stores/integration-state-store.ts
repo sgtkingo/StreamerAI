@@ -19,10 +19,13 @@ export interface IntegrationStateStore {
   readonly isPersistent: boolean;
 
   isReady(): Promise<boolean>;
-  get(integrationId: string): Promise<IntegrationState | undefined>;
-  list(): Promise<IntegrationState[]>;
-  set(state: IntegrationState): Promise<void>;
-  delete(integrationId: string): Promise<void>;
+  get(
+    integrationId: string,
+    profileId?: string,
+  ): Promise<IntegrationState | undefined>;
+  list(profileId?: string): Promise<IntegrationState[]>;
+  set(state: IntegrationState, profileId?: string): Promise<void>;
+  delete(integrationId: string, profileId?: string): Promise<void>;
 }
 
 /**
@@ -38,21 +41,26 @@ export class NonPersistentMemoryIntegrationStateStore implements IntegrationStat
     return true;
   }
 
-  async get(integrationId: string): Promise<IntegrationState | undefined> {
-    const value = this.#states.get(integrationId);
+  async get(
+    integrationId: string,
+    profileId = "default",
+  ): Promise<IntegrationState | undefined> {
+    const value = this.#states.get(`${profileId}:${integrationId}`);
     return value === undefined ? undefined : { ...value };
   }
 
-  async list(): Promise<IntegrationState[]> {
-    return [...this.#states.values()].map((state) => ({ ...state }));
+  async list(profileId = "default"): Promise<IntegrationState[]> {
+    return [...this.#states.entries()]
+      .filter(([key]) => key.startsWith(`${profileId}:`))
+      .map(([, state]) => ({ ...state }));
   }
 
-  async set(state: IntegrationState): Promise<void> {
-    this.#states.set(state.integrationId, { ...state });
+  async set(state: IntegrationState, profileId = "default"): Promise<void> {
+    this.#states.set(`${profileId}:${state.integrationId}`, { ...state });
   }
 
-  async delete(integrationId: string): Promise<void> {
-    this.#states.delete(integrationId);
+  async delete(integrationId: string, profileId = "default"): Promise<void> {
+    this.#states.delete(`${profileId}:${integrationId}`);
   }
 }
 
@@ -72,9 +80,13 @@ export class SqliteIntegrationStateStore implements IntegrationStateStore {
     }
   }
 
-  async get(integrationId: string): Promise<IntegrationState | undefined> {
+  async get(
+    integrationId: string,
+    profileId = "default",
+  ): Promise<IntegrationState | undefined> {
     const value = this.database.integrations.get(
       IntegrationIdSchema.parse(integrationId),
+      profileId,
     );
     if (value === null) return undefined;
     return {
@@ -97,16 +109,18 @@ export class SqliteIntegrationStateStore implements IntegrationStateStore {
     };
   }
 
-  async list(): Promise<IntegrationState[]> {
+  async list(profileId = "default"): Promise<IntegrationState[]> {
     const values = await Promise.all(
-      this.database.integrations.list().map((item) => this.get(item.id)),
+      this.database.integrations
+        .list(profileId)
+        .map((item) => this.get(item.id, profileId)),
     );
     return values.filter(
       (item): item is IntegrationState => item !== undefined,
     );
   }
 
-  async set(state: IntegrationState): Promise<void> {
+  async set(state: IntegrationState, profileId = "default"): Promise<void> {
     const id = IntegrationIdSchema.parse(state.integrationId);
     const setupStatus = state.configured
       ? state.status === "action_required"
@@ -125,24 +139,30 @@ export class SqliteIntegrationStateStore implements IntegrationStateStore {
           : state.status === "action_required"
             ? "degraded"
             : "unknown";
-    this.database.integrations.upsert({
-      id,
-      enabled: state.status !== "not_configured",
-      setupStatus,
-      healthStatus,
-      healthCode: null,
-      lastCheckedAt: state.checkedAt ?? null,
-    });
+    this.database.integrations.upsert(
+      {
+        id,
+        enabled: state.status !== "not_configured",
+        setupStatus,
+        healthStatus,
+        healthCode: null,
+        lastCheckedAt: state.checkedAt ?? null,
+      },
+      profileId,
+    );
   }
 
-  async delete(integrationId: string): Promise<void> {
-    this.database.integrations.upsert({
-      id: IntegrationIdSchema.parse(integrationId),
-      enabled: false,
-      setupStatus: "disabled",
-      healthStatus: "disabled",
-      healthCode: null,
-      lastCheckedAt: null,
-    });
+  async delete(integrationId: string, profileId = "default"): Promise<void> {
+    this.database.integrations.upsert(
+      {
+        id: IntegrationIdSchema.parse(integrationId),
+        enabled: false,
+        setupStatus: "disabled",
+        healthStatus: "disabled",
+        healthCode: null,
+        lastCheckedAt: null,
+      },
+      profileId,
+    );
   }
 }

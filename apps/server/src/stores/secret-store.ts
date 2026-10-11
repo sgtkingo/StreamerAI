@@ -6,6 +6,16 @@ export type StorePersistence = "memory" | "persistent";
 export type SecretStoreBackend =
   "memory" | "encrypted-file" | "os-keychain" | "external";
 
+/** Keeps the first profile's existing vault keys readable during migration. */
+export function profileSecretKey(profileId: string, key: string): string {
+  if (profileId === "default") return key;
+  const profileToken = Buffer.from(profileId, "utf8").toString("base64url");
+  const scoped = `profile.${profileToken}.${key}`;
+  if (scoped.length > 256)
+    throw new TypeError("Profile secret key is too long.");
+  return scoped;
+}
+
 export interface SecretStoreCapabilities {
   readonly persistence: StorePersistence;
   readonly backend: SecretStoreBackend;

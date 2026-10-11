@@ -40,7 +40,7 @@ export interface MultiSourceSubtitleOptions {
   providers: ProviderRegistry<SubtitleProvider>;
   titleForTicket: (ticket: PlaybackTicketRecord) => TitleIdentity | null;
   localeForProfile: (profileId: string) => "cs" | "en" | "de";
-  isEnabled: (providerId: string) => Promise<boolean>;
+  isEnabled: (providerId: string, profileId: string) => Promise<boolean>;
   /** Opaque secret-store pointer, never the credential or a browser value. */
   secretRefForProvider?: (
     providerId: string,
@@ -136,7 +136,12 @@ export class MultiSourceExternalSubtitleService {
     ) {
       searches.push(
         this.#options.legacy
-          .discover(ticket.variantId, ticket.sourceFilename, signal)
+          .discover(
+            ticket.variantId,
+            ticket.sourceFilename,
+            signal,
+            ticket.profileId,
+          )
           .then((tracks) =>
             tracks.flatMap((item) => {
               const parsed = ExternalSubtitleTrackSchema.safeParse(item);
@@ -190,12 +195,17 @@ export class MultiSourceExternalSubtitleService {
     if (selection.kind === "legacy") {
       if (!this.#options.legacy)
         throw new Error("Subtitle source is unavailable.");
-      return this.#options.legacy.load(track.fileId, signal);
+      return this.#options.legacy.load(track.fileId, signal, ticket.profileId);
     }
 
     const { candidate, provider } = selection;
     try {
-      if (!(await this.#options.isEnabled(candidate.ref.providerId)))
+      if (
+        !(await this.#options.isEnabled(
+          candidate.ref.providerId,
+          ticket.profileId,
+        ))
+      )
         throw new Error("Subtitle provider is disconnected.");
       const context = await this.#context(
         ticket,
@@ -236,7 +246,8 @@ export class MultiSourceExternalSubtitleService {
   ): Promise<Selection[]> {
     const providerId = provider.descriptor().id;
     try {
-      if (!(await this.#options.isEnabled(providerId))) return [];
+      if (!(await this.#options.isEnabled(providerId, ticket.profileId)))
+        return [];
       const locale = this.#options.localeForProfile(ticket.profileId);
       const request = SubtitleSearchRequestSchema.parse({
         titleId: ticket.titleId,

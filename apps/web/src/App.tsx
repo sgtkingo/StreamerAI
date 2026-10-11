@@ -69,7 +69,7 @@ export function App({ api = apiClient, forceOnboarding = false }: AppProps) {
     setSetupState("complete");
     setRerunProfile(null);
     void api
-      .getSetupStatus()
+      .getSetupStatus(selectedId ?? "default")
       .then((status) => setPlaybackEnabled(status.playback))
       .catch(() => undefined);
     void loadProfiles().then((items) => {
@@ -154,7 +154,7 @@ export function App({ api = apiClient, forceOnboarding = false }: AppProps) {
       onRerunOnboarding={() => setRerunProfile(activeProfile)}
       onIntegrationsChanged={() => {
         void api
-          .getSetupStatus()
+          .getSetupStatus(activeProfile.id)
           .then((status) => setPlaybackEnabled(status.playback))
           .catch(() => undefined);
       }}

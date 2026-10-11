@@ -282,6 +282,8 @@ export function HomePage({
       try {
         const status = await api.getInferenceResidency(
           activeSearch.current?.signal,
+          false,
+          profileId,
         );
         if (
           status.state === "loaded" &&
@@ -522,7 +524,7 @@ export function HomePage({
           setIsWakingAgent(false);
         });
       void api
-        .getInferenceResidency(controller.signal, true)
+        .getInferenceResidency(controller.signal, true, profileId)
         .then((status) => {
           if (
             serial === searchSerial.current &&
@@ -541,6 +543,7 @@ export function HomePage({
           const status = await api.getInferenceResidency(
             controller.signal,
             true,
+            profileId,
           );
           if (serial !== searchSerial.current || controller.signal.aborted)
             return;

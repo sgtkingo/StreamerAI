@@ -23,10 +23,12 @@ export interface ExternalSubtitleSource {
     mediaFileId: string,
     mediaFilename?: string,
     signal?: AbortSignal,
+    profileId?: string,
   ): Promise<ExternalSubtitleTrack[]>;
   load(
     fileId: string,
     signal?: AbortSignal,
+    profileId?: string,
   ): Promise<{ filename: string; content: string }>;
 }
 

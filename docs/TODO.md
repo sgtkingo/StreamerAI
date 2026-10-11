@@ -61,7 +61,7 @@ Pro titulky:
 
 - DONE: Měli bychom uživatelům umožnit stahovat obsah do své offline knihovny. Tuto knihovnu implementuj jako součást integrace Local folder or drive: tzn součást tohoto tasku je i  obecna integrace konektoru Local folder or drive. Tento konektor by měl umožnovat připojit více složek / disků, které bude rekurzivně async prohledávat a obohacovat Library. Nastavení by mělo sočívat v přidání / odebírání složek, a filtraci dle formátů (třeba mkv, avi, mp4, defaultně vše on). 
 
-- Po zavření přehrávače se někdy možnost skrolování zasekne.  Černé pozadí pod křížkem Close v kartě by měl začínát více v roku, at jde plynule z úplně černé. Zelený symbol stažení by u dláždice měl být bez fajfky - prostě původní download ikona ale jen zelená, v kartě ji nech tak. Po dokončení stahování titulu by se ikona měla změnit na červený trash a další kliknutím by měl být titul smazán (po potvrzení uživatelem). 
+- DONE: Po zavření přehrávače se někdy možnost skrolování zasekne.  Černé pozadí pod křížkem Close v kartě by měl začínát více v roku, at jde plynule z úplně černé. Zelený symbol stažení by u dláždice měl být bez fajfky - prostě původní download ikona ale jen zelená, v kartě ji nech tak. Po dokončení stahování titulu by se ikona měla změnit na červený trash a další kliknutím by měl být titul smazán (po potvrzení uživatelem). 
 
 - DONE:U nastavení 06 / Agent adapters - AI agent chce uživatel jasně vidět název modelu na který je napojen - dej ho do vniřního bloku který se týká agenta (místo "Local AI"). "Local AI
 On-device recommendations and interpretation." je rudundatní informace. Tlačítko "Check local agent" přsun do bloku s agentem, a přejmenuj ho na "Check agent a dej mu ikonu terčíku se středem". Místo tlačítka "Check local agent" dej na jeho místo tlačítko "Discover local agents" které spustí explicití hledání dalších agentů, ikona radaru. V Add-more nepiš "All listed services in this group are already added." ale spíše "Sorry, no more agents found." - barvu světle šedá. Save settings by měl zároven zavřít celé settings.
@@ -85,4 +85,10 @@ I found some ideas, but none could be validated reliably. Is this what you had i
 
 DONE: Subtitles vyvolávájí Loading subtitles - to není UI přívětívé a navíc se titulky nenačtou v některých případech. Nechápu jaktože titulk dělají takvý problém. Přijde mi že po seek se zase načítají odznovu a zas  časují. Jaktože to ve VLC jde bez problému a okamžitě?  
 
-- Dláždice při Checking se skokově zvětšuje a zmenšuje, asi to bude periodických updatem
+- Měli bychom uživatelům umožnit stáhnout komplet celý seiál (všechny dostupné episody, synchronně one-by-one) stejně jako film - tlačítko download na kartě. 
+
+- Návrh optimalizace: Pokud je nějaký titul Unavaible (i díl seriálu), dohledávání už nebude automatické ale jen na vyžádání uživatelem. U filmu přes Check tlačítko jako nyní, u seriálu Try find more episodes pro vechny díly (jako nyní) nebo kliknutím na tlačíto "Try again" přímo u konkterétního Unavaible dílu (UI pro kartu i seznam episod). Ušetříme tím opakované dotazy na server. 
+
+- Potřebujeme dodělat konektory pro remote agenty: ChatGPT, Claude, Geminy, Grok, Kimi, DeepSeek... Nabízejí se dvě možnosti: API a MCP. Bylo by dobré kdyby StreamerAI uměl obě varianty. 
+ U MCP bych rád tento hybrdní mod:
+ <prompt>

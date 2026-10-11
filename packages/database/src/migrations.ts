@@ -301,6 +301,46 @@ export const MIGRATIONS: readonly Migration[] = [
         ('titulky-com', 0, 'disabled', 'disabled', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
     `,
   },
+  {
+    version: 8,
+    name: "profile_scoped_integrations",
+    sql: `
+      CREATE TABLE profile_integration_connections (
+        profile_id TEXT NOT NULL CHECK (length(profile_id) BETWEEN 1 AND 120),
+        integration_id TEXT NOT NULL CHECK (
+          length(integration_id) BETWEEN 1 AND 80
+          AND integration_id NOT GLOB '*[^a-z0-9-]*'
+          AND substr(integration_id, 1, 1) GLOB '[a-z]'
+        ),
+        enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+        setup_status TEXT NOT NULL CHECK (
+          setup_status IN (
+            'not-configured', 'needs-user-action', 'checking', 'ready', 'degraded', 'failed', 'disabled'
+          )
+        ),
+        health_status TEXT NOT NULL CHECK (
+          health_status IN ('unknown', 'healthy', 'degraded', 'unavailable', 'disabled')
+        ),
+        secret_ref TEXT CHECK (secret_ref IS NULL OR length(secret_ref) BETWEEN 1 AND 512),
+        health_code TEXT CHECK (health_code IS NULL OR length(health_code) BETWEEN 1 AND 80),
+        last_checked_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (profile_id, integration_id)
+      ) STRICT;
+
+      CREATE INDEX profile_integration_connections_id_idx
+        ON profile_integration_connections (integration_id, profile_id);
+
+      INSERT INTO profile_integration_connections (
+        profile_id, integration_id, enabled, setup_status, health_status, secret_ref,
+        health_code, last_checked_at, created_at, updated_at
+      )
+      SELECT 'default', integration_id, enabled, setup_status, health_status, secret_ref,
+        health_code, last_checked_at, created_at, updated_at
+      FROM integration_connections;
+    `,
+  },
 ] as const;
 
 export function applyMigrations(

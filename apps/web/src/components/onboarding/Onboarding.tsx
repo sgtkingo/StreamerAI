@@ -35,6 +35,7 @@ export function Onboarding({
   existingProfile,
   onCancel,
 }: OnboardingProps) {
+  const profileId = existingProfile?.id ?? "default";
   const [step, setStep] = useState(0);
   const [profile, setProfile] = useState<ProfileDraft>({
     name: existingProfile?.name ?? "",
@@ -53,7 +54,7 @@ export function Onboarding({
   useEffect(() => {
     let active = true;
     api
-      .getSetupStatus()
+      .getSetupStatus(profileId)
       .then((status) => {
         if (active) {
           setTmdbState(status.tmdb);
@@ -67,7 +68,7 @@ export function Onboarding({
     return () => {
       active = false;
     };
-  }, [api]);
+  }, [api, profileId]);
 
   useEffect(() => {
     const heading = contentRef.current?.querySelector<HTMLElement>("h1");
@@ -87,7 +88,7 @@ export function Onboarding({
       await api.completeSetup({
         profile: { ...profile, name: profile.name.trim() || "Viewer" },
         localAiEnabled,
-        ...(existingProfile ? { profileId: existingProfile.id } : {}),
+        profileId,
       });
       onComplete(profile);
     } catch (error) {
@@ -157,6 +158,7 @@ export function Onboarding({
           {step === 2 && (
             <ConnectionsStep
               api={api}
+              profileId={profileId}
               initialTmdbState={tmdbState}
               initialWebshareState={webshareState}
               onTmdbConnected={() => setTmdbState("connected")}
@@ -168,6 +170,7 @@ export function Onboarding({
           {step === 3 && (
             <LocalAiStep
               api={api}
+              profileId={profileId}
               enabled={localAiEnabled}
               onEnabledChange={setLocalAiEnabled}
             />

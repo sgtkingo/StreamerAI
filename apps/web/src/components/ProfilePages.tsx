@@ -86,7 +86,7 @@ export function ProfilePages({
     if (page !== "settings") return;
     let active = true;
     void api
-      .getLocalAgent()
+      .getLocalAgent(profile.id)
       .then(({ model, baseUrl }) => {
         if (active) {
           setAgentModel(model);
@@ -175,7 +175,7 @@ export function ProfilePages({
     setCheckingAgent(true);
     setAgentCheck("");
     try {
-      const result = await api.detectLocalAi();
+      const result = await api.detectLocalAi(profile.id);
       if (result.model) setAgentModel(result.model);
       setAgentCheck(
         result.message ||
@@ -195,7 +195,7 @@ export function ProfilePages({
     setDiscoveringAgents(true);
     setDiscoveryMessage("");
     try {
-      const result = await api.discoverLocalAgents();
+      const result = await api.discoverLocalAgents(profile.id);
       setDiscoveredAgentIds(result.availableIds);
       setDiscoveryRevision((current) => current + 1);
       if (!result.runtimeAvailable) {
@@ -296,6 +296,7 @@ export function ProfilePages({
             <IntegrationManager
               api={api}
               context="settings"
+              profileId={profile.id}
               onConnectionChange={onIntegrationsChanged}
             />
           </section>
@@ -316,6 +317,7 @@ export function ProfilePages({
                 <IntegrationManager
                   api={api}
                   context="settings"
+                  profileId={profile.id}
                   category="agents"
                   onConnectionChange={onIntegrationsChanged}
                   agentModel={agentModel}

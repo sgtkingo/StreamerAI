@@ -1,4 +1,5 @@
 import type { SecretStore } from "../stores/secret-store.js";
+import { profileSecretKey } from "../stores/secret-store.js";
 import { TMDB_READ_TOKEN_SECRET_KEY } from "./tmdb-client.js";
 import {
   isAbortFailure,
@@ -33,6 +34,7 @@ export interface TmdbApiClientOptions {
   fetch?: ProviderFetch;
   baseUrl?: string;
   timeoutMs?: number;
+  profileId?: string;
 }
 
 function defaultProviderFetch(
@@ -76,6 +78,7 @@ export class TmdbApiClient {
   readonly #fetch: ProviderFetch;
   readonly #baseUrl: string;
   readonly #timeoutMs: number;
+  readonly #profileId: string;
 
   constructor(options: TmdbApiClientOptions) {
     this.#secretStore = options.secretStore;
@@ -84,6 +87,17 @@ export class TmdbApiClient {
       options.baseUrl ?? process.env.TMDB_BASE_URL ?? DEFAULT_TMDB_BASE_URL,
     );
     this.#timeoutMs = options.timeoutMs ?? 8_000;
+    this.#profileId = options.profileId ?? "default";
+  }
+
+  forProfile(profileId: string): TmdbApiClient {
+    return new TmdbApiClient({
+      secretStore: this.#secretStore,
+      fetch: this.#fetch,
+      baseUrl: this.#baseUrl,
+      timeoutMs: this.#timeoutMs,
+      profileId,
+    });
   }
 
   searchMovie(
@@ -284,7 +298,9 @@ export class TmdbApiClient {
     query: Readonly<Record<string, string>> = {},
     signal?: AbortSignal,
   ): Promise<unknown> {
-    const token = await this.#secretStore.get(TMDB_READ_TOKEN_SECRET_KEY);
+    const token = await this.#secretStore.get(
+      profileSecretKey(this.#profileId, TMDB_READ_TOKEN_SECRET_KEY),
+    );
     if (token === undefined) {
       throw new ProviderRequestError("tmdb", "not-configured", false);
     }

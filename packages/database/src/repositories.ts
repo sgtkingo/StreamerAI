@@ -1620,24 +1620,30 @@ export class IntegrationsRepository {
     private readonly clock: Clock,
   ) {}
 
-  get(id: IntegrationId): IntegrationPublicStatus | null {
-    const row = this.getStored(IntegrationIdSchema.parse(id));
+  get(
+    id: IntegrationId,
+    profileId = "default",
+  ): IntegrationPublicStatus | null {
+    const row = this.getStored(IntegrationIdSchema.parse(id), profileId);
     return row === null ? null : toPublicIntegrationConnection(row);
   }
 
-  list(): IntegrationPublicStatus[] {
+  list(profileId = "default"): IntegrationPublicStatus[] {
     return (
       this.database
         .prepare(
-          "SELECT * FROM integration_connections ORDER BY integration_id",
+          "SELECT * FROM profile_integration_connections WHERE profile_id = ? ORDER BY integration_id",
         )
-        .all() as IntegrationConnectionRow[]
+        .all(profileId) as IntegrationConnectionRow[]
     ).map(toPublicIntegrationConnection);
   }
 
-  upsert(input: UpsertIntegrationConnectionInput): IntegrationPublicStatus {
+  upsert(
+    input: UpsertIntegrationConnectionInput,
+    profileId = "default",
+  ): IntegrationPublicStatus {
     const id = IntegrationIdSchema.parse(input.id);
-    const existing = this.getStored(id);
+    const existing = this.getStored(id, profileId);
     const hasSecretRef = Object.prototype.hasOwnProperty.call(
       input,
       "secretRef",
@@ -1664,11 +1670,11 @@ export class IntegrationsRepository {
     this.database
       .prepare(
         `
-        INSERT INTO integration_connections (
-          integration_id, enabled, setup_status, health_status, secret_ref, health_code,
+        INSERT INTO profile_integration_connections (
+          profile_id, integration_id, enabled, setup_status, health_status, secret_ref, health_code,
           last_checked_at, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(integration_id) DO UPDATE SET
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(profile_id, integration_id) DO UPDATE SET
           enabled = excluded.enabled,
           setup_status = excluded.setup_status,
           health_status = excluded.health_status,
@@ -1679,6 +1685,7 @@ export class IntegrationsRepository {
       `,
       )
       .run(
+        profileId,
         id,
         input.enabled ? 1 : 0,
         IntegrationSetupStateSchema.parse(input.setupStatus),
@@ -1690,7 +1697,7 @@ export class IntegrationsRepository {
         now,
       );
 
-    const publicConnection = this.get(id);
+    const publicConnection = this.get(id, profileId);
     if (publicConnection === null) {
       throw new Error(`Integration '${id}' was not persisted.`);
     }
@@ -1698,25 +1705,39 @@ export class IntegrationsRepository {
   }
 
   /** Resolve only at the secret-manager boundary; never return this value through an API. */
-  getSecretRef(id: IntegrationId): string | null {
-    return this.getStored(IntegrationIdSchema.parse(id))?.secret_ref ?? null;
+  getSecretRef(id: IntegrationId, profileId = "default"): string | null {
+    return (
+      this.getStored(IntegrationIdSchema.parse(id), profileId)?.secret_ref ??
+      null
+    );
   }
 
-  clearSecretRef(id: IntegrationId): void {
+  clearSecretRef(id: IntegrationId, profileId = "default"): void {
     this.database
       .prepare(
-        "UPDATE integration_connections SET secret_ref = NULL, updated_at = ? WHERE integration_id = ?",
+        "UPDATE profile_integration_connections SET secret_ref = NULL, updated_at = ? WHERE profile_id = ? AND integration_id = ?",
       )
-      .run(isoNow(this.clock), IntegrationIdSchema.parse(id));
+      .run(isoNow(this.clock), profileId, IntegrationIdSchema.parse(id));
   }
 
-  private getStored(id: IntegrationId): IntegrationConnectionRow | null {
+  deleteProfile(profileId: string): void {
+    this.database
+      .prepare(
+        "DELETE FROM profile_integration_connections WHERE profile_id = ?",
+      )
+      .run(profileId);
+  }
+
+  private getStored(
+    id: IntegrationId,
+    profileId: string,
+  ): IntegrationConnectionRow | null {
     return (
       (this.database
         .prepare(
-          "SELECT * FROM integration_connections WHERE integration_id = ?",
+          "SELECT * FROM profile_integration_connections WHERE profile_id = ? AND integration_id = ?",
         )
-        .get(id) as IntegrationConnectionRow | undefined) ?? null
+        .get(profileId, id) as IntegrationConnectionRow | undefined) ?? null
     );
   }
 

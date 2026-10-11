@@ -268,7 +268,8 @@ export class OfflineDownloadManager {
     job: OfflineDownload,
     candidateId: string,
     filename: string,
-    selectedEpisode: { seasonNumber: number; episodeNumber: number } | undefined,
+    selectedEpisode:
+      { seasonNumber: number; episodeNumber: number } | undefined,
     signal: AbortSignal,
     existing?: SavedDownload,
   ): Promise<void> {
@@ -304,7 +305,9 @@ export class OfflineDownloadManager {
     let downloaded = false;
     try {
       const url = validatePlaybackSourceUrl(
-        await this.webshare.createVideoLink(candidateId),
+        await this.webshare
+          .forProfile(job.profileId)
+          .createVideoLink(candidateId),
       );
       const response = await this.fetchSource(url, {
         method: "GET",

@@ -126,12 +126,15 @@ export interface PlaybackCheckResult {
 }
 
 export interface StreamerApi {
-  getIntegrations(): Promise<{ items: IntegrationCatalogItem[] }>;
+  getIntegrations(
+    profileId?: string,
+  ): Promise<{ items: IntegrationCatalogItem[] }>;
   setIntegrationSelected(
     id: string,
     selected: boolean,
+    profileId?: string,
   ): Promise<IntegrationCatalogItem>;
-  disconnectIntegration(id: string): Promise<void>;
+  disconnectIntegration(id: string, profileId?: string): Promise<void>;
   getLocalFolders(): Promise<LocalFolderConfig>;
   selectLocalFolder(): Promise<LocalFolderConfig | null>;
   addLocalFolder(path: string): Promise<LocalFolderConfig>;
@@ -153,22 +156,25 @@ export interface StreamerApi {
   ): Promise<OfflineDownload>;
   cancelOfflineDownload(profileId: string, downloadId: string): Promise<void>;
   deleteOfflineDownload?(profileId: string, downloadId: string): Promise<void>;
-  getSetupStatus(): Promise<SetupStatus>;
-  connectTmdb(token: string): Promise<ConnectionResult>;
+  getSetupStatus(profileId?: string): Promise<SetupStatus>;
+  connectTmdb(token: string, profileId?: string): Promise<ConnectionResult>;
   connectWebshare(
     username: string,
     password: string,
+    profileId?: string,
   ): Promise<ConnectionResult>;
-  detectLocalAi(): Promise<LocalAiResult>;
-  getLocalAgent(): Promise<LocalAgentInfo>;
+  detectLocalAi(profileId?: string): Promise<LocalAiResult>;
+  getLocalAgent(profileId?: string): Promise<LocalAgentInfo>;
   connectLocalAgent(input: {
     baseUrl: string;
     model: string;
+    profileId?: string;
   }): Promise<LocalAgentConnectResult>;
-  discoverLocalAgents(): Promise<LocalAgentDiscovery>;
+  discoverLocalAgents(profileId?: string): Promise<LocalAgentDiscovery>;
   getInferenceResidency(
     signal?: AbortSignal,
     record?: boolean,
+    profileId?: string,
   ): Promise<{ state: "loaded" | "unloaded" | "unknown"; checkedAt: string }>;
   completeSetup(request: CompleteSetupRequest): Promise<void>;
   getProfiles(): Promise<{ items: ViewerProfile[]; limit: number }>;
@@ -399,6 +405,7 @@ function readIntegrationResult(
 
 async function connectTmdb(
   token: string,
+  profileId = "default",
 ): Promise<IntegrationConnectionResult> {
   let response: Response;
   try {
@@ -408,7 +415,7 @@ async function connectTmdb(
         Accept: "application/json",
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ token }),
+      body: JSON.stringify({ token, profileId }),
     });
   } catch {
     throw new ApiError(
@@ -434,6 +441,7 @@ async function connectTmdb(
 async function connectWebshare(
   username: string,
   password: string,
+  profileId = "default",
 ): Promise<IntegrationConnectionResult> {
   let response: Response;
   try {
@@ -443,7 +451,7 @@ async function connectWebshare(
         Accept: "application/json",
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ username, password }),
+      body: JSON.stringify({ username, password, profileId }),
     });
   } catch {
     throw new ApiError(
@@ -492,20 +500,25 @@ function readProfile(value: unknown): ProfileDraft | undefined {
 }
 
 export const apiClient: StreamerApi = {
-  getIntegrations: () =>
-    request<{ items: IntegrationCatalogItem[] }>("/integrations"),
-  setIntegrationSelected: (id, selected) =>
+  getIntegrations: (profileId = "default") =>
+    request<{ items: IntegrationCatalogItem[] }>(
+      `/integrations?profileId=${encodeURIComponent(profileId)}`,
+    ),
+  setIntegrationSelected: (id, selected, profileId = "default") =>
     request<IntegrationCatalogItem>(
       `/integrations/${encodeURIComponent(id)}/selection`,
       {
         method: "PUT",
-        body: JSON.stringify({ selected }),
+        body: JSON.stringify({ selected, profileId }),
       },
     ),
-  disconnectIntegration: (id) =>
-    request<void>(`/integrations/${encodeURIComponent(id)}`, {
-      method: "DELETE",
-    }),
+  disconnectIntegration: (id, profileId = "default") =>
+    request<void>(
+      `/integrations/${encodeURIComponent(id)}?profileId=${encodeURIComponent(profileId)}`,
+      {
+        method: "DELETE",
+      },
+    ),
   getLocalFolders: () =>
     request<LocalFolderConfig>("/integrations/local-files"),
   selectLocalFolder: async () =>
@@ -568,8 +581,10 @@ export const apiClient: StreamerApi = {
       `/profiles/${encodeURIComponent(profileId)}/offline-downloads/${encodeURIComponent(downloadId)}`,
       { method: "DELETE" },
     ),
-  getSetupStatus: async () => {
-    const status = await request<SetupStatusResponse>("/setup/status");
+  getSetupStatus: async (profileId = "default") => {
+    const status = await request<SetupStatusResponse>(
+      `/setup/status?profileId=${encodeURIComponent(profileId)}`,
+    );
     const complete = status.complete;
     const tmdbIntegration = status.integrations.tmdb;
     const tmdbConnected =
@@ -598,23 +613,28 @@ export const apiClient: StreamerApi = {
   },
   connectTmdb,
   connectWebshare,
-  detectLocalAi: () =>
+  detectLocalAi: (profileId = "default") =>
     request<LocalAiResult>("/inference/detect", {
       method: "POST",
+      body: JSON.stringify({ profileId }),
     }),
-  getLocalAgent: () => request<LocalAgentInfo>("/inference/agent"),
+  getLocalAgent: (profileId = "default") =>
+    request<LocalAgentInfo>(
+      `/inference/agent?profileId=${encodeURIComponent(profileId)}`,
+    ),
   connectLocalAgent: (input) =>
     request<LocalAgentConnectResult>("/inference/agent/connect", {
       method: "POST",
       body: JSON.stringify(input),
     }),
-  discoverLocalAgents: () =>
+  discoverLocalAgents: (profileId = "default") =>
     request<LocalAgentDiscovery>("/inference/discover", {
       method: "POST",
+      body: JSON.stringify({ profileId }),
     }),
-  getInferenceResidency: (signal, record = false) =>
+  getInferenceResidency: (signal, record = false, profileId = "default") =>
     request<{ state: "loaded" | "unloaded" | "unknown"; checkedAt: string }>(
-      `/inference/residency${record ? "?record=true" : ""}`,
+      `/inference/residency?profileId=${encodeURIComponent(profileId)}${record ? "&record=true" : ""}`,
       { signal },
     ),
   completeSetup: (payload) =>

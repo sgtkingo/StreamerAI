@@ -5,12 +5,14 @@ import { StatusBadge, type UiStatus } from "./StatusBadge";
 
 interface LocalAiStepProps {
   api: StreamerApi;
+  profileId?: string;
   enabled: boolean;
   onEnabledChange: (enabled: boolean) => void;
 }
 
 export function LocalAiStep({
   api,
+  profileId = "default",
   enabled,
   onEnabledChange,
 }: LocalAiStepProps) {
@@ -25,7 +27,7 @@ export function LocalAiStep({
     setStatus("working");
     setMessage("Looking for Ollama and a compatible model…");
     try {
-      const detected = await api.detectLocalAi();
+      const detected = await api.detectLocalAi(profileId);
       setResult(detected);
       if (detected.ok) {
         setStatus("success");
@@ -39,7 +41,7 @@ export function LocalAiStep({
       setStatus("error");
       setMessage(safeErrorMessage(error));
     }
-  }, [api, onEnabledChange]);
+  }, [api, onEnabledChange, profileId]);
 
   useEffect(() => {
     if (!hasDetected.current) {

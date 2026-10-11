@@ -3,6 +3,7 @@ import { IntegrationManager } from "../IntegrationManager";
 
 interface ConnectionsStepProps {
   api: StreamerApi;
+  profileId: string;
   initialTmdbState: ConnectionState;
   initialWebshareState: ConnectionState;
   onTmdbConnected: () => void;
@@ -13,6 +14,7 @@ interface ConnectionsStepProps {
 
 export function ConnectionsStep({
   api,
+  profileId,
   initialTmdbState,
   initialWebshareState,
   onTmdbConnected,
@@ -35,6 +37,7 @@ export function ConnectionsStep({
       <IntegrationManager
         api={api}
         context="onboarding"
+        profileId={profileId}
         initialTmdbState={initialTmdbState}
         initialWebshareState={initialWebshareState}
         onConnectionChange={(id, connected) => {

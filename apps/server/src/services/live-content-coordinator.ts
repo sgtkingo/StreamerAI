@@ -125,8 +125,12 @@ export interface LiveContentCoordinatorOptions {
   media: MediaProvider | ProviderRegistry<MediaProvider>;
   integrationStateStore: IntegrationStateStore;
   /** Resolve only opaque vault pointers; adapters fetch their own credentials. */
-  secretRefForProvider?: (providerId: string) => string | null;
+  secretRefForProvider?: (
+    providerId: string,
+    profileId: string,
+  ) => string | null;
   inference: RuntimeConfig["inference"];
+  inferenceForProfile?: (profileId: string) => RuntimeConfig["inference"];
   localeForProfile: (profileId: string) => "cs" | "en" | "de";
   now?: () => Date;
 }
@@ -686,8 +690,14 @@ export class LiveContentCoordinator implements StreamerContentProvider {
   readonly #metadataProviders: ReadonlyMap<string, MetadataProvider>;
   readonly #mediaProviders: ReadonlyMap<string, MediaProvider>;
   readonly #integrationStateStore: IntegrationStateStore;
-  readonly #secretRefForProvider: (providerId: string) => string | null;
+  readonly #secretRefForProvider: (
+    providerId: string,
+    profileId: string,
+  ) => string | null;
   readonly #inference: RuntimeConfig["inference"];
+  readonly #inferenceForProfile: (
+    profileId: string,
+  ) => RuntimeConfig["inference"];
   readonly #localeForProfile: LiveContentCoordinatorOptions["localeForProfile"];
   readonly #now: () => Date;
   readonly #playbackCandidates = new Map<string, MediaCandidateRef[]>();
@@ -702,6 +712,8 @@ export class LiveContentCoordinator implements StreamerContentProvider {
     this.#integrationStateStore = options.integrationStateStore;
     this.#secretRefForProvider = options.secretRefForProvider ?? (() => null);
     this.#inference = options.inference;
+    this.#inferenceForProfile =
+      options.inferenceForProfile ?? (() => this.#inference);
     this.#localeForProfile = options.localeForProfile;
     this.#now = options.now ?? (() => new Date());
   }
@@ -778,7 +790,10 @@ export class LiveContentCoordinator implements StreamerContentProvider {
     const directEpisode = directEpisodeRequest(request.message);
     if (directEpisode)
       return this.discoverFast(request, completedAt, conversation);
-    const missing = await this.missingRequiredIntegrations(true);
+    const missing = await this.missingRequiredIntegrations(
+      true,
+      request.profileId,
+    );
     conversation?.signal?.throwIfAborted();
     if (missing.length > 0) {
       return DiscoveryResponseSchema.parse({
@@ -847,9 +862,10 @@ export class LiveContentCoordinator implements StreamerContentProvider {
       ];
     });
     const policy = discoveryInstructionPolicy({
-      model: this.#inference.model,
-      contextTokens: this.#inference.contextTokens,
-      maxOutputTokens: this.#inference.maxOutputTokens,
+      model: this.#inferenceForProfile((context.profileId ?? "default")).model,
+      contextTokens: this.#inferenceForProfile((context.profileId ?? "default")).contextTokens,
+      maxOutputTokens: this.#inferenceForProfile((context.profileId ?? "default"))
+        .maxOutputTokens,
       locale,
     });
     const instruction = policy.instruction;
@@ -861,7 +877,9 @@ export class LiveContentCoordinator implements StreamerContentProvider {
     // Roughly three characters per token leaves room for schema and output.
     const inputBudget = Math.max(
       400,
-      (this.#inference.contextTokens - this.#inference.maxOutputTokens - 400) *
+      (this.#inferenceForProfile((context.profileId ?? "default")).contextTokens -
+        this.#inferenceForProfile((context.profileId ?? "default")).maxOutputTokens -
+        400) *
         3,
     );
     const note = seenNote.slice(0, Math.max(0, Math.floor(inputBudget / 4)));
@@ -916,13 +934,14 @@ export class LiveContentCoordinator implements StreamerContentProvider {
     ];
     const generation = await this.#agent.generateStructured<unknown>(
       {
-        model: this.#inference.model,
+        model: this.#inferenceForProfile((context.profileId ?? "default")).model,
         messages: agentMessages,
         outputSchemaName: "streamer_ai_discovery_candidates",
         outputJsonSchema: AGENT_SCHEMA,
         allowedToolNames: [],
         temperature: policy.temperature,
-        maxOutputTokens: this.#inference.maxOutputTokens,
+        maxOutputTokens: this.#inferenceForProfile((context.profileId ?? "default"))
+          .maxOutputTokens,
       },
       context,
     );
@@ -969,7 +988,7 @@ export class LiveContentCoordinator implements StreamerContentProvider {
       try {
         const retry = await this.#agent.generateStructured<unknown>(
           {
-            model: this.#inference.model,
+            model: this.#inferenceForProfile((context.profileId ?? "default")).model,
             messages: [
               ...agentMessages.slice(0, -1),
               {
@@ -984,7 +1003,8 @@ export class LiveContentCoordinator implements StreamerContentProvider {
             outputJsonSchema: AGENT_SCHEMA,
             allowedToolNames: [],
             temperature: policy.retryTemperature,
-            maxOutputTokens: this.#inference.maxOutputTokens,
+            maxOutputTokens: this.#inferenceForProfile((context.profileId ?? "default"))
+              .maxOutputTokens,
           },
           context,
         );
@@ -1239,9 +1259,10 @@ export class LiveContentCoordinator implements StreamerContentProvider {
     conversation?: DiscoveryConversationContext,
   ): Promise<ValidatedCandidate[]> {
     const policy = discoveryInstructionPolicy({
-      model: this.#inference.model,
-      contextTokens: this.#inference.contextTokens,
-      maxOutputTokens: this.#inference.maxOutputTokens,
+      model: this.#inferenceForProfile((context.profileId ?? "default")).model,
+      contextTokens: this.#inferenceForProfile((context.profileId ?? "default")).contextTokens,
+      maxOutputTokens: this.#inferenceForProfile((context.profileId ?? "default"))
+        .maxOutputTokens,
       locale: this.#localeForProfile(request.profileId),
     });
     if (policy.tier !== "extended" || validated.length < 2) return validated;
@@ -1270,7 +1291,7 @@ export class LiveContentCoordinator implements StreamerContentProvider {
     try {
       const result = await this.#agent.generateStructured<unknown>(
         {
-          model: this.#inference.model,
+          model: this.#inferenceForProfile((context.profileId ?? "default")).model,
           messages: [
             {
               role: "system",
@@ -1302,7 +1323,10 @@ export class LiveContentCoordinator implements StreamerContentProvider {
           },
           allowedToolNames: [],
           temperature: 0.15,
-          maxOutputTokens: Math.min(this.#inference.maxOutputTokens, 160),
+          maxOutputTokens: Math.min(
+            this.#inferenceForProfile((context.profileId ?? "default")).maxOutputTokens,
+            160,
+          ),
         },
         context,
       );
@@ -1331,7 +1355,10 @@ export class LiveContentCoordinator implements StreamerContentProvider {
   ): Promise<DiscoveryResponse> {
     conversation?.signal?.throwIfAborted();
     const directEpisode = directEpisodeRequest(request.message);
-    const missing = await this.missingRequiredIntegrations(false);
+    const missing = await this.missingRequiredIntegrations(
+      false,
+      request.profileId,
+    );
     if (missing.length > 0) {
       return DiscoveryResponseSchema.parse({
         sessionId: request.sessionId,
@@ -1357,9 +1384,9 @@ export class LiveContentCoordinator implements StreamerContentProvider {
     if (
       !directEpisode &&
       thematicIntent &&
-      (await this.activeProviders(this.#metadataProviders)).some(
-        ([, provider]) => typeof provider.discover === "function",
-      )
+      (
+        await this.activeProviders(this.#metadataProviders, (context.profileId ?? "default"))
+      ).some(([, provider]) => typeof provider.discover === "function")
     ) {
       // The full pass will search by genre. A title-text search and unrelated
       // trending fallback do not provide a meaningful provisional result.
@@ -2158,7 +2185,9 @@ export class LiveContentCoordinator implements StreamerContentProvider {
   }> {
     const context = this.playbackContext(profileId, title);
     const activeMediaIds = new Set(
-      (await this.activeProviders(this.#mediaProviders)).map(([id]) => id),
+      (await this.activeProviders(this.#mediaProviders, profileId)).map(
+        ([id]) => id,
+      ),
     );
     const storedSources = (title.sources ?? []).filter((source) =>
       episode
@@ -2304,16 +2333,23 @@ export class LiveContentCoordinator implements StreamerContentProvider {
 
   private async missingRequiredIntegrations(
     includeAgent: boolean,
+    profileId: string,
   ): Promise<string[]> {
     const missing: string[] = [];
-    if ((await this.activeProviders(this.#metadataProviders)).length === 0)
+    if (
+      (await this.activeProviders(this.#metadataProviders, profileId))
+        .length === 0
+    )
       missing.push("a metadata source");
-    if ((await this.activeProviders(this.#mediaProviders)).length === 0)
+    if (
+      (await this.activeProviders(this.#mediaProviders, profileId)).length === 0
+    )
       missing.push("a streaming source");
     const agentId = this.#agent.descriptor?.().id ?? "ollama";
     if (
       includeAgent &&
-      (await this.#integrationStateStore.get(agentId))?.configured !== true
+      (await this.#integrationStateStore.get(agentId, profileId))
+        ?.configured !== true
     )
       missing.push("an agent");
     return missing;
@@ -2321,10 +2357,11 @@ export class LiveContentCoordinator implements StreamerContentProvider {
 
   private async activeProviders<T>(
     providers: ReadonlyMap<string, T>,
+    profileId: string,
   ): Promise<[string, T][]> {
     const entries = [...providers.entries()];
     const states = await Promise.all(
-      entries.map(([id]) => this.#integrationStateStore.get(id)),
+      entries.map(([id]) => this.#integrationStateStore.get(id, profileId)),
     );
     return entries.filter((_, index) => states[index]?.configured === true);
   }
@@ -2337,7 +2374,10 @@ export class LiveContentCoordinator implements StreamerContentProvider {
   }
 
   private scopedContext(id: string, context: ProviderContext): ProviderContext {
-    return { ...context, secretRef: this.#secretRefForProvider(id) };
+    return {
+      ...context,
+      secretRef: this.#secretRefForProvider(id, (context.profileId ?? "default")),
+    };
   }
 
   private mediaProvider(id: string): MediaProvider {
@@ -2350,7 +2390,10 @@ export class LiveContentCoordinator implements StreamerContentProvider {
     query: MetadataSearchQuery,
     context: ProviderContext,
   ): Promise<MetadataCandidate[]> {
-    const providers = await this.activeProviders(this.#metadataProviders);
+    const providers = await this.activeProviders(
+      this.#metadataProviders,
+      (context.profileId ?? "default"),
+    );
     if (providers.length === 0)
       throw new Error("No metadata provider is connected.");
     const settled = await Promise.allSettled(
@@ -2390,7 +2433,10 @@ export class LiveContentCoordinator implements StreamerContentProvider {
     request: Parameters<MetadataProvider["getFeed"]>[0],
     context: ProviderContext,
   ): Promise<MetadataCandidate[]> {
-    const providers = await this.activeProviders(this.#metadataProviders);
+    const providers = await this.activeProviders(
+      this.#metadataProviders,
+      (context.profileId ?? "default"),
+    );
     if (providers.length === 0)
       throw new Error("No metadata provider is connected.");
     const settled = await Promise.allSettled(
@@ -2425,7 +2471,7 @@ export class LiveContentCoordinator implements StreamerContentProvider {
     context: ProviderContext,
   ): Promise<MetadataCandidate[] | null> {
     const providers = (
-      await this.activeProviders(this.#metadataProviders)
+      await this.activeProviders(this.#metadataProviders, (context.profileId ?? "default"))
     ).filter(([, provider]) => typeof provider.discover === "function");
     if (providers.length === 0) return null;
     const kinds = intent.kind ? [intent.kind] : (["movie", "series"] as const);
@@ -2489,7 +2535,10 @@ export class LiveContentCoordinator implements StreamerContentProvider {
     request: MediaSearchRequest,
     context: ProviderContext,
   ): Promise<{ candidates: MediaCandidate[]; allSucceeded: boolean }> {
-    const providers = await this.activeProviders(this.#mediaProviders);
+    const providers = await this.activeProviders(
+      this.#mediaProviders,
+      (context.profileId ?? "default"),
+    );
     if (providers.length === 0)
       throw new Error("No media provider is connected.");
     const settled = await Promise.allSettled(

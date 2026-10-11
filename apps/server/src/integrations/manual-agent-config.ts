@@ -2,6 +2,11 @@ import { isIP } from "node:net";
 
 export const MANUAL_AGENT_SETTING_KEY = "inference.manual-agent";
 
+export function manualAgentSettingKey(profileId: string): string {
+  if (profileId === "default") return MANUAL_AGENT_SETTING_KEY;
+  return `${MANUAL_AGENT_SETTING_KEY}.${Buffer.from(profileId, "utf8").toString("base64url")}`;
+}
+
 export interface ManualAgentConfig {
   baseUrl: string;
   model: string;

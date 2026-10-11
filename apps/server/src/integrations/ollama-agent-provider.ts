@@ -38,6 +38,7 @@ export type OllamaFetch = (
 
 export interface OllamaAgentProviderOptions {
   config: RuntimeConfig["inference"];
+  configForProfile?: (profileId: string) => RuntimeConfig["inference"];
   fetch?: OllamaFetch;
   now?: () => Date;
 }
@@ -58,11 +59,13 @@ function record(value: unknown): Record<string, unknown> | null {
 /** Ollama implementation of the provider-neutral structured agent boundary. */
 export class OllamaAgentProvider implements AgentProvider {
   readonly #config: RuntimeConfig["inference"];
+  readonly #configForProfile: (profileId: string) => RuntimeConfig["inference"];
   readonly #fetch: OllamaFetch;
   readonly #now: () => Date;
 
   constructor(options: OllamaAgentProviderOptions) {
     this.#config = options.config;
+    this.#configForProfile = options.configForProfile ?? (() => this.#config);
     this.#fetch = options.fetch ?? defaultFetch;
     this.#now = options.now ?? (() => new Date());
   }
@@ -87,16 +90,14 @@ export class OllamaAgentProvider implements AgentProvider {
   }
 
   async health(context: ProviderContext): Promise<ProviderHealth> {
+    const config = this.#configForProfile((context.profileId ?? "default"));
     const started = this.#now().getTime();
     try {
       const body = record(await this.request("/api/tags", undefined, context));
       const models = Array.isArray(body?.models) ? body.models : [];
       const installed = models.some((value) => {
         const item = record(value);
-        return (
-          item?.name === this.#config.model ||
-          item?.model === this.#config.model
-        );
+        return item?.name === config.model || item?.model === config.model;
       });
       return ProviderHealthSchema.parse({
         status: installed ? "healthy" : "degraded",
@@ -120,10 +121,11 @@ export class OllamaAgentProvider implements AgentProvider {
   }
 
   async capabilities(context: ProviderContext) {
+    const config = this.#configForProfile((context.profileId ?? "default"));
     const body = record(
       await this.request(
         "/api/show",
-        { model: this.#config.model, verbose: false },
+        { model: config.model, verbose: false },
         context,
       ),
     );
@@ -133,11 +135,11 @@ export class OllamaAgentProvider implements AgentProvider {
         )
       : [];
     return AgentCapabilitiesSchema.parse({
-      models: [this.#config.model],
+      models: [config.model],
       structuredOutput: capabilities.includes("completion"),
       toolCalling: capabilities.includes("tools"),
-      maxContextTokens: this.#config.contextTokens,
-      maxOutputTokens: this.#config.maxOutputTokens,
+      maxContextTokens: config.contextTokens,
+      maxOutputTokens: config.maxOutputTokens,
       checkedAt: this.#now().toISOString(),
     });
   }
@@ -147,7 +149,8 @@ export class OllamaAgentProvider implements AgentProvider {
     context: ProviderContext,
   ): Promise<AgentGenerationResult<TOutput>> {
     const request = AgentGenerationRequestSchema.parse(rawRequest);
-    if (request.model !== this.#config.model) {
+    const config = this.#configForProfile((context.profileId ?? "default"));
+    if (request.model !== config.model) {
       throw new ProviderRequestError("ollama", "invalid-response", false);
     }
     const body = record(
@@ -161,10 +164,10 @@ export class OllamaAgentProvider implements AgentProvider {
           format: request.outputJsonSchema,
           keep_alive: "5m",
           options: {
-            num_ctx: this.#config.contextTokens,
+            num_ctx: config.contextTokens,
             num_predict: Math.min(
               request.maxOutputTokens,
-              this.#config.maxOutputTokens,
+              config.maxOutputTokens,
             ),
             temperature: request.temperature,
           },
@@ -213,6 +216,7 @@ export class OllamaAgentProvider implements AgentProvider {
     body: unknown,
     context: ProviderContext,
   ): Promise<unknown> {
+    const config = this.#configForProfile((context.profileId ?? "default"));
     const controller = new AbortController();
     const deadlineMs = Math.max(
       1,
@@ -220,14 +224,14 @@ export class OllamaAgentProvider implements AgentProvider {
     );
     const timeout = setTimeout(
       () => controller.abort(),
-      Math.min(this.#config.timeoutMs, deadlineMs),
+      Math.min(config.timeoutMs, deadlineMs),
     );
     const signal = context.signal
       ? AbortSignal.any([controller.signal, context.signal])
       : controller.signal;
     try {
       signal.throwIfAborted();
-      const response = await this.#fetch(`${this.#config.baseUrl}${path}`, {
+      const response = await this.#fetch(`${config.baseUrl}${path}`, {
         method: body === undefined ? "GET" : "POST",
         headers: {
           accept: "application/json",

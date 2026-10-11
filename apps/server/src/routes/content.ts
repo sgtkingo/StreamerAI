@@ -25,6 +25,7 @@ import {
 interface ContentRouteDependencies {
   core: StreamerCore;
   ensureLocalLibrary?: (profileId: string) => void;
+  onDeleteProfile?: (profileId: string) => Promise<void>;
 }
 
 const profileParamsSchema = {
@@ -193,9 +194,10 @@ export function registerContentRoutes(
     { schema: { params: profileParamsSchema } },
     async (request, reply) => {
       try {
-        dependencies.core.deleteViewerProfile(
-          (request.params as { profileId: string }).profileId,
-        );
+        const profileId = (request.params as { profileId: string }).profileId;
+        dependencies.core.requireProfile(profileId);
+        await dependencies.onDeleteProfile?.(profileId);
+        dependencies.core.deleteViewerProfile(profileId);
         return reply.code(204).send();
       } catch (error) {
         return sendDomainError(reply, error);
@@ -403,14 +405,12 @@ export function registerContentRoutes(
         episodeNumber?: number;
       };
       if ((seasonNumber === undefined) !== (episodeNumber === undefined))
-        return reply
-          .code(400)
-          .send({
-            error: {
-              code: "INVALID_EPISODE",
-              message: "Choose an exact episode.",
-            },
-          });
+        return reply.code(400).send({
+          error: {
+            code: "INVALID_EPISODE",
+            message: "Choose an exact episode.",
+          },
+        });
       try {
         return {
           sourceId: dependencies.core.preferredSourceId(

@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { SecretStore } from "../stores/secret-store.js";
+import { profileSecretKey } from "../stores/secret-store.js";
 import {
   isAbortFailure,
   ProviderRequestError,
@@ -58,6 +59,7 @@ export interface WebshareClientOptions {
   fetch?: ProviderFetch;
   baseUrl?: string;
   timeoutMs?: number;
+  profileId?: string;
 }
 
 function defaultProviderFetch(
@@ -220,6 +222,7 @@ export class WebshareClient {
   readonly #fetch: ProviderFetch;
   readonly #baseUrl: string;
   readonly #timeoutMs: number;
+  readonly #profileId: string;
 
   constructor(options: WebshareClientOptions) {
     this.#secretStore = options.secretStore;
@@ -228,10 +231,23 @@ export class WebshareClient {
       options.baseUrl ?? process.env.WEBSHARE_BASE_URL ?? DEFAULT_BASE_URL,
     );
     this.#timeoutMs = options.timeoutMs ?? 8_000;
+    this.#profileId = options.profileId ?? "default";
+  }
+
+  forProfile(profileId: string): WebshareClient {
+    return new WebshareClient({
+      secretStore: this.#secretStore,
+      fetch: this.#fetch,
+      baseUrl: this.#baseUrl,
+      timeoutMs: this.#timeoutMs,
+      profileId,
+    });
   }
 
   hasCredential(): Promise<boolean> {
-    return this.#secretStore.has(WEBSHARE_WST_SECRET_KEY);
+    return this.#secretStore.has(
+      profileSecretKey(this.#profileId, WEBSHARE_WST_SECRET_KEY),
+    );
   }
 
   /** Exchange an explicit password for WST without retaining the password. */
@@ -558,7 +574,9 @@ export class WebshareClient {
     signal?: AbortSignal,
   ): Promise<string> {
     const token = sendStoredCredential
-      ? await this.#secretStore.get(WEBSHARE_WST_SECRET_KEY)
+      ? await this.#secretStore.get(
+          profileSecretKey(this.#profileId, WEBSHARE_WST_SECRET_KEY),
+        )
       : undefined;
     if (requireAuthentication && token === undefined) {
       throw new ProviderRequestError("webshare", "not-configured", false);

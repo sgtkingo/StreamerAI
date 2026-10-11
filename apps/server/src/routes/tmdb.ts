@@ -7,11 +7,13 @@ import {
 } from "../integrations/tmdb-client.js";
 import type { IntegrationStateStore } from "../stores/integration-state-store.js";
 import type { SecretStore } from "../stores/secret-store.js";
+import { profileSecretKey } from "../stores/secret-store.js";
 
 export interface TmdbRouteDependencies {
   fetch: FetchLike;
   secretStore: SecretStore;
   integrationStateStore: IntegrationStateStore;
+  profileExists?: (profileId: string) => boolean;
   timeoutMs: number;
   now: () => Date;
 }
@@ -21,6 +23,7 @@ const tokenBodySchema = {
   additionalProperties: false,
   properties: {
     token: { type: "string", maxLength: 2048 },
+    profileId: { type: "string", minLength: 1, maxLength: 120 },
   },
 } as const;
 
@@ -132,6 +135,16 @@ export function registerTmdbRoutes(
         (request.body as { token?: string } | undefined)?.token,
         dependencies,
       );
+      const profileId =
+        (request.body as { profileId?: string } | undefined)?.profileId ??
+        "default";
+      if (dependencies.profileExists && !dependencies.profileExists(profileId))
+        return reply.code(404).send({
+          integrationId: "tmdb",
+          ok: false,
+          status: "action-required",
+          messageCode: "UNKNOWN",
+        });
       if (
         verification.token === undefined ||
         verification.result === undefined
@@ -151,30 +164,26 @@ export function registerTmdbRoutes(
         return sendCheckFailure(reply, verification.result);
       }
 
-      const previousToken = await dependencies.secretStore.get(
-        TMDB_READ_TOKEN_SECRET_KEY,
-      );
+      const secretKey = profileSecretKey(profileId, TMDB_READ_TOKEN_SECRET_KEY);
+      const previousToken = await dependencies.secretStore.get(secretKey);
       try {
-        await dependencies.secretStore.set(
-          TMDB_READ_TOKEN_SECRET_KEY,
-          verification.token,
+        await dependencies.secretStore.set(secretKey, verification.token);
+        await dependencies.integrationStateStore.set(
+          {
+            integrationId: "tmdb",
+            status: "connected",
+            configured: true,
+            checkedAt: verification.result.checkedAt,
+            updatedAt: dependencies.now().toISOString(),
+          },
+          profileId,
         );
-        await dependencies.integrationStateStore.set({
-          integrationId: "tmdb",
-          status: "connected",
-          configured: true,
-          checkedAt: verification.result.checkedAt,
-          updatedAt: dependencies.now().toISOString(),
-        });
       } catch {
         try {
           if (previousToken === undefined) {
-            await dependencies.secretStore.delete(TMDB_READ_TOKEN_SECRET_KEY);
+            await dependencies.secretStore.delete(secretKey);
           } else {
-            await dependencies.secretStore.set(
-              TMDB_READ_TOKEN_SECRET_KEY,
-              previousToken,
-            );
+            await dependencies.secretStore.set(secretKey, previousToken);
           }
         } catch {
           // The response remains sanitized. Readiness diagnostics expose the
@@ -206,10 +215,15 @@ export function registerTmdbRoutes(
     },
   );
 
-  app.delete("/api/v1/integrations/tmdb", async (_request, reply) => {
+  app.delete("/api/v1/integrations/tmdb", async (request, reply) => {
+    const profileId =
+      (request.query as { profileId?: string }).profileId ?? "default";
+    if (dependencies.profileExists && !dependencies.profileExists(profileId))
+      return reply.code(404).send();
+    const secretKey = profileSecretKey(profileId, TMDB_READ_TOKEN_SECRET_KEY);
     try {
-      await dependencies.secretStore.delete(TMDB_READ_TOKEN_SECRET_KEY);
-      await dependencies.integrationStateStore.delete("tmdb");
+      await dependencies.secretStore.delete(secretKey);
+      await dependencies.integrationStateStore.delete("tmdb", profileId);
       return reply.code(204).send();
     } catch {
       return reply.code(500).send({
