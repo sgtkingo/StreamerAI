@@ -259,13 +259,14 @@ export const CatalogTitleSchema = z
         title.availability === "partial" &&
         (title.seriesCoverage === null ||
           title.seriesCoverage.complete ||
-          title.seriesCoverage.episodesAvailable === 0)
+          (title.seriesCoverage.episodesAvailable === 0 &&
+            !(title.sources ?? []).some((source) => source.seasonNumber === 0)))
       ) {
         context.addIssue({
           code: z.ZodIssueCode.custom,
           path: ["seriesCoverage"],
           message:
-            "Partial series availability requires verified, incomplete playable coverage.",
+            "Partial series availability requires verified regular or bonus episodes and incomplete coverage.",
         });
       }
     }

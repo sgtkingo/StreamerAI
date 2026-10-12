@@ -1312,6 +1312,79 @@ describe("LiveContentCoordinator", () => {
     ).toEqual(["available", "available"]);
     expect(media.search).toHaveBeenCalledTimes(searchesBeforeRestart);
   });
+
+  it("searches regular episodes before Season 0 specials", async () => {
+    const preview = new PreviewContentProvider()
+      .bootstrapTitles()
+      .find((item) => item.kind === "series")!;
+    const title = { ...preview, id: "sai:tmdb:series:42", title: "Sample Show" };
+    const makeEpisode = (seasonNumber: number) => ({
+      ref: { providerId: "tmdb", entityType: "episode" as const, externalId: `${seasonNumber}-1` },
+      episodeNumber: 1,
+      title: "Episode 1",
+      airDate: null,
+      runtimeMinutes: 42,
+      provenance,
+    });
+    const metadata = {
+      getSeriesStructure: vi.fn().mockResolvedValue({
+        seriesRef: { providerId: "tmdb", entityType: "series", externalId: "42" },
+        seasons: [0, 1].map((seasonNumber) => ({
+          ref: { providerId: "tmdb", entityType: "season", externalId: `${seasonNumber}` },
+          seasonNumber,
+          title: `Season ${seasonNumber}`,
+          episodes: [makeEpisode(seasonNumber)],
+          provenance,
+        })),
+        complete: true,
+        provenance,
+      }),
+    } as unknown as MetadataProvider;
+    const media = {
+      search: vi.fn().mockResolvedValue([]),
+    } as unknown as MediaProvider;
+    const coordinator = new LiveContentCoordinator({
+      agent: {} as AgentProvider,
+      metadata,
+      media,
+      integrationStateStore: await connectedStateStore(),
+      inference: {
+        provider: "ollama",
+        baseUrl: "http://127.0.0.1:11434",
+        model: "qwen3.5:4b",
+        minimumVersion: "0.5.0",
+        contextTokens: 4096,
+        maxOutputTokens: 512,
+        timeoutMs: 60_000,
+      },
+      localeForProfile: () => "en",
+      now: () => new Date(NOW),
+    });
+    await coordinator.getSeriesDetail("default", title);
+    await vi.waitFor(() => expect(media.search).toHaveBeenCalled());
+    expect(vi.mocked(media.search).mock.calls[0]?.[0].seasonNumber).toBe(1);
+    const withOfflineCopy = {
+      ...title,
+      sources: [{
+        id: "a".repeat(32),
+        providerId: "local-files",
+        candidateId: "local-episode-1",
+        releaseName: "Sample.Show.S01E01.mkv",
+        sizeBytes: 100,
+        format: title.formats[0]!,
+        seasonNumber: 1,
+        episodeNumber: 1,
+        checkedAt: NOW,
+      }],
+    };
+    const offlineDetail = await coordinator.getSeriesDetail("default", withOfflineCopy);
+    expect(offlineDetail.seasons.find((season) => season.seasonNumber === 1)?.episodes[0]?.availability)
+      .toBe("available");
+    const afterRemoval = await coordinator.getSeriesDetail("default", title);
+    expect(afterRemoval.seasons.find((season) => season.seasonNumber === 1)?.episodes[0]?.availability)
+      .not.toBe("available");
+    coordinator.cancelSeriesSearch(title.id);
+  });
   it("finds a mystery from catalog genres without asking the 4B model to invent titles", async () => {
     const dependencies = coordinatorDependencies();
     const discover = vi.fn().mockImplementation(async (request) =>
@@ -1735,6 +1808,15 @@ describe("LiveContentCoordinator", () => {
     expect(response.bestMatch?.title.seriesCoverage?.complete).toBe(true);
     expect(response.bestMatch?.title.seriesCoverage?.episodesTotal).toBe(1);
     expect(response.reply).toContain("every episode confirmed playable");
+    const detailWithOptionalSpecial = await coordinator.getSeriesDetail(
+      "default",
+      response.bestMatch!.title,
+      false,
+      false,
+    );
+    expect(detailWithOptionalSpecial.status).toBe("complete");
+    expect(detailWithOptionalSpecial.seasons.find((season) => season.seasonNumber === 0))
+      .toBeDefined();
 
     const guide = await dependencies.metadata.getSeriesStructure(
       { providerId: "tmdb", externalId: "42", entityType: "series" },

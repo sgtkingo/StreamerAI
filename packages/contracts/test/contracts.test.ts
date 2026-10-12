@@ -151,6 +151,59 @@ describe("public contracts", () => {
     ).toThrow(/verified format/);
   });
 
+  it("allows bonus-only playable series without counting specials as regular coverage", () => {
+    const format = {
+      label: "1080p",
+      container: "mkv",
+      resolution: "1080p",
+      videoCodec: "H.264",
+      audioLanguages: ["en"],
+      subtitleLanguages: [],
+    };
+    const parsed = CatalogTitleSchema.parse({
+      id: "series-1",
+      kind: "series",
+      title: "Example",
+      originalTitle: null,
+      year: 2026,
+      synopsis: "",
+      posterUrl: null,
+      backdropUrl: null,
+      accentColor: "#112233",
+      genres: [],
+      ratings: [],
+      matchPercent: null,
+      availability: "partial",
+      availabilityProvider: "webshare",
+      availabilityCheckedAt: "2026-09-27T10:00:00.000Z",
+      formats: [format],
+      seriesCoverage: {
+        seasonsAvailable: 0,
+        seasonsTotal: 0,
+        episodesAvailable: 0,
+        episodesTotal: 0,
+        complete: false,
+        nextEpisodeLabel: null,
+      },
+      sources: [{
+        id: "a".repeat(32),
+        providerId: "webshare",
+        candidateId: "bonus-1",
+        releaseName: "Example.S00E01.mkv",
+        sizeBytes: 100,
+        format,
+        seasonNumber: 0,
+        episodeNumber: 1,
+        checkedAt: "2026-09-27T10:00:00.000Z",
+      }],
+      metadataProvider: "metadata-test",
+      metadataValidatedAt: "2026-09-27T10:00:00.000Z",
+      inLibrary: false,
+      progressPercent: null,
+    });
+    expect(parsed.seriesCoverage?.episodesTotal).toBe(0);
+  });
+
   it("keeps selectable files title-scoped and rejects duplicate or mismatched sources", () => {
     const format = {
       label: "1080p",

@@ -71,7 +71,7 @@ On-device recommendations and interpretation." je rudundatní informace. Tlačí
 - DONE: Bot se chová zvláštně, při hledání "complete sci-fi series " nic nenajde (ani opakovaně) ale pokud mu řeknu "try again" nebo "why?" tak už ano. Není v prvním hledání nějaký blok? Špatný systém prompt? Došlu totiž k integraci skillu "najdi něco co jsem neviděl", nesouvisí to? Velmi často ted dostávám "
 I found some ideas, but none could be validated reliably. Is this what you had in mind? Tell me what to change." Dokáže bot použít web-search?  
 
-- Každý profil by měl mít oddělené data, i v rámci onboardingu - hlavně api konektory.
+- DONE: Každý profil by měl mít oddělené data, i v rámci onboardingu - hlavně api konektory.
 
 - Měli bychom vylepšit catchování 
 
@@ -98,6 +98,10 @@ Eventy které vyvolají okamžité dohledání a kontrolu dostupnosti, i u Unava
 - Ruční akce uživatele
 - Pokus o přehrání dalšího dílu v sérii (přehrávač zkusí dohledat i případný chybějící díl v serii)
 - Pokus o masové stažení všech dílů v serii / session (při stahování se pokusí mass download znovuzzkontrolovat dostupnost u nedostupných)
+
+- DONE: Možná bychom mohli Season 0 považovat jako nepovinnou (vybledlá šedá) a nezapočítavat ji do statistik, vyhodnocování počtu dílů / dostupných sérií ani ji nepriorizovat při dohledání (až na posledním místě). Většinou je to jen bonusový obsah.
+
+- U alternativních zdrojů by měl zdroj šedě obsahovat reálný název souboru
 
 - Potřebujeme dodělat konektory pro remote agenty: ChatGPT, Claude, Geminy, Grok, Kimi, DeepSeek... Nabízejí se dvě možnosti: API a MCP. Bylo by dobré kdyby StreamerAI uměl obě varianty. 
  U MCP bych rád tento hybrdní mod:
@@ -160,3 +164,5 @@ Zajsti aby agenti využívali různé rulesety pro kontrolu úrovně sofitikovan
 Také bychom měli zajistit aby v případě více dostupných agentů, byl aktivní vždy jen jeden, dle preferencí uživatele. 
 
 Proved analýzu nasazení a proveditelnost.
+
+- Databáze se ted staví per-user: co kdyby si uživatelé uměli sdílet DB?  Tzn, když už uživatel ověří že je to správný zdroj, měla by se tato informace nasdílet i zbytku. Taková komuniktní DB

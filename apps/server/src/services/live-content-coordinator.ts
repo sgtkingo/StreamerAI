@@ -1712,7 +1712,9 @@ export class LiveContentCoordinator implements StreamerContentProvider {
         seasons.set(source.seasonNumber, episodes);
       }
       return {
-        status: seasons.size > 0 ? "complete" : "unavailable",
+        status: [...seasons.keys()].some((seasonNumber) => seasonNumber > 0)
+          ? "complete"
+          : seasons.size > 0 ? "partial" : "unavailable",
         seasons: [...seasons.entries()]
           .sort(([a], [b]) => a - b)
           .map(([seasonNumber, episodes]) => ({
@@ -1768,6 +1770,30 @@ export class LiveContentCoordinator implements StreamerContentProvider {
       };
       this.#seriesJobs.set(title.id, job);
     }
+    // The library scan can add or remove offline copies after this search job
+    // was created. Keep local candidates aligned with the current catalog.
+    for (const [key, candidates] of job.candidates) {
+      const remote = candidates.filter(
+        (candidate) => candidate.providerId !== "local-files",
+      );
+      if (remote.length > 0) job.candidates.set(key, remote);
+      else job.candidates.delete(key);
+    }
+    for (const source of title.sources ?? []) {
+      if (
+        source.providerId !== "local-files" ||
+        source.seasonNumber === null ||
+        source.episodeNumber === null
+      ) continue;
+      const key = episodeKey(title.id, {
+        seasonNumber: source.seasonNumber,
+        episodeNumber: source.episodeNumber,
+      });
+      job.candidates.set(key, [
+        ...(job.candidates.get(key) ?? []),
+        { providerId: source.providerId, candidateId: source.candidateId },
+      ]);
+    }
     if (!allowAutomaticSearch && !retry && !job.structure) {
       const ref = titleMetadataRef(title);
       if (ref) {
@@ -1789,16 +1815,18 @@ export class LiveContentCoordinator implements StreamerContentProvider {
     const now = this.#now().getTime();
     const allEpisodesFound =
       job.structure?.complete === true &&
-      job.structure.seasons.every((season) =>
-        season.episodes.every((episode) =>
-          job.candidates.has(
-            episodeKey(title.id, {
-              seasonNumber: season.seasonNumber,
-              episodeNumber: episode.episodeNumber,
-            }),
+      job.structure.seasons
+        .filter((season) => season.seasonNumber > 0)
+        .every((season) =>
+          season.episodes.every((episode) =>
+            job.candidates.has(
+              episodeKey(title.id, {
+                seasonNumber: season.seasonNumber,
+                episodeNumber: episode.episodeNumber,
+              }),
+            ),
           ),
-        ),
-      );
+        );
     // Incomplete and failed checks are temporary: later provider results or new
     // episodes must be discoverable without deleting the series or restarting.
     const refreshAfter = job.failed
@@ -1861,23 +1889,25 @@ export class LiveContentCoordinator implements StreamerContentProvider {
               : ("unavailable" as const),
         })),
       })) ?? [];
-    const available = seasons
+    const regularSeasons = seasons.filter((season) => season.seasonNumber > 0);
+    const available = regularSeasons
       .flatMap((season) => season.episodes)
       .filter((episode) => episode.availability === "available").length;
+    const regularComplete =
+      available > 0 &&
+      job.structure?.complete === true &&
+      regularSeasons.every((season) =>
+        season.episodes.every((episode) => episode.availability === "available"),
+      );
     return {
-      status: job.failed
-        ? "failed"
-        : job.running
-          ? "searching"
-          : available === 0
-            ? "unavailable"
-            : job.structure?.complete &&
-                seasons.every((season) =>
-                  season.episodes.every(
-                    (episode) => episode.availability === "available",
-                  ),
-                )
-              ? "complete"
+      status: regularComplete
+        ? "complete"
+        : job.failed
+          ? "failed"
+          : job.running
+            ? "searching"
+            : available === 0
+              ? "unavailable"
               : "partial",
       seasons,
     };
@@ -2111,7 +2141,10 @@ export class LiveContentCoordinator implements StreamerContentProvider {
       signal?.throwIfAborted();
       job.structure = structure;
     }
-    for (const season of job.structure.seasons) {
+    for (const season of [...job.structure.seasons].sort((a, b) =>
+      (a.seasonNumber === 0 ? 1 : 0) - (b.seasonNumber === 0 ? 1 : 0) ||
+      a.seasonNumber - b.seasonNumber,
+    )) {
       for (const episode of season.episodes) {
         signal?.throwIfAborted();
         const selection = {
@@ -2218,7 +2251,8 @@ export class LiveContentCoordinator implements StreamerContentProvider {
         if (found.length > 0) job.candidates.set(key, found);
         // A failed alternate query may have hidden a playable file, so retry
         // this episode soon unless another query already found one.
-        if (found.length === 0 && searchFailed) hadErrors = true;
+        if (season.seasonNumber > 0 && found.length === 0 && searchFailed)
+          hadErrors = true;
       }
     }
     signal?.throwIfAborted();
@@ -3004,15 +3038,9 @@ export class LiveContentCoordinator implements StreamerContentProvider {
               this.scopedContext(metadata.ref.providerId, context),
             ));
           seriesStructure = structure;
-          const numberedSeasons = structure.seasons.filter(
+          const requiredSeasons = structure.seasons.filter(
             (season) => season.seasonNumber > 0 && season.episodes.length > 0,
           );
-          const requiredSeasons =
-            numberedSeasons.length > 0
-              ? numberedSeasons
-              : structure.seasons.filter(
-                  (season) => season.episodes.length > 0,
-                );
           const expectedEpisodes = requiredSeasons.reduce(
             (count, season) => count + season.episodes.length,
             0,

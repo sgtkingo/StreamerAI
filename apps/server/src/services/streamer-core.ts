@@ -935,7 +935,10 @@ export class StreamerCore {
           )
         : null;
     if (series && series.seasons.length > 0 && title.formats.length > 0) {
-      const episodes = series.seasons.flatMap((season) => season.episodes);
+      const regularSeasons = series.seasons.filter(
+        (season) => season.seasonNumber > 0,
+      );
+      const episodes = regularSeasons.flatMap((season) => season.episodes);
       const available = episodes.filter(
         (episode) => episode.availability === "available",
       );
@@ -947,7 +950,7 @@ export class StreamerCore {
           seasonsAvailable: new Set(
             available.map((episode) => episode.seasonNumber),
           ).size,
-          seasonsTotal: series.seasons.filter(
+          seasonsTotal: regularSeasons.filter(
             (season) => season.episodes.length > 0,
           ).length,
           episodesAvailable: available.length,
@@ -1044,8 +1047,9 @@ export class StreamerCore {
     );
     let detail = await this.titleDetail(profileId, titleId);
     if (sources.length > 0) {
-      const episodes =
-        detail.series?.seasons.flatMap((season) => season.episodes) ?? [];
+      const regularSeasons =
+        detail.series?.seasons.filter((season) => season.seasonNumber > 0) ?? [];
+      const episodes = regularSeasons.flatMap((season) => season.episodes);
       const available = episodes.filter(
         (item) => item.availability === "available",
       );
@@ -1076,7 +1080,7 @@ export class StreamerCore {
             seasonsAvailable: new Set(
               available.map((item) => item.seasonNumber),
             ).size,
-            seasonsTotal: detail.series!.seasons.filter(
+            seasonsTotal: regularSeasons.filter(
               (season) => season.episodes.length > 0,
             ).length,
             episodesAvailable: available.length,

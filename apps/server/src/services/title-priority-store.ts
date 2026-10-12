@@ -9,6 +9,7 @@ type State = {
   opens: number[];
   plays: Interaction[];
   nextCheckAt: number | null;
+  highChecks?: number;
 };
 
 const DAY = 24 * 60 * 60_000;
@@ -36,6 +37,7 @@ export class TitlePriorityStore {
         opens: [],
         plays: [],
         nextCheckAt: null,
+        highChecks: 0,
       }
     );
   }
@@ -56,10 +58,12 @@ export class TitlePriorityStore {
       state.autoHigh = false;
       state.opens = [];
       state.plays = [];
+      state.highChecks = 0;
       this.scheduleNext(profileId, titleId, state);
       return "low";
     } else {
       state.manualHigh = true;
+      state.highChecks = 0;
       state.nextCheckAt = this.now().getTime();
     }
     this.save(profileId, titleId, state);
@@ -72,7 +76,9 @@ export class TitlePriorityStore {
     state.opens = [...state.opens.filter((at) => at > now - WEEK), now];
     if (state.opens.length >= 3 && !state.autoHigh) {
       state.autoHigh = true;
-      this.scheduleNext(profileId, titleId, state);
+      state.highChecks = 0;
+      state.nextCheckAt = now;
+      this.save(profileId, titleId, state);
       return;
     }
     this.save(profileId, titleId, state);
@@ -96,7 +102,9 @@ export class TitlePriorityStore {
         new Set(state.plays.flatMap((play) => play.episode ?? [])).size >= 2)
     ) {
       state.autoHigh = true;
-      this.scheduleNext(profileId, titleId, state);
+      state.highChecks = 0;
+      state.nextCheckAt = now;
+      this.save(profileId, titleId, state);
       return;
     }
     this.save(profileId, titleId, state);
@@ -106,6 +114,10 @@ export class TitlePriorityStore {
   claimDue(profileId: string, title: CatalogTitle): boolean {
     const state = this.state(profileId, title.id);
     const now = this.now().getTime();
+    if ((state.manualHigh || state.autoHigh) && state.highChecks === undefined) {
+      state.highChecks = 0;
+      state.nextCheckAt = now;
+    }
     if (state.nextCheckAt === null) {
       const checkedAt = title.availabilityCheckedAt
         ? Date.parse(title.availabilityCheckedAt)
@@ -130,9 +142,12 @@ export class TitlePriorityStore {
 
   private scheduleNext(profileId: string, titleId: string, state: State): void {
     const high = state.manualHigh || state.autoHigh;
+    const attempts = state.highChecks ?? 0;
+    const minutes = Math.min(240, 2 * 2 ** Math.min(attempts, 7));
     const delay = high
-      ? 90 * 60_000 + randomInt(0, 60 * 60_000)
+      ? (minutes + randomInt(0, Math.ceil(minutes * 0.25) + 1)) * 60_000
       : 18 * 60 * 60_000 + randomInt(0, 12 * 60 * 60_000);
+    if (high) state.highChecks = attempts + 1;
     state.nextCheckAt = this.now().getTime() + delay;
     this.save(profileId, titleId, state);
   }

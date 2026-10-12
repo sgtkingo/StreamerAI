@@ -91,6 +91,9 @@ function SourceOptionContent({
         <span>
           <span>{label}</span>
           <small>{sourceName(source.providerId)}</small>
+          <small className="title-detail__source-option-filename">
+            {source.releaseName}
+          </small>
         </span>
       </span>
       <small className="title-detail__source-option-quality">
@@ -521,7 +524,11 @@ export function TitleDetail({
   useEffect(() => {
     setTitlePriority(current.priority ?? "low");
   }, [current.id, current.priority]);
-  const seasons = detail?.series?.seasons ?? [];
+  const seasons = [...(detail?.series?.seasons ?? [])].sort(
+    (a, b) =>
+      (a.seasonNumber === 0 ? 1 : 0) - (b.seasonNumber === 0 ? 1 : 0) ||
+      a.seasonNumber - b.seasonNumber,
+  );
   const shownSeason =
     seasons.find((season) => season.seasonNumber === selectedSeason) ??
     seasons[0];
@@ -629,6 +636,7 @@ export function TitleDetail({
     async (requestId: number, rootId: string) => {
       if (!detail?.series || current.kind !== "series") return;
       const episodes = detail.series.seasons
+        .filter((season) => season.seasonNumber > 0)
         .flatMap((season) => season.episodes)
         .filter((episode) => episode.availability === "available")
         .sort(
@@ -890,7 +898,9 @@ export function TitleDetail({
     )
       return;
     const series = detail.series;
-    const episodes = series?.seasons.flatMap((season) => season.episodes) ?? [];
+    const episodes = series?.seasons
+      .filter((season) => season.seasonNumber > 0)
+      .flatMap((season) => season.episodes) ?? [];
     if (
       series?.status === "searching" ||
       episodes.some((episode) => episode.availability === "searching")
@@ -1072,10 +1082,15 @@ export function TitleDetail({
   const selectedEpisodeSearch = selectedEpisodeKey
     ? episodeSearches[selectedEpisodeKey]
     : undefined;
+  const selectedHasLocalCopy =
+    selectedEpisode !== null &&
+    sourcesFor(selectedEpisode).some((source) => source.providerId === "local-files");
   const episodePlayable =
-    selectedEpisodeKey !== null &&
-    (episodeRetryStatuses[selectedEpisodeKey] === "unavailable" ||
-      episodeRetryStatuses[selectedEpisodeKey] === "failed")
+    selectedHasLocalCopy
+      ? true
+      : selectedEpisodeKey !== null &&
+        (episodeRetryStatuses[selectedEpisodeKey] === "unavailable" ||
+          episodeRetryStatuses[selectedEpisodeKey] === "failed")
       ? false
       : (selectedEpisodeKey !== null &&
           episodeRetryStatuses[selectedEpisodeKey] === "ready") ||
@@ -1785,12 +1800,12 @@ export function TitleDetail({
                   {seasons.map((season) => (
                     <button
                       key={season.seasonNumber}
-                      className={`${shownSeason?.seasonNumber === season.seasonNumber ? "is-active" : ""}${season.episodes.length === 0 || season.episodes.some((episode) => episode.availability !== "available") ? " is-incomplete" : ""}`}
-                      title={season.episodes.length === 0 || season.episodes.some((episode) => episode.availability !== "available") ? "Some episodes are not available yet" : undefined}
+                      className={`${shownSeason?.seasonNumber === season.seasonNumber ? "is-active" : ""}${season.seasonNumber === 0 ? " is-special" : season.episodes.length === 0 || season.episodes.some((episode) => episode.availability !== "available") ? " is-incomplete" : ""}`}
+                      title={season.seasonNumber === 0 ? "Optional bonus episodes" : season.episodes.length === 0 || season.episodes.some((episode) => episode.availability !== "available") ? "Some episodes are not available yet" : undefined}
                       type="button"
                       onClick={() => setSelectedSeason(season.seasonNumber)}
                     >
-                      Season {season.seasonNumber}
+                      {season.seasonNumber === 0 ? "Season 0 · Specials" : `Season ${season.seasonNumber}`}
                     </button>
                   ))}
                 </div>
@@ -1803,8 +1818,11 @@ export function TitleDetail({
                     const key = `${episode.seasonNumber}:${episode.episodeNumber}`;
                     const search = episodeSearches[key];
                     const retryStatus = episodeRetryStatuses[key];
+                    const hasLocalCopy = sourcesFor(selection).some(
+                      (source) => source.providerId === "local-files",
+                    );
                     const availability =
-                      retryStatus === "ready"
+                      hasLocalCopy || retryStatus === "ready"
                         ? "available"
                         : retryStatus === "unavailable"
                           ? "unavailable"

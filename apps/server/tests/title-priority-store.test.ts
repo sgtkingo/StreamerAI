@@ -67,13 +67,25 @@ describe("TitlePriorityStore", () => {
     expect(reloaded.claimDue("alice", title)).toBe(false);
   });
 
-  it("checks a newly prioritized title immediately, then waits about two hours", () => {
+  it("checks a newly prioritized title immediately, then backs off from minutes to hours", () => {
     const { store, title, advance } = setup();
     expect(store.toggle("alice", title.id)).toBe("high");
     expect(store.claimDue("alice", title)).toBe(true);
-    advance(90 * 60_000);
-    expect(store.claimDue("alice", title)).toBe(false);
-    advance(60 * 60_000 + 1);
+    for (const minutes of [2, 4, 8, 16, 32, 64, 128, 240, 240]) {
+      advance(minutes * 60_000 - 1);
+      expect(store.claimDue("alice", title)).toBe(false);
+      advance((Math.ceil(minutes * 0.25) + 1) * 60_000 + 1);
+      expect(store.claimDue("alice", title)).toBe(true);
+    }
+  });
+
+  it("starts the same rapid schedule when interactions promote a title", () => {
+    const { store, title, advance } = setup();
+    store.opened("alice", title.id);
+    store.opened("alice", title.id);
+    store.opened("alice", title.id);
+    expect(store.claimDue("alice", title)).toBe(true);
+    advance(3 * 60_000 + 1);
     expect(store.claimDue("alice", title)).toBe(true);
   });
 });

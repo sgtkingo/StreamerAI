@@ -29,6 +29,36 @@ const detail = {
 } as unknown as TitleDetail;
 
 describe("refreshMissingEpisodesForDownload", () => {
+  it("leaves specials out of a whole-series check but includes them when Season 0 is requested", async () => {
+    const withSpecials = {
+      ...detail,
+      series: {
+        ...detail.series!,
+        seasons: [
+          {
+            seasonNumber: 0,
+            title: "Specials",
+            episodes: [{ seasonNumber: 0, episodeNumber: 1, availability: "unavailable" as const }],
+          },
+          ...detail.series!.seasons,
+        ],
+      },
+    } as TitleDetail;
+    const api = {
+      checkPlayback: vi.fn().mockResolvedValue({ ok: false }),
+      forceEpisodeSearch: vi.fn(),
+    } as unknown as StreamerApi;
+
+    await refreshMissingEpisodesForDownload(api, "profile-1", withSpecials);
+    expect(api.checkPlayback).not.toHaveBeenCalledWith(
+      "profile-1", "series-1", { seasonNumber: 0, episodeNumber: 1 },
+    );
+    await refreshMissingEpisodesForDownload(api, "profile-1", withSpecials, 0);
+    expect(api.checkPlayback).toHaveBeenCalledWith(
+      "profile-1", "series-1", { seasonNumber: 0, episodeNumber: 1 },
+    );
+  });
+
   it("checks a missing episode and includes a newly found download source", async () => {
     const api = {
       checkPlayback: vi

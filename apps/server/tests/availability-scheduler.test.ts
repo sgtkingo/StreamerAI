@@ -10,8 +10,8 @@ afterEach(() => {
 });
 
 describe("scheduled availability checks", () => {
-  it("cancels the priority-started series search when priority is lowered", () => {
-    const now = new Date("2026-09-27T12:00:00.000Z");
+  it("rechecks a prioritized series within minutes and cancels its search when priority is lowered", async () => {
+    let now = new Date("2026-09-27T12:00:00.000Z");
     const database = openStreamerDatabase({
       filename: ":memory:",
       clock: () => now,
@@ -46,6 +46,10 @@ describe("scheduled availability checks", () => {
 
     expect(core.toggleTitlePriority("default", title.id)).toBe("high");
     expect(getSeriesDetail).toHaveBeenCalledOnce();
+    expect(await core.runScheduledAvailabilityChecks()).toBe(0);
+    now = new Date(now.getTime() + 4 * 60_000);
+    expect(await core.runScheduledAvailabilityChecks()).toBe(1);
+    expect(getSeriesDetail).toHaveBeenCalledTimes(2);
     expect(core.toggleTitlePriority("default", title.id)).toBe("low");
     expect(cancelSeriesSearch).toHaveBeenCalledWith(title.id);
   });

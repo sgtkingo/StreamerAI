@@ -60,6 +60,112 @@ const title = {
 } satisfies CatalogTitle;
 
 describe("TitleDetail", () => {
+  it("shows a locally saved episode as ready even when its search status is unavailable", async () => {
+    const local = {
+      id: "c".repeat(32),
+      providerId: "local-files" as const,
+      candidateId: "local-episode-1",
+      releaseName: "Sample.Show.S01E01.mkv",
+      sizeBytes: 100,
+      format: title.formats[0]!,
+      seasonNumber: 1,
+      episodeNumber: 1,
+      checkedAt: "2026-09-29T20:00:00.000Z",
+    };
+    const offline: Detail = {
+      title: { ...title, sources: [local] },
+      related: [],
+      series: {
+        status: "partial",
+        seasons: [{
+          seasonNumber: 1,
+          title: "Season One",
+          episodes: [{
+            seasonNumber: 1,
+            episodeNumber: 1,
+            title: "Pilot",
+            airDate: null,
+            availability: "unavailable",
+          }],
+        }],
+      },
+    };
+    const api = {
+      ...offlineApi,
+      getTitleDetail: vi.fn().mockResolvedValue(offline),
+    } as unknown as StreamerApi;
+    const user = userEvent.setup();
+    render(<TitleDetail
+      api={api}
+      profileId="default"
+      title={offline.title}
+      playbackEnabled
+      onClose={vi.fn()}
+      onOpenRelated={vi.fn()}
+      onPlay={vi.fn()}
+      onAdded={vi.fn()}
+    />);
+    const episode = (await screen.findByText(/Pilot/)).closest("li")!;
+    expect(within(episode).getByText("Ready")).toBeInTheDocument();
+    expect(within(episode).queryByText("Unavailable")).toBeNull();
+    await user.click(within(episode).getByRole("button", { name: "Details for Sample Show S01E01" }));
+    expect(screen.getByRole("button", { name: "Play episode" })).toBeEnabled();
+  });
+
+  it("lists optional specials last and opens a regular season by default", async () => {
+    const withSpecials: Detail = {
+      title,
+      related: [],
+      series: {
+        status: "complete",
+        seasons: [
+          {
+            seasonNumber: 0,
+            title: "Specials",
+            episodes: [{
+              seasonNumber: 0,
+              episodeNumber: 1,
+              title: "Behind the scenes",
+              airDate: null,
+              availability: "unavailable",
+            }],
+          },
+          {
+            seasonNumber: 1,
+            title: "Season One",
+            episodes: [{
+              seasonNumber: 1,
+              episodeNumber: 1,
+              title: "Pilot",
+              airDate: null,
+              availability: "available",
+            }],
+          },
+        ],
+      },
+    };
+    const api = {
+      ...offlineApi,
+      getTitleDetail: vi.fn().mockResolvedValue(withSpecials),
+    } as unknown as StreamerApi;
+    render(<TitleDetail
+      api={api}
+      profileId="default"
+      title={title}
+      playbackEnabled
+      onClose={vi.fn()}
+      onOpenRelated={vi.fn()}
+      onPlay={vi.fn()}
+      onAdded={vi.fn()}
+    />);
+    const seasons = await screen.findByLabelText("Seasons");
+    const buttons = within(seasons).getAllByRole("button");
+    expect(buttons.map((button) => button.textContent)).toEqual(["Season 1", "Season 0 · Specials"]);
+    expect(buttons[1]).toHaveClass("is-special");
+    expect(buttons[1]).not.toHaveClass("is-incomplete");
+    expect(screen.getByText(/Pilot/)).toBeInTheDocument();
+  });
+
   it("shows the plain download icon in the episode list after deleting its offline copy", async () => {
     const user = userEvent.setup();
     let deleted = false;

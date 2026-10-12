@@ -37,6 +37,45 @@ afterEach(async () => {
 });
 
 describe("local folder connector", () => {
+  it("keeps Season 0 playable without counting its episodes in series coverage", async () => {
+    const folder = await mkdtemp(join(tmpdir(), "streamer-local-specials-"));
+    temporary.push(folder);
+    await writeFile(join(folder, "Example.Show.S00E01.mkv"), "bonus");
+    await writeFile(join(folder, "Example.Show.S01E01.mkv"), "episode");
+    const db = openStreamerDatabase({ filename: ":memory:" });
+    db.profiles.create({ id: "default", name: "Viewer", locale: "en" });
+    const library = new LocalMediaLibrary(db);
+    try {
+      await library.addRoot(folder);
+      await library.waitForScan();
+      const item = db.titles.list().find((candidate) => candidate.title === "Example Show");
+      expect(item?.sources).toHaveLength(2);
+      expect(item?.seriesCoverage).toMatchObject({
+        seasonsAvailable: 1,
+        seasonsTotal: 1,
+        episodesAvailable: 1,
+        episodesTotal: 1,
+        complete: true,
+      });
+      await rm(join(folder, "Example.Show.S01E01.mkv"));
+      library.startScan();
+      await library.waitForScan();
+      const bonusOnly = db.titles.get(item!.id);
+      expect(bonusOnly?.sources).toHaveLength(1);
+      expect(bonusOnly?.availability).toBe("partial");
+      expect(bonusOnly?.seriesCoverage).toMatchObject({
+        seasonsAvailable: 0,
+        seasonsTotal: 0,
+        episodesAvailable: 0,
+        episodesTotal: 0,
+        complete: false,
+      });
+    } finally {
+      await library.close();
+      db.close();
+    }
+  });
+
   it("creates the managed library on first start and respects a later disconnect", async () => {
     const folder = await mkdtemp(join(tmpdir(), "streamer-default-local-"));
     temporary.push(folder);
@@ -500,9 +539,9 @@ describe("local folder connector", () => {
           }),
         );
       const client = {
-        createVideoLink: vi
-          .fn()
-          .mockResolvedValue("https://download.webshare.cz/file"),
+        forProfile: vi.fn().mockReturnValue({
+          createVideoLink: vi.fn().mockResolvedValue("https://download.webshare.cz/file"),
+        }),
       } as unknown as WebshareClient;
       const downloads = new OfflineDownloadManager(
         db,
@@ -522,6 +561,7 @@ describe("local folder connector", () => {
         attempt += 1
       )
         await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(downloads.list("default")[0]?.error).toBeNull();
       expect(downloads.list("default")[0]).toMatchObject({
         id: job.id,
         state: "complete",

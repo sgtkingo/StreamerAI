@@ -891,6 +891,9 @@ textarea:not(:disabled):hover {
   color: #8f9eaf;
   font-size: 10px;
 }
+.title-detail__source-option-filename {
+  overflow-wrap: anywhere;
+}
 .title-detail__source-option-quality {
   align-self: center;
 }
@@ -1065,6 +1068,17 @@ textarea:not(:disabled):hover {
 }
 .title-detail__seasons button.is-active.is-incomplete {
   border-color: #ef5964;
+}
+.title-detail__seasons button.is-special {
+  color: #aaa;
+  border-color: #444;
+  background: #222;
+  opacity: 0.7;
+}
+.title-detail__seasons button.is-special.is-active {
+  border-color: #777;
+  background: #333;
+  opacity: 1;
 }
 .title-detail__episodes {
   margin: 0;

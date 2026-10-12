@@ -19,7 +19,9 @@ export async function refreshMissingEpisodesForDownload(
     detail.series?.seasons
       .filter(
         (season) =>
-          seasonNumber === undefined || season.seasonNumber === seasonNumber,
+          seasonNumber === undefined
+            ? season.seasonNumber > 0
+            : season.seasonNumber === seasonNumber,
       )
       .flatMap((season) => season.episodes)
       .filter((episode) => episode.availability === "unavailable") ?? [];

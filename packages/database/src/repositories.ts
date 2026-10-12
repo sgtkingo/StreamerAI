@@ -730,13 +730,13 @@ export class CatalogTitlesRepository {
       sources
         .filter(
           (source) =>
-            source.seasonNumber !== null && source.episodeNumber !== null,
+            source.seasonNumber !== null && source.seasonNumber > 0 && source.episodeNumber !== null,
         )
         .map((source) => `${source.seasonNumber}:${source.episodeNumber}`),
     );
     const seasons = new Set(
       sources
-        .filter((source) => source.seasonNumber !== null)
+        .filter((source) => source.seasonNumber !== null && source.seasonNumber > 0)
         .map((source) => source.seasonNumber),
     );
     const expectedEpisodes =

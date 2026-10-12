@@ -79,13 +79,58 @@ const detail: TitleDetail = {
 function Controls() {
   const manager = useDownloadManager()!;
   return <>
+    <button onClick={() => manager.activateBatch(title)}>Start series</button>
     <button onClick={() => manager.activateBatch(title, 1)}>Start season</button>
     <button onClick={() => manager.stopBatch(title.id)}>Stop series</button>
     <span data-testid="season-status">{manager.batches[`${title.id}:1`]?.status}</span>
+    <span data-testid="regular-available">{manager.batchFor(title).available}</span>
   </>;
 }
 
 describe("DownloadProvider", () => {
+  it("leaves specials out of a whole-series download", async () => {
+    const user = userEvent.setup();
+    const special: TitleSource = {
+      ...source(1),
+      id: "special-source",
+      seasonNumber: 0,
+      releaseName: "Special.S00E01.mkv",
+    };
+    const withSpecials: TitleDetail = {
+      ...detail,
+      title: { ...title, sources: [special, ...(title.sources ?? [])] },
+      series: {
+        ...detail.series!,
+        seasons: [
+          {
+            seasonNumber: 0,
+            title: "Specials",
+            episodes: [{
+              seasonNumber: 0,
+              episodeNumber: 1,
+              title: "Bonus",
+              airDate: null,
+              availability: "unavailable",
+            }],
+          },
+          ...detail.series!.seasons,
+        ],
+      },
+    };
+    const api = {
+      getTitleDetail: vi.fn().mockResolvedValue(withSpecials),
+      getOfflineDownloads: vi.fn().mockResolvedValue({ items: [] }),
+      getLocalFolders: vi.fn().mockResolvedValue({ roots: [{ id: "root-1", path: "D:\\Downloads" }] }),
+      checkPlayback: vi.fn(),
+    } as unknown as StreamerApi;
+    render(<ToastProvider><DownloadProvider api={api} profileId="default"><Controls /></DownloadProvider></ToastProvider>);
+
+    await user.click(screen.getByRole("button", { name: "Start series" }));
+    expect(await screen.findByRole("button", { name: "Download 2 files" })).toBeInTheDocument();
+    expect(screen.getByTestId("regular-available")).toHaveTextContent("2");
+    expect(api.checkPlayback).not.toHaveBeenCalled();
+  });
+
   it("stops a season download from the series control and does not start the next episode", async () => {
     const user = userEvent.setup();
     let cancelled = false;
