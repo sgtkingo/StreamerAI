@@ -1047,6 +1047,12 @@ export class StreamerCore {
     );
     let detail = await this.titleDetail(profileId, titleId);
     if (sources.length > 0) {
+      const mergedSources = [...sources, ...(detail.title.sources ?? [])]
+        .filter(
+          (source, index, items) =>
+            items.findIndex((other) => other.id === source.id) === index,
+        )
+        .slice(0, 24);
       const regularSeasons =
         detail.series?.seasons.filter((season) => season.seasonNumber > 0) ?? [];
       const episodes = regularSeasons.flatMap((season) => season.episodes);
@@ -1055,12 +1061,6 @@ export class StreamerCore {
       );
       if (available.length > 0 && episodes.length > 0) {
         const complete = available.length === episodes.length;
-        const mergedSources = [...sources, ...(detail.title.sources ?? [])]
-          .filter(
-            (source, index, items) =>
-              items.findIndex((other) => other.id === source.id) === index,
-          )
-          .slice(0, 24);
         const updated = CatalogTitleSchema.parse({
           ...detail.title,
           availability: complete ? "available" : "partial",
@@ -1090,8 +1090,11 @@ export class StreamerCore {
           },
         });
         this.database.titles.upsert(storageTitle(updated));
-        detail = await this.titleDetail(profileId, titleId);
-      }
+      } else
+        this.database.titles.upsert(
+          storageTitle({ ...detail.title, sources: mergedSources }),
+        );
+      detail = await this.titleDetail(profileId, titleId);
     }
     return { detail, sources };
   }
@@ -1197,16 +1200,9 @@ export class StreamerCore {
       sourceId === undefined
         ? this.preferredSources.get(profileId, titleId, episode)
         : null;
-    const rememberedAvailable =
-      remembered !== null &&
-      title.sources?.some(
-        (source) =>
-          source.id === remembered &&
-          (episode
-            ? source.seasonNumber === episode.seasonNumber &&
-              source.episodeNumber === episode.episodeNumber
-            : source.seasonNumber === null && source.episodeNumber === null),
-      );
+    // Let the provider resolve remembered search results from its own cache too.
+    // If that source has expired, the ordinary candidate search remains a fallback.
+    const rememberedAvailable = remembered !== null;
     try {
       let result;
       try {
@@ -1263,6 +1259,10 @@ export class StreamerCore {
         throw new PlaybackRecheckError(titleId);
       }
     }
+    // A manually found episode source can live in the provider's search cache
+    // before it appears in the stored title. Successful playback validates it.
+    if (sourceId !== undefined)
+      this.preferredSources.set(profileId, titleId, sourceId, episode);
     return playback;
   }
 

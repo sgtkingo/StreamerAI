@@ -743,16 +743,16 @@ describe("TitleDetail", () => {
       }),
     );
     const menu = within(dialog).getByRole("group", { name: "Search results" });
-    await within(menu).findByRole("button", { name: /Default/ });
+    await within(menu).findByRole("button", { name: /Preferred/ });
     expect(
-      within(menu).getAllByRole("button", { name: /Recommended|Default/ }),
+      within(menu).getAllByRole("button", { name: /Recommended|Preferred/ }),
     ).toHaveLength(2);
     expect(
       within(menu).getByRole("button", {
         name: "Download Sample.Movie.1080p.mkv",
       }),
     ).toBeInTheDocument();
-    const alternate = within(menu).getByRole("button", { name: /Default/ });
+    const alternate = within(menu).getByRole("button", { name: /Preferred/ });
     expect(within(alternate).getByText("FTP")).toBeInTheDocument();
     expect(alternate.querySelector("img")).toHaveAttribute(
       "src",

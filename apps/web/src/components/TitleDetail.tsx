@@ -254,7 +254,7 @@ export function TitleDetail({
     return () => {
       active = false;
     };
-  }, [api, profileId, title.id, selectedEpisode, suspended]);
+  }, [api, profileId, title.id, selectedEpisode]);
   useEffect(() => {
     if (!offlineJobs.some((job) => job.state === "downloading")) return;
     const timer = window.setTimeout(() => {
@@ -1126,8 +1126,10 @@ export function TitleDetail({
     setPlaying(key);
     setError("");
     try {
-      if (sourceId) await onPlay(current, episode, episodeTitle, sourceId);
-      else await onPlay(current, episode, episodeTitle);
+      if (sourceId) {
+        await onPlay(current, episode, episodeTitle, sourceId);
+        setPreferredSourceId(sourceId);
+      } else await onPlay(current, episode, episodeTitle);
     } catch (playError) {
       setError(safeErrorMessage(playError));
     } finally {
@@ -1571,7 +1573,7 @@ export function TitleDetail({
                           source={source}
                           label={
                             source.id === preferredSourceId
-                              ? "Default"
+                              ? "Preferred"
                               : index === 0
                                 ? "Recommended"
                                 : `Source ${index + 1}`
@@ -1706,7 +1708,7 @@ export function TitleDetail({
                           source={source}
                           label={
                             source.id === preferredSourceId
-                              ? "Default"
+                              ? "Preferred"
                               : index === 0
                                 ? "Recommended"
                                 : `Source ${index + 1}`
@@ -1984,7 +1986,7 @@ export function TitleDetail({
                                         source={source}
                                         label={
                                           source.id === preferredSourceId
-                                            ? "Default"
+                                            ? "Preferred"
                                             : index === 0
                                               ? "Recommended"
                                               : `Source ${index + 1}`
