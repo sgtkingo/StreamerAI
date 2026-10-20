@@ -397,6 +397,8 @@ const domainErrorMessages: Record<string, string> = {
   FOLDER_PICKER_BUSY: "A folder picker is already open on the home server.",
   FOLDER_PICKER_FAILED:
     "The folder picker is unavailable. Enter the folder path manually.",
+  LOCAL_FOLDER_INVALID:
+    "The home server could not access that folder. Enter an absolute path that exists on the server and is available to StreamerAI.",
 };
 
 async function readPublicErrorCode(

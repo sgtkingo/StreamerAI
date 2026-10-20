@@ -58,8 +58,9 @@ export function LocalFolderSettings({
   return (
     <div className="local-folder-settings">
       <p className="integration-block__hint">
-        Select a folder on the home server, or enter its path below. Subfolders
-        are scanned automatically; symbolic links are skipped.
+        Select a folder when using StreamerAI in a browser on the home server.
+        Otherwise, enter the folder's absolute path as it appears on the server.
+        Subfolders are scanned automatically; symbolic links are skipped.
       </p>
       <div className="local-folder-settings__add">
         <button
