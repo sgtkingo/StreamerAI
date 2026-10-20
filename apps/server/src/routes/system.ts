@@ -16,6 +16,14 @@ import type { SecretStore } from "../stores/secret-store.js";
 import { profileSecretKey } from "../stores/secret-store.js";
 
 export interface SystemRouteDependencies {
+  agentStatus?: (
+    profileId: string,
+  ) => Promise<{
+    configured: boolean;
+    status: string;
+    checkedAt: string | null;
+    provider: string;
+  }>;
   providerDescriptors?: readonly ProviderDescriptor[];
   secretStore: SecretStore;
   integrationStateStore: IntegrationStateStore;
@@ -145,6 +153,9 @@ export function registerSystemRoutes(
       getOllamaStatus(dependencies, profileId),
       dependencies.integrationStateStore.list(profileId),
     ]);
+    const selectedAgent = dependencies.agentStatus
+      ? await dependencies.agentStatus(profileId)
+      : ollama;
     const connectedIds = new Set(
       states
         .filter((state) => state.configured)
@@ -182,7 +193,9 @@ export function registerSystemRoutes(
       ...(!complete ? ["complete_profile"] : []),
       ...(!metadataAvailable ? ["connect_tmdb"] : []),
       ...(!playbackAvailable ? ["connect_webshare"] : []),
-      ...(localAiEnabled && !ollama.configured ? ["configure_local_ai"] : []),
+      ...(localAiEnabled && !selectedAgent.configured
+        ? ["configure_local_ai"]
+        : []),
     ];
     const durable =
       dependencies.secretStore.isPersistent &&
@@ -224,7 +237,7 @@ export function registerSystemRoutes(
         webshare,
         localAi: {
           enabled: localAiEnabled,
-          ...ollama,
+          ...selectedAgent,
         },
       },
       capabilities: {

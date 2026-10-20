@@ -42,10 +42,8 @@ export function FinishStep({
           />
         </div>
         <div>
-          <dt>Local AI</dt>
-          <dd>
-            {localAiEnabled ? "Private curator enabled" : "Disabled for now"}
-          </dd>
+          <dt>AI agent</dt>
+          <dd>{localAiEnabled ? "Agent selected" : "Optional for now"}</dd>
           <StatusBadge
             status={localAiEnabled ? "success" : "idle"}
             label={localAiEnabled ? "Ready" : "Optional"}

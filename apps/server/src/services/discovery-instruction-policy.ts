@@ -11,6 +11,7 @@ export interface DiscoveryInstructionPolicy {
 }
 
 export interface DiscoveryInstructionPolicyOptions {
+  readonly tierOverride?: DiscoveryPolicyTier;
   readonly model: string;
   readonly parameterSize?: string | null;
   readonly contextTokens: number;
@@ -80,7 +81,8 @@ export function discoveryInstructionPolicy(
     options.model,
     options.parameterSize,
   );
-  const tier = policyTier(parameters, options.contextTokens);
+  const tier =
+    options.tierOverride ?? policyTier(parameters, options.contextTokens);
   const desiredCount = tier === "compact" ? 3 : tier === "balanced" ? 4 : 6;
   const candidateCount = Math.min(
     desiredCount,

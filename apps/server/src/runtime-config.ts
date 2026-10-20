@@ -24,6 +24,24 @@ export interface RuntimeConfig {
     readonly contextTokens: number;
     readonly maxOutputTokens: number;
     readonly timeoutMs: number;
+    readonly discoveryTier?: "compact" | "balanced" | "extended";
+    readonly reasoningEffort?: "none" | "low" | "medium" | "high";
+  };
+  readonly agent: {
+    readonly mode: "api" | "local" | "mcp" | "disabled";
+    readonly provider:
+      | "ollama"
+      | "custom"
+      | "codex"
+      | "claude"
+      | "openai"
+      | "anthropic"
+      | "gemini"
+      | "grok"
+      | "kimi"
+      | "deepseek";
+    readonly model?: string;
+    readonly reasoningEffort?: "none" | "low" | "medium" | "high";
   };
 }
 
@@ -125,6 +143,52 @@ export function readRuntimeConfig(
     "data",
     "STREAMERAI_DATA_DIR",
   );
+  const agentMode = nonEmptySetting(
+    env.STREAMERAI_AGENT_MODE,
+    "api",
+    "STREAMERAI_AGENT_MODE",
+  );
+  const agentProvider = nonEmptySetting(
+    env.STREAMERAI_AGENT_PROVIDER,
+    "ollama",
+    "STREAMERAI_AGENT_PROVIDER",
+  );
+  if (!["api", "local", "mcp", "disabled"].includes(agentMode))
+    throw new Error(
+      "STREAMERAI_AGENT_MODE must be api, local, mcp, or disabled.",
+    );
+  if (
+    ![
+      "ollama",
+      "custom",
+      "codex",
+      "claude",
+      "openai",
+      "anthropic",
+      "gemini",
+      "grok",
+      "kimi",
+      "deepseek",
+    ].includes(agentProvider)
+  )
+    throw new Error("STREAMERAI_AGENT_PROVIDER is unsupported.");
+  if (agentMode === "api" && ["codex", "claude"].includes(agentProvider))
+    throw new Error("API mode requires an API provider.");
+  if (agentMode === "local" && !["codex", "claude"].includes(agentProvider))
+    throw new Error("Local agent mode requires codex or claude.");
+  if (agentMode === "mcp" && agentProvider !== "ollama")
+    throw new Error(
+      "MCP mode does not select an inference provider; use ollama as the placeholder.",
+    );
+  const agentModel = env.STREAMERAI_AGENT_MODEL?.trim();
+  if (agentModel && !/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$/.test(agentModel))
+    throw new Error("STREAMERAI_AGENT_MODEL is invalid.");
+  const reasoningEffort =
+    env.STREAMERAI_AGENT_REASONING_EFFORT?.trim() || "low";
+  if (!["none", "low", "medium", "high"].includes(reasoningEffort))
+    throw new Error(
+      "STREAMERAI_AGENT_REASONING_EFFORT must be none, low, medium, or high.",
+    );
 
   return {
     environment: nonEmptySetting(env.NODE_ENV, "development", "NODE_ENV"),
@@ -186,6 +250,14 @@ export function readRuntimeConfig(
         500,
         120_000,
       ),
+    },
+    agent: {
+      mode: agentMode as RuntimeConfig["agent"]["mode"],
+      provider: agentProvider as RuntimeConfig["agent"]["provider"],
+      ...(agentModel ? { model: agentModel } : {}),
+      reasoningEffort: reasoningEffort as NonNullable<
+        RuntimeConfig["agent"]["reasoningEffort"]
+      >,
     },
   };
 }

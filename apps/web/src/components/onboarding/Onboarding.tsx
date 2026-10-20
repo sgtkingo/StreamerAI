@@ -18,7 +18,7 @@ const steps = [
   "Welcome",
   "Profile",
   "Connections",
-  "Local AI",
+  "AI agent",
   "Finish",
 ] as const;
 

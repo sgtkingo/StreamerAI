@@ -12,7 +12,7 @@ export interface ManualAgentConfig {
   model: string;
 }
 
-function localHost(hostname: string): boolean {
+export function localHost(hostname: string): boolean {
   const host = hostname.replace(/^\[|\]$/g, "").toLowerCase();
   if (["localhost", "ollama", "host.docker.internal"].includes(host)) {
     return true;

@@ -27,6 +27,21 @@ import {
 import { WebshareMediaProvider } from "./integrations/webshare-media-provider.js";
 import { LocalMediaProvider } from "./integrations/local-media-provider.js";
 import { OllamaAgentProvider } from "./integrations/ollama-agent-provider.js";
+import { discoverOllamaModels } from "./integrations/ollama-model-catalog.js";
+import { discoveryTierForAgent } from "./integrations/agent-model-catalog.js";
+import {
+  AgentRouter,
+  agentSelectionKey,
+  parseAgentSelection,
+} from "./integrations/agent-router.js";
+import { StreamerToolService } from "./mcp/streamer-tools.js";
+import { LocalAgentHost } from "./integrations/local-agent-host.js";
+import { CustomLocalAgent } from "./integrations/custom-local-agent.js";
+import {
+  RemoteApiAgent,
+  REMOTE_API_NAMES,
+  remoteApiSecretKey,
+} from "./integrations/remote-api-agent.js";
 import {
   manualAgentSettingKey,
   parseManualAgentConfig,
@@ -77,6 +92,7 @@ export interface CreateAppOptions {
   fetch?: FetchLike;
   providerFetch?: ProviderFetch;
   inferenceFetch?: InferenceFetch;
+  remoteApiFetch?: typeof fetch;
   now?: () => Date;
   tmdbTimeoutMs?: number;
   secretStore?: SecretStore;
@@ -171,10 +187,11 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
     database = openStreamerDatabase({ filename, clock: now });
   }
   const activeInferenceConfig = { ...runtimeConfig.inference };
+  const agentSelectionDatabase = database;
   const profileInferenceConfigs = new Map<string, RuntimeConfig["inference"]>();
   const configForProfile = (profileId: string) => {
     const cached = profileInferenceConfigs.get(profileId);
-    if (cached) return cached;
+    if (cached) return selectedOllamaModel(profileId, cached);
     const config = { ...runtimeConfig.inference };
     const stored = database.settings.get<unknown>(
       manualAgentSettingKey(profileId),
@@ -187,8 +204,27 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
       }
     }
     profileInferenceConfigs.set(profileId, config);
-    return config;
+    return selectedOllamaModel(profileId, config);
   };
+  function selectedOllamaModel(
+    profileId: string,
+    config: RuntimeConfig["inference"],
+  ): RuntimeConfig["inference"] {
+    try {
+      const saved = agentSelectionDatabase.settings.get<unknown>(
+        agentSelectionKey(profileId),
+      );
+      if (saved === null) return config;
+      const selection = parseAgentSelection(saved);
+      return selection.mode === "api" &&
+        selection.provider === "ollama" &&
+        selection.model
+        ? { ...config, model: selection.model }
+        : config;
+    } catch {
+      return config;
+    }
+  }
   const isManualAgent = (profileId: string) =>
     database.settings.get<unknown>(manualAgentSettingKey(profileId)) !== null;
   const stores = createStores(options, database, environment, runtimeConfig);
@@ -238,16 +274,78 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
     "subtitle",
     options.subtitleProviders?.list() ?? [],
   );
-  const agent = new OllamaAgentProvider({
+  const ollamaAgent = new OllamaAgentProvider({
     config: activeInferenceConfig,
     configForProfile,
     now,
   });
+  const remoteApi = new RemoteApiAgent(
+    stores.secretStore,
+    options.remoteApiFetch ?? fetch,
+    now,
+  );
+  const inferenceFetcher = options.inferenceFetch ?? defaultInferenceFetch();
+  const agent = new AgentRouter(
+    database,
+    runtimeConfig.agent,
+    ollamaAgent,
+    remoteApi,
+    new StreamerToolService(`http://127.0.0.1:${runtimeConfig.server.port}`),
+    now,
+    new LocalAgentHost((event) => app.log.info(event, "Local agent lifecycle")),
+    async (profileId) =>
+      (await stores.integrationStateStore.get("ollama", profileId))
+        ?.configured === true,
+    (profileId) =>
+      discoverOllamaModels(inferenceFetcher, configForProfile(profileId)),
+    new CustomLocalAgent(database, options.remoteApiFetch ?? fetch, now),
+  );
+  const agentInferenceForProfile = (
+    profileId: string,
+  ): RuntimeConfig["inference"] => {
+    const selection = agent.selection(profileId);
+    return selection.mode === "local" ||
+      (selection.mode === "api" && selection.provider !== "ollama")
+      ? {
+          ...configForProfile(profileId),
+          model:
+            selection.model ??
+            agent.cachedRecommendedModel(
+              profileId,
+              selection.provider,
+              selection.reasoningEffort,
+            ) ??
+            selection.provider,
+          contextTokens: 8192,
+          maxOutputTokens: 1024,
+          discoveryTier: discoveryTierForAgent(
+            selection.provider,
+            selection.model ??
+              agent.cachedRecommendedModel(
+                profileId,
+                selection.provider,
+                selection.reasoningEffort,
+              ) ??
+              undefined,
+          ),
+        }
+      : {
+          ...configForProfile(profileId),
+          model:
+            selection.model ??
+            agent.cachedRecommendedModel(
+              profileId,
+              "ollama",
+              selection.reasoningEffort,
+            ) ??
+            configForProfile(profileId).model,
+        };
+  };
   const providerDescriptors = [
     ...metadata.list().map((provider) => provider.descriptor()),
     ...media.list().map((provider) => provider.descriptor()),
     ...subtitleProviders.list().map((provider) => provider.descriptor()),
-    agent.descriptor(),
+    ollamaAgent.descriptor(),
   ];
   const providerIds = new Set<string>();
   for (const descriptor of providerDescriptors) {
@@ -264,19 +362,25 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
   const episodeCandidateKey = (titleId: string) =>
     `series-candidates:${createHash("sha256").update(titleId).digest("hex")}`;
   const loadEpisodeCandidates = (titleId: string): SavedEpisodeCandidate[] =>
-    database.settings.get<SavedEpisodeCandidate[]>(episodeCandidateKey(titleId)) ?? [];
+    database.settings.get<SavedEpisodeCandidate[]>(
+      episodeCandidateKey(titleId),
+    ) ?? [];
   const saveEpisodeCandidate = (
     titleId: string,
     episode: EpisodeSelection,
     ref: MediaCandidateRef,
   ) => {
     const known = loadEpisodeCandidates(titleId);
-    if (known.some((item) =>
-      item.episode.seasonNumber === episode.seasonNumber &&
-      item.episode.episodeNumber === episode.episodeNumber &&
-      item.ref.providerId === ref.providerId &&
-      item.ref.candidateId === ref.candidateId
-    )) return;
+    if (
+      known.some(
+        (item) =>
+          item.episode.seasonNumber === episode.seasonNumber &&
+          item.episode.episodeNumber === episode.episodeNumber &&
+          item.ref.providerId === ref.providerId &&
+          item.ref.candidateId === ref.candidateId,
+      )
+    )
+      return;
     database.settings.set(
       episodeCandidateKey(titleId),
       [...known, { episode, ref }].slice(-1_000),
@@ -287,13 +391,19 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
     (environment === "production"
       ? new LiveContentCoordinator({
           agent,
+          agentReady: async (profileId) => {
+            const selection = agent.selection(profileId);
+            if (selection.mode === "disabled" || selection.mode === "mcp")
+              return false;
+            return (await agent.status(profileId)).available;
+          },
           metadata,
           media,
           integrationStateStore: stores.integrationStateStore,
           secretRefForProvider: (providerId, profileId) =>
             database.integrations.getSecretRef(providerId, profileId),
           inference: activeInferenceConfig,
-          inferenceForProfile: configForProfile,
+          inferenceForProfile: agentInferenceForProfile,
           localeForProfile: (profileId) =>
             database.profiles.get(profileId)?.locale ?? "en",
           loadEpisodeCandidates,
@@ -374,6 +484,28 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
   });
 
   registerSystemRoutes(app, {
+    agentStatus: async (profileId) => {
+      const selection = agent.selection(profileId);
+      if (selection.mode === "api" && selection.provider === "ollama") {
+        const state = await stores.integrationStateStore.get(
+          "ollama",
+          profileId,
+        );
+        return {
+          configured: state?.configured === true,
+          status: state?.status ?? "not_configured",
+          checkedAt: state?.checkedAt ?? null,
+          provider: "ollama",
+        };
+      }
+      const status = await agent.status(profileId);
+      return {
+        configured: status.available,
+        status: status.available ? "connected" : "action_required",
+        checkedAt: now().toISOString(),
+        provider: selection.provider,
+      };
+    },
     secretStore: stores.secretStore,
     integrationStateStore: stores.integrationStateStore,
     database,
@@ -385,12 +517,16 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
     ensureLocalLibrary: (profileId) =>
       localMediaLibrary.ensureProfileLibrary(profileId),
     onDeleteProfile: async (profileId) => {
+      await agent.deleteProfile(profileId);
       await Promise.all([
         stores.secretStore.delete(
           profileSecretKey(profileId, TMDB_READ_TOKEN_SECRET_KEY),
         ),
         stores.secretStore.delete(
           profileSecretKey(profileId, WEBSHARE_WST_SECRET_KEY),
+        ),
+        ...REMOTE_API_NAMES.map((provider) =>
+          stores.secretStore.delete(remoteApiSecretKey(profileId, provider)),
         ),
       ]);
       database.settings.delete(manualAgentSettingKey(profileId));
@@ -465,7 +601,9 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
     }),
   );
   registerInferenceRoutes(app, {
-    fetch: options.inferenceFetch ?? defaultInferenceFetch(),
+    agentRouter: agent,
+    secretStore: stores.secretStore,
+    fetch: inferenceFetcher,
     config: activeInferenceConfig,
     configForProfile,
     profileExists: (profileId) => database.profiles.get(profileId) !== null,
@@ -496,6 +634,7 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
   });
 
   app.addHook("onClose", async () => {
+    await agent.close();
     if (availabilityTimer) clearInterval(availabilityTimer);
     await offlineDownloads.close();
     await localMediaLibrary.close();

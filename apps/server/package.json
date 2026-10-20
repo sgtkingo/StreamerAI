@@ -12,6 +12,7 @@
   "scripts": {
     "dev": "tsx watch src/start.ts",
     "start": "node dist/start.js",
+    "mcp": "node dist/mcp/stdio.js",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",

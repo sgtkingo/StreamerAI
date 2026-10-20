@@ -7,6 +7,7 @@ import type {
 import { safeErrorMessage } from "../api/client";
 import { SourceIcon } from "./SourceIcon";
 import { LocalFolderSettings } from "./LocalFolderSettings";
+import { AgentBackendSettings } from "./AgentBackendSettings";
 
 type SourceCategory = IntegrationCatalogItem["category"];
 
@@ -106,6 +107,7 @@ interface IntegrationManagerProps {
   context: "onboarding" | "settings";
   profileId?: string;
   category?: "services" | "agents";
+  showAgentSelector?: boolean;
   initialTmdbState?: ConnectionState;
   initialWebshareState?: ConnectionState;
   onConnectionChange?: (id: string, connected: boolean) => void;
@@ -186,8 +188,8 @@ function AgentConnectionForm({
         />
       </label>
       <p className="integration-block__hint">
-        Verification checks the model and its capabilities. A successful
-        connection becomes the active local agent.
+        Verification checks the model and its capabilities. Choose Ollama above
+        to make it the active agent.
       </p>
       {error && (
         <p className="integration-agent-form__error" role="alert">
@@ -269,6 +271,7 @@ export function IntegrationManager({
   context,
   profileId = "default",
   category = "services",
+  showAgentSelector = true,
   initialTmdbState,
   initialWebshareState,
   onConnectionChange,
@@ -533,6 +536,13 @@ export function IntegrationManager({
 
   return (
     <div className={"integration-manager integration-manager--" + context}>
+      {category === "agents" && showAgentSelector && (
+        <AgentBackendSettings
+          api={api}
+          profileId={profileId}
+          onChanged={(available) => onConnectionChange?.("agent", available)}
+        />
+      )}
       {groups
         .filter((group) =>
           category === "agents"

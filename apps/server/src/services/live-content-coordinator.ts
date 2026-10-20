@@ -122,6 +122,7 @@ function episodeKey(titleId: string, episode: EpisodeSelection): string {
 
 export interface LiveContentCoordinatorOptions {
   agent: AgentProvider;
+  agentReady?: (profileId: string) => Promise<boolean>;
   metadata: MetadataProvider | ProviderRegistry<MetadataProvider>;
   media: MediaProvider | ProviderRegistry<MediaProvider>;
   integrationStateStore: IntegrationStateStore;
@@ -697,6 +698,7 @@ export class LiveContentCoordinator implements StreamerContentProvider {
   readonly id = "live";
   readonly mode = "live" as const;
   readonly #agent: AgentProvider;
+  readonly #agentReady: ((profileId: string) => Promise<boolean>) | undefined;
   readonly #metadataProviders: ReadonlyMap<string, MetadataProvider>;
   readonly #mediaProviders: ReadonlyMap<string, MediaProvider>;
   readonly #integrationStateStore: IntegrationStateStore;
@@ -723,6 +725,7 @@ export class LiveContentCoordinator implements StreamerContentProvider {
 
   constructor(options: LiveContentCoordinatorOptions) {
     this.#agent = options.agent;
+    this.#agentReady = options.agentReady;
     this.#metadataProviders = providerMap(options.metadata, "tmdb");
     this.#mediaProviders = providerMap(options.media, "webshare");
     this.#integrationStateStore = options.integrationStateStore;
@@ -881,6 +884,8 @@ export class LiveContentCoordinator implements StreamerContentProvider {
       ];
     });
     const policy = discoveryInstructionPolicy({
+      tierOverride: this.#inferenceForProfile(context.profileId ?? "default")
+        .discoveryTier,
       model: this.#inferenceForProfile(context.profileId ?? "default").model,
       contextTokens: this.#inferenceForProfile(context.profileId ?? "default")
         .contextTokens,
@@ -1283,6 +1288,8 @@ export class LiveContentCoordinator implements StreamerContentProvider {
     conversation?: DiscoveryConversationContext,
   ): Promise<ValidatedCandidate[]> {
     const policy = discoveryInstructionPolicy({
+      tierOverride: this.#inferenceForProfile(context.profileId ?? "default")
+        .discoveryTier,
       model: this.#inferenceForProfile(context.profileId ?? "default").model,
       contextTokens: this.#inferenceForProfile(context.profileId ?? "default")
         .contextTokens,
@@ -1347,7 +1354,7 @@ export class LiveContentCoordinator implements StreamerContentProvider {
               },
             },
           },
-          allowedToolNames: [],
+          allowedToolNames: ["inspect_media"],
           temperature: 0.15,
           maxOutputTokens: Math.min(
             this.#inferenceForProfile(context.profileId ?? "default")
@@ -1714,7 +1721,9 @@ export class LiveContentCoordinator implements StreamerContentProvider {
       return {
         status: [...seasons.keys()].some((seasonNumber) => seasonNumber > 0)
           ? "complete"
-          : seasons.size > 0 ? "partial" : "unavailable",
+          : seasons.size > 0
+            ? "partial"
+            : "unavailable",
         seasons: [...seasons.entries()]
           .sort(([a], [b]) => a - b)
           .map(([seasonNumber, episodes]) => ({
@@ -1784,7 +1793,8 @@ export class LiveContentCoordinator implements StreamerContentProvider {
         source.providerId !== "local-files" ||
         source.seasonNumber === null ||
         source.episodeNumber === null
-      ) continue;
+      )
+        continue;
       const key = episodeKey(title.id, {
         seasonNumber: source.seasonNumber,
         episodeNumber: source.episodeNumber,
@@ -1897,7 +1907,9 @@ export class LiveContentCoordinator implements StreamerContentProvider {
       available > 0 &&
       job.structure?.complete === true &&
       regularSeasons.every((season) =>
-        season.episodes.every((episode) => episode.availability === "available"),
+        season.episodes.every(
+          (episode) => episode.availability === "available",
+        ),
       );
     return {
       status: regularComplete
@@ -2141,9 +2153,10 @@ export class LiveContentCoordinator implements StreamerContentProvider {
       signal?.throwIfAborted();
       job.structure = structure;
     }
-    for (const season of [...job.structure.seasons].sort((a, b) =>
-      (a.seasonNumber === 0 ? 1 : 0) - (b.seasonNumber === 0 ? 1 : 0) ||
-      a.seasonNumber - b.seasonNumber,
+    for (const season of [...job.structure.seasons].sort(
+      (a, b) =>
+        (a.seasonNumber === 0 ? 1 : 0) - (b.seasonNumber === 0 ? 1 : 0) ||
+        a.seasonNumber - b.seasonNumber,
     )) {
       for (const episode of season.episodes) {
         signal?.throwIfAborted();
@@ -2480,13 +2493,17 @@ export class LiveContentCoordinator implements StreamerContentProvider {
       (await this.activeProviders(this.#mediaProviders, profileId)).length === 0
     )
       missing.push("a streaming source");
-    const agentId = this.#agent.descriptor?.().id ?? "ollama";
-    if (
-      includeAgent &&
-      (await this.#integrationStateStore.get(agentId, profileId))
-        ?.configured !== true
-    )
-      missing.push("an agent");
+    if (includeAgent) {
+      const ready = this.#agentReady
+        ? await this.#agentReady(profileId)
+        : (
+            await this.#integrationStateStore.get(
+              this.#agent.descriptor?.().id ?? "ollama",
+              profileId,
+            )
+          )?.configured === true;
+      if (!ready) missing.push("an agent");
+    }
     return missing;
   }
 

@@ -10,6 +10,7 @@ import {
   type ProviderHealth,
 } from "@streamer-ai/contracts";
 import type { RuntimeConfig } from "../runtime-config.js";
+import type { ReasoningEffort } from "./agent-model-catalog.js";
 import {
   isAbortFailure,
   ProviderRequestError,
@@ -62,6 +63,10 @@ export class OllamaAgentProvider implements AgentProvider {
   readonly #configForProfile: (profileId: string) => RuntimeConfig["inference"];
   readonly #fetch: OllamaFetch;
   readonly #now: () => Date;
+  readonly #thinkingValues = new Map<
+    string,
+    { expires: number; values: unknown[] }
+  >();
 
   constructor(options: OllamaAgentProviderOptions) {
     this.#config = options.config;
@@ -90,7 +95,7 @@ export class OllamaAgentProvider implements AgentProvider {
   }
 
   async health(context: ProviderContext): Promise<ProviderHealth> {
-    const config = this.#configForProfile((context.profileId ?? "default"));
+    const config = this.#configForProfile(context.profileId ?? "default");
     const started = this.#now().getTime();
     try {
       const body = record(await this.request("/api/tags", undefined, context));
@@ -121,7 +126,7 @@ export class OllamaAgentProvider implements AgentProvider {
   }
 
   async capabilities(context: ProviderContext) {
-    const config = this.#configForProfile((context.profileId ?? "default"));
+    const config = this.#configForProfile(context.profileId ?? "default");
     const body = record(
       await this.request(
         "/api/show",
@@ -147,12 +152,15 @@ export class OllamaAgentProvider implements AgentProvider {
   async generateStructured<TOutput>(
     rawRequest: AgentGenerationRequest,
     context: ProviderContext,
+    reasoningEffort: ReasoningEffort = "none",
   ): Promise<AgentGenerationResult<TOutput>> {
     const request = AgentGenerationRequestSchema.parse(rawRequest);
-    const config = this.#configForProfile((context.profileId ?? "default"));
-    if (request.model !== config.model) {
-      throw new ProviderRequestError("ollama", "invalid-response", false);
-    }
+    const config = this.#configForProfile(context.profileId ?? "default");
+    const think = await this.thinkingValue(
+      request.model,
+      reasoningEffort,
+      context,
+    );
     const body = record(
       await this.request(
         "/api/chat",
@@ -160,7 +168,7 @@ export class OllamaAgentProvider implements AgentProvider {
           model: request.model,
           messages: request.messages,
           stream: false,
-          think: false,
+          think,
           format: request.outputJsonSchema,
           keep_alive: "5m",
           options: {
@@ -211,12 +219,47 @@ export class OllamaAgentProvider implements AgentProvider {
     };
   }
 
+  private async thinkingValue(
+    model: string,
+    effort: ReasoningEffort,
+    context: ProviderContext,
+  ): Promise<boolean | string> {
+    if (effort === "none") return false;
+    const cached = this.#thinkingValues.get(model);
+    let values =
+      cached && cached.expires > this.#now().getTime() ? cached.values : null;
+    if (!values) {
+      try {
+        const details = record(
+          await this.request("/api/show", { model }, context),
+        );
+        const thinking = record(details?.thinking);
+        values = Array.isArray(thinking?.values) ? thinking.values : [];
+        if (
+          !values.length &&
+          Array.isArray(details?.capabilities) &&
+          details.capabilities.includes("thinking")
+        )
+          values = [false, true];
+      } catch {
+        values = [];
+      }
+      this.#thinkingValues.set(model, {
+        expires: this.#now().getTime() + 300_000,
+        values,
+      });
+    }
+    if (values.includes(effort)) return effort;
+    if (effort !== "low" && values.includes(true)) return true;
+    return false;
+  }
+
   private async request(
     path: string,
     body: unknown,
     context: ProviderContext,
   ): Promise<unknown> {
-    const config = this.#configForProfile((context.profileId ?? "default"));
+    const config = this.#configForProfile(context.profileId ?? "default");
     const controller = new AbortController();
     const deadlineMs = Math.max(
       1,

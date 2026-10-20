@@ -47,7 +47,7 @@ export interface LocalAiResult {
 export interface LocalAgentInfo {
   runtime: string;
   model: string;
-  baseUrl: string;
+  baseUrl: string | null;
   manual: boolean;
 }
 
@@ -59,6 +59,53 @@ export interface LocalAgentConnectResult extends LocalAiResult {
 export interface LocalAgentDiscovery {
   availableIds: string[];
   runtimeAvailable: boolean;
+}
+
+export type AgentBackend =
+  | "ollama"
+  | "custom"
+  | "codex"
+  | "claude"
+  | "openai"
+  | "anthropic"
+  | "gemini"
+  | "grok"
+  | "kimi"
+  | "deepseek";
+export type AgentReasoningEffort = "none" | "low" | "medium" | "high";
+export interface AgentModelOption {
+  id: string;
+  label: string;
+  reasoningEfforts: AgentReasoningEffort[];
+}
+export interface AgentModelCatalog {
+  provider: AgentBackend;
+  models: AgentModelOption[];
+  recommendedModel: string | null;
+  source: "provider" | "local" | "fallback";
+  status: "available" | "unverified" | "unavailable";
+  message: string;
+}
+export interface AgentSelection {
+  mode: "api" | "local" | "mcp" | "disabled";
+  provider: AgentBackend;
+  model?: string;
+  reasoningEffort?: AgentReasoningEffort;
+  effectiveModel?: string | null;
+  effectiveReasoningEffort?: AgentReasoningEffort | "minimal" | null;
+  reasoningNote?: string;
+  available: boolean;
+  code: string;
+  message: string;
+}
+
+export interface LocalAgentCapability {
+  provider: "ollama" | "custom" | "codex" | "claude";
+  detected: boolean;
+  ready: boolean;
+  code: string;
+  message: string;
+  recommendedModel: string | null;
 }
 
 export interface IntegrationCatalogItem {
@@ -165,11 +212,66 @@ export interface StreamerApi {
   ): Promise<ConnectionResult>;
   detectLocalAi(profileId?: string): Promise<LocalAiResult>;
   getLocalAgent(profileId?: string): Promise<LocalAgentInfo>;
+  getOllamaConfig(
+    profileId?: string,
+  ): Promise<{ model: string; baseUrl: string }>;
+  getAgentSelection(profileId?: string): Promise<AgentSelection>;
+  getLocalAgentCapabilities(
+    profileId?: string,
+  ): Promise<{ providers: LocalAgentCapability[] }>;
+  getCustomLocalAgent(profileId?: string): Promise<{
+    configured: boolean;
+    baseUrl: string;
+    model: string;
+  }>;
+  saveCustomLocalAgent(input: {
+    profileId?: string;
+    baseUrl: string;
+    model: string;
+  }): Promise<{ configured: boolean; baseUrl: string; model: string }>;
+  verifyCustomLocalAgent(profileId?: string): Promise<{ ok: boolean }>;
+  verifyCustomLocalCandidate(input: {
+    profileId?: string;
+    baseUrl: string;
+    model: string;
+  }): Promise<{ ok: boolean }>;
+  getAgentModels(
+    provider: AgentBackend,
+    profileId?: string,
+    reasoningEffort?: AgentReasoningEffort,
+  ): Promise<AgentModelCatalog>;
+  setAgentSelection(input: {
+    profileId?: string;
+    mode: AgentSelection["mode"];
+    provider: AgentBackend;
+    model?: string;
+    reasoningEffort?: AgentReasoningEffort;
+  }): Promise<AgentSelection>;
+  saveAgentApiKey(input: {
+    profileId?: string;
+    provider: AgentBackend;
+    apiKey: string;
+  }): Promise<{ provider: AgentBackend; configured: boolean }>;
+  getAgentApiKeyStatus(
+    provider: AgentBackend,
+    profileId?: string,
+  ): Promise<{ provider: AgentBackend; configured: boolean }>;
+  deleteAgentApiKey(input: {
+    profileId?: string;
+    provider: AgentBackend;
+  }): Promise<{ provider: AgentBackend; configured: boolean }>;
   connectLocalAgent(input: {
     baseUrl: string;
     model: string;
     profileId?: string;
   }): Promise<LocalAgentConnectResult>;
+  verifyOllamaModel(input: {
+    model: string;
+    profileId?: string;
+  }): Promise<{ ok: boolean; model: string; message: string }>;
+  pullLocalAgentModel(
+    profileId?: string,
+  ): Promise<{ ok: boolean; model: string }>;
   discoverLocalAgents(profileId?: string): Promise<LocalAgentDiscovery>;
   getInferenceResidency(
     signal?: AbortSignal,
@@ -630,10 +732,74 @@ export const apiClient: StreamerApi = {
     request<LocalAgentInfo>(
       `/inference/agent?profileId=${encodeURIComponent(profileId)}`,
     ),
+  getOllamaConfig: (profileId = "default") =>
+    request<{ model: string; baseUrl: string }>(
+      `/inference/agent/ollama-config?profileId=${encodeURIComponent(profileId)}`,
+    ),
+  getAgentSelection: (profileId = "default") =>
+    request<AgentSelection>(
+      `/inference/selection?profileId=${encodeURIComponent(profileId)}`,
+    ),
+  getLocalAgentCapabilities: (profileId = "default") =>
+    request<{ providers: LocalAgentCapability[] }>(
+      `/inference/local-providers?profileId=${encodeURIComponent(profileId)}`,
+    ),
+  getCustomLocalAgent: (profileId = "default") =>
+    request<{ configured: boolean; baseUrl: string; model: string }>(
+      `/inference/custom?profileId=${encodeURIComponent(profileId)}`,
+    ),
+  saveCustomLocalAgent: (input) =>
+    request<{ configured: boolean; baseUrl: string; model: string }>(
+      "/inference/custom",
+      { method: "PUT", body: JSON.stringify(input) },
+    ),
+  verifyCustomLocalAgent: (profileId = "default") =>
+    request<{ ok: boolean }>("/inference/custom/verify", {
+      method: "POST",
+      body: JSON.stringify({ profileId }),
+    }),
+  verifyCustomLocalCandidate: (input) =>
+    request<{ ok: boolean }>("/inference/custom/verify", {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  getAgentModels: (provider, profileId = "default", reasoningEffort = "low") =>
+    request<AgentModelCatalog>(
+      `/inference/models?profileId=${encodeURIComponent(profileId)}&provider=${encodeURIComponent(provider)}&reasoningEffort=${encodeURIComponent(reasoningEffort)}`,
+    ),
+  setAgentSelection: (input) =>
+    request<AgentSelection>("/inference/selection", {
+      method: "PUT",
+      body: JSON.stringify(input),
+    }),
+  saveAgentApiKey: (input) =>
+    request<{ provider: AgentBackend; configured: boolean }>(
+      "/inference/api-credential",
+      { method: "PUT", body: JSON.stringify(input) },
+    ),
+  getAgentApiKeyStatus: (provider, profileId = "default") =>
+    request<{ provider: AgentBackend; configured: boolean }>(
+      `/inference/api-credential?profileId=${encodeURIComponent(profileId)}&provider=${encodeURIComponent(provider)}`,
+    ),
+  deleteAgentApiKey: (input) =>
+    request<{ provider: AgentBackend; configured: boolean }>(
+      "/inference/api-credential",
+      { method: "DELETE", body: JSON.stringify(input) },
+    ),
   connectLocalAgent: (input) =>
     request<LocalAgentConnectResult>("/inference/agent/connect", {
       method: "POST",
       body: JSON.stringify(input),
+    }),
+  verifyOllamaModel: (input) =>
+    request<{ ok: boolean; model: string; message: string }>(
+      "/inference/agent/verify",
+      { method: "POST", body: JSON.stringify(input) },
+    ),
+  pullLocalAgentModel: (profileId = "default") =>
+    request<{ ok: boolean; model: string }>("/inference/agent/pull", {
+      method: "POST",
+      body: JSON.stringify({ profileId }),
     }),
   discoverLocalAgents: (profileId = "default") =>
     request<LocalAgentDiscovery>("/inference/discover", {

@@ -10,6 +10,7 @@ import { PlaybackLanguageFields } from "./PlaybackLanguageFields";
 import { AudioOutputPicker } from "./AudioOutputPicker";
 import { useToasts } from "./ToastProvider";
 import { IntegrationManager } from "./IntegrationManager";
+import { AgentBackendSettings } from "./AgentBackendSettings";
 
 export type ProfilePage = "settings" | "preferences" | "account" | "statistics";
 
@@ -57,16 +58,6 @@ export function ProfilePages({
   const [deleteConfirmationOpen, setDeleteConfirmationOpen] = useState(false);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
-  const [agentCheck, setAgentCheck] = useState("");
-  const [checkingAgent, setCheckingAgent] = useState(false);
-  const [agentModel, setAgentModel] = useState("");
-  const [agentBaseUrl, setAgentBaseUrl] = useState("");
-  const [discoveringAgents, setDiscoveringAgents] = useState(false);
-  const [discoveredAgentIds, setDiscoveredAgentIds] = useState<string[] | null>(
-    null,
-  );
-  const [discoveryRevision, setDiscoveryRevision] = useState(0);
-  const [discoveryMessage, setDiscoveryMessage] = useState("");
   const deleteDialogRef = useRef<HTMLDivElement>(null);
   const { showToast } = useToasts();
 
@@ -84,24 +75,6 @@ export function ProfilePages({
   useEffect(() => {
     if (error) showToast(error, "error");
   }, [error, showToast]);
-  useEffect(() => {
-    if (page !== "settings") return;
-    let active = true;
-    void api
-      .getLocalAgent(profile.id)
-      .then(({ model, baseUrl }) => {
-        if (active) {
-          setAgentModel(model);
-          setAgentBaseUrl(baseUrl);
-        }
-      })
-      .catch(() => {
-        if (active) setAgentModel("Model unavailable");
-      });
-    return () => {
-      active = false;
-    };
-  }, [api, page]);
   const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
@@ -170,45 +143,6 @@ export function ProfilePages({
     } catch (reason) {
       setError(safeErrorMessage(reason));
       setDeleting(false);
-    }
-  };
-
-  const checkLocalAgent = async () => {
-    setCheckingAgent(true);
-    setAgentCheck("");
-    try {
-      const result = await api.detectLocalAi(profile.id);
-      if (result.model) setAgentModel(result.model);
-      setAgentCheck(
-        result.message ||
-          (result.ok
-            ? "Local agent is ready."
-            : "Local agent needs attention."),
-      );
-      onIntegrationsChanged();
-    } catch (reason) {
-      setAgentCheck(safeErrorMessage(reason));
-    } finally {
-      setCheckingAgent(false);
-    }
-  };
-
-  const discoverLocalAgents = async () => {
-    setDiscoveringAgents(true);
-    setDiscoveryMessage("");
-    try {
-      const result = await api.discoverLocalAgents(profile.id);
-      setDiscoveredAgentIds(result.availableIds);
-      setDiscoveryRevision((current) => current + 1);
-      if (!result.runtimeAvailable) {
-        setDiscoveryMessage(
-          "Ollama could not be reached for local agent discovery.",
-        );
-      }
-    } catch (reason) {
-      setDiscoveryMessage(safeErrorMessage(reason));
-    } finally {
-      setDiscoveringAgents(false);
     }
   };
 
@@ -306,74 +240,14 @@ export function ProfilePages({
             <p className="eyebrow">06 / Agent adapters</p>
             <h2>AI agent</h2>
             <p>
-              Manage the agents that help organise your library and make
-              recommendations.
+              Choose one connection and how much time it spends thinking. You
+              can also let an external agent use StreamerAI through MCP.
             </p>
-            <div className="agent-adapters">
-              <div className="agent-adapters__panel">
-                <h3>Local Agent</h3>
-                <p>
-                  Run the current local model integration with Ollama on your
-                  device.
-                </p>
-                <IntegrationManager
-                  api={api}
-                  context="settings"
-                  profileId={profile.id}
-                  category="agents"
-                  onConnectionChange={onIntegrationsChanged}
-                  agentModel={agentModel}
-                  agentBaseUrl={agentBaseUrl}
-                  onAgentConfigured={({ model, baseUrl }) => {
-                    setAgentModel(model);
-                    setAgentBaseUrl(baseUrl);
-                    setAgentCheck("");
-                  }}
-                  onCheckAgent={() => void checkLocalAgent()}
-                  checkingAgent={checkingAgent}
-                  agentCheck={agentCheck}
-                  discoveryRevision={discoveryRevision}
-                  discoveredAgentIds={discoveredAgentIds}
-                />
-                <button
-                  className="button button--secondary"
-                  type="button"
-                  disabled={discoveringAgents}
-                  onClick={() => void discoverLocalAgents()}
-                >
-                  <svg
-                    aria-hidden="true"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.8"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <circle cx="12" cy="12" r="9" />
-                    <path d="M12 12 17.5 6.5M12 12l-2 5" />
-                    <circle
-                      cx="12"
-                      cy="12"
-                      r="1.5"
-                      fill="currentColor"
-                      stroke="none"
-                    />
-                  </svg>
-                  {discoveringAgents ? "Discovering…" : "Discover local agents"}
-                </button>
-                {discoveryMessage && <p role="status">{discoveryMessage}</p>}
-              </div>
-              <div className="agent-adapters__panel">
-                <p className="eyebrow">Planned</p>
-                <h3>Remote Agent</h3>
-                <p>
-                  Connect a remote agent through an API. Adapter setup and
-                  credentials will be available here when the integration is
-                  ready.
-                </p>
-              </div>
-            </div>
+            <AgentBackendSettings
+              api={api}
+              profileId={profile.id}
+              onChanged={() => onIntegrationsChanged()}
+            />
           </section>
           <div className="profile-page__actions">
             <button

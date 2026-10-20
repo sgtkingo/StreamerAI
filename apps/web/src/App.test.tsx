@@ -102,6 +102,71 @@ function createApi(): StreamerApi {
       baseUrl: "http://127.0.0.1:11434",
       manual: false,
     }),
+    getOllamaConfig: vi.fn().mockResolvedValue({
+      model: "qwen3.5:4b",
+      baseUrl: "http://127.0.0.1:11434",
+    }),
+    getLocalAgentCapabilities: vi.fn().mockResolvedValue({
+      providers: [
+        {
+          provider: "ollama",
+          detected: true,
+          ready: true,
+          code: "READY",
+          message: "Ready",
+          recommendedModel: "qwen3.5:4b",
+        },
+        {
+          provider: "codex",
+          detected: false,
+          ready: false,
+          code: "NOT_INSTALLED",
+          message: "Not installed",
+          recommendedModel: null,
+        },
+        {
+          provider: "claude",
+          detected: false,
+          ready: false,
+          code: "NOT_INSTALLED",
+          message: "Not installed",
+          recommendedModel: null,
+        },
+      ],
+    }),
+    getCustomLocalAgent: vi.fn().mockResolvedValue({
+      configured: false,
+      baseUrl: "",
+      model: "",
+    }),
+    saveCustomLocalAgent: vi.fn(),
+    verifyCustomLocalAgent: vi.fn().mockResolvedValue({ ok: true }),
+    verifyCustomLocalCandidate: vi.fn().mockResolvedValue({ ok: true }),
+    getAgentSelection: vi.fn().mockResolvedValue({
+      mode: "api",
+      provider: "ollama",
+      available: true,
+      code: "CONFIGURED",
+      message: "Ollama API is selected.",
+    }),
+    getAgentModels: vi.fn().mockResolvedValue({
+      provider: "ollama",
+      models: [
+        {
+          id: "qwen3.5:4b",
+          label: "qwen3.5:4b",
+          reasoningEfforts: ["none", "low", "medium", "high"],
+        },
+      ],
+      recommendedModel: "qwen3.5:4b",
+      source: "local",
+      status: "available",
+      message: "Installed locally.",
+    }),
+    setAgentSelection: vi.fn(),
+    saveAgentApiKey: vi.fn(),
+    getAgentApiKeyStatus: vi.fn().mockResolvedValue({ configured: false }),
+    deleteAgentApiKey: vi.fn().mockResolvedValue({ configured: false }),
     connectLocalAgent: vi.fn().mockResolvedValue({
       ok: true,
       message: "Ready",
@@ -109,6 +174,15 @@ function createApi(): StreamerApi {
       model: "qwen3.5:4b",
       baseUrl: "http://192.168.1.10:11434",
       manual: true,
+    }),
+    verifyOllamaModel: vi.fn().mockResolvedValue({
+      ok: true,
+      model: "qwen3.5:4b",
+      message: "Ready",
+    }),
+    pullLocalAgentModel: vi.fn().mockResolvedValue({
+      ok: true,
+      model: "qwen3.5:4b",
     }),
     discoverLocalAgents: vi.fn().mockResolvedValue({
       availableIds: ["ollama"],
@@ -291,11 +365,9 @@ describe("onboarding", () => {
     await user.click(screen.getByRole("button", { name: /^continue/i }));
 
     expect(
-      screen.getByRole("heading", { name: /a curator/i }),
+      screen.getByRole("heading", { name: /an assistant for your cinema/i }),
     ).toBeInTheDocument();
-    await waitFor(() =>
-      expect(screen.getByText("qwen3.5:4b")).toBeInTheDocument(),
-    );
+    await screen.findByRole("heading", { name: "Local Agent" });
     await user.click(screen.getByRole("button", { name: /^continue/i }));
 
     expect(
@@ -344,7 +416,7 @@ describe("onboarding", () => {
     await waitFor(() =>
       expect(screen.getByText(/connection verified/i)).toBeInTheDocument(),
     );
-    expect(api.connectTmdb).toHaveBeenCalledWith(secret);
+    expect(api.connectTmdb).toHaveBeenCalledWith(secret, "default");
     expect(screen.queryByDisplayValue(secret)).not.toBeInTheDocument();
     expect(screen.queryByText(secret)).not.toBeInTheDocument();
     expect(
@@ -383,7 +455,11 @@ describe("onboarding", () => {
     expect(
       await screen.findByText(/session token is stored/i),
     ).toBeInTheDocument();
-    expect(api.connectWebshare).toHaveBeenCalledWith("viewer", password);
+    expect(api.connectWebshare).toHaveBeenCalledWith(
+      "viewer",
+      password,
+      "default",
+    );
     expect(screen.queryByDisplayValue(password)).not.toBeInTheDocument();
     expect(screen.queryByText(password)).not.toBeInTheDocument();
   });
@@ -517,23 +593,9 @@ describe("profile navigation", () => {
     ).toBeInTheDocument();
   });
 
-  it("shows the active model and separates agent checking from discovery", async () => {
+  it("shows one active agent card and discovers local providers", async () => {
     const user = userEvent.setup();
     const api = createApi();
-    vi.mocked(api.getIntegrations).mockResolvedValue({
-      items: [
-        {
-          id: "ollama",
-          name: "Local AI",
-          description: "Private on-device recommendations.",
-          category: "inference",
-          planned: false,
-          selected: false,
-          configured: true,
-          setup: { documentationUrl: null, supportsDisconnect: true },
-        },
-      ],
-    });
     window.history.replaceState({}, "", "/");
     render(<App api={api} />);
     await user.click(await screen.findByRole("button", { name: /alex/i }));
@@ -541,69 +603,27 @@ describe("profile navigation", () => {
       screen.getByRole("button", { name: /profile menu for alex/i }),
     );
     await user.click(screen.getByRole("menuitem", { name: "Settings" }));
-
-    const agents = screen.getByRole("region", { name: "Local agents" });
-    const card = (await within(agents).findByText("qwen3.5:4b")).closest(
-      "article",
-    )!;
-    expect(within(card).queryByText("Local AI")).not.toBeInTheDocument();
-    await user.click(within(card).getByRole("button", { name: "Check agent" }));
-    await waitFor(() => expect(api.detectLocalAi).toHaveBeenCalledOnce());
-    expect(within(card).getByText("Ready")).toBeInTheDocument();
+    const section = screen.getByRole("region", { name: "AI agent" });
     expect(
-      within(card).queryByText(/managed in its own setup flow/i),
-    ).not.toBeInTheDocument();
-
-    await user.click(
-      within(card).getByRole("button", { name: "Agent settings" }),
-    );
-    expect(within(card).getByLabelText("Local API address")).toHaveValue(
-      "http://127.0.0.1:11434",
-    );
-    await user.click(
-      within(card).getByRole("button", { name: "Agent settings" }),
-    );
-
-    await user.click(
-      screen.getByRole("button", { name: "Discover local agents" }),
-    );
-    await waitFor(() => expect(api.discoverLocalAgents).toHaveBeenCalledOnce());
-    expect(
-      await within(agents).findByText("Sorry, no more agents found."),
+      within(section).getByRole("heading", { name: "Local Agent" }),
     ).toBeInTheDocument();
-    await user.click(
-      within(agents).getByRole("button", {
-        name: "You can try to add your local agent manually",
-      }),
+    expect(
+      within(section).getByRole("heading", { name: "External Agent" }),
+    ).toBeInTheDocument();
+    const local = within(section)
+      .getByRole("heading", { name: "Local Agent" })
+      .closest("article")!;
+    await user.click(within(local).getByRole("button", { name: "Settings" }));
+    expect(
+      within(local).getByText(/Automatic model: qwen3.5:4b/),
+    ).toBeInTheDocument();
+    await user.click(within(section).getByRole("button", { name: "Discover" }));
+    await waitFor(() =>
+      expect(api.getLocalAgentCapabilities).toHaveBeenCalledWith("default"),
     );
-    await user.type(
-      within(agents).getByLabelText("Local API address"),
-      "192.168.1.10:11434",
-    );
-    await user.type(within(agents).getByLabelText("Model name"), "qwen3.5:4b");
-    vi.mocked(api.connectLocalAgent).mockResolvedValueOnce({
-      ok: false,
-      message: "The model is not installed on this local API.",
-    });
-    await user.click(
-      within(agents).getByRole("button", { name: "Verify and add agent" }),
-    );
-    expect(await within(agents).findByRole("alert")).toHaveTextContent(
-      "The model is not installed on this local API.",
-    );
-    await user.click(
-      within(agents).getByRole("button", { name: "Verify and add agent" }),
-    );
-    await waitFor(() => expect(api.connectLocalAgent).toHaveBeenCalledTimes(2));
-    expect(api.connectLocalAgent).toHaveBeenLastCalledWith({
-      baseUrl: "192.168.1.10:11434",
-      model: "qwen3.5:4b",
-    });
-    await user.click(
-      within(card).getByRole("button", { name: "Agent settings" }),
-    );
-    expect(within(card).getByLabelText("Local API address")).toHaveValue(
-      "http://192.168.1.10:11434",
+    expect(within(section).getByText("Ready")).toBeInTheDocument();
+    expect(within(local).getByLabelText("Ollama URL")).toHaveValue(
+      "http://127.0.0.1:11434",
     );
   });
 
@@ -2085,6 +2105,7 @@ describe("conversational Home", () => {
     expect(api.getInferenceResidency).toHaveBeenCalledWith(
       expect.any(AbortSignal),
       true,
+      "default",
     );
     await new Promise((resolve) => setTimeout(resolve, 800));
     const progress = screen.getByRole("region", { name: "Discovery progress" });

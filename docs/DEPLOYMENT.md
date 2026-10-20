@@ -16,6 +16,8 @@ The web container is the only published service. It serves the PWA and proxies
 same-origin `/api` calls to the private server container. The server reaches
 Ollama using `host.docker.internal`; Compose supplies the Linux `host-gateway`
 mapping as well.
+The published web port is bound to host loopback. For local CLI agents and the
+MCP stdio bridge, see [Agent and MCP integration](AGENT_INTEGRATION.md).
 
 ## Secret and data lifecycle
 

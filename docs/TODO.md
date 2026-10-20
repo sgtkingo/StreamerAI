@@ -101,9 +101,9 @@ Eventy které vyvolají okamžité dohledání a kontrolu dostupnosti, i u Unava
 
 - DONE: Možná bychom mohli Season 0 považovat jako nepovinnou (vybledlá šedá) a nezapočítavat ji do statistik, vyhodnocování počtu dílů / dostupných sérií ani ji nepriorizovat při dohledání (až na posledním místě). Většinou je to jen bonusový obsah.
 
-- U alternativních zdrojů by měl zdroj šedě obsahovat reálný název souboru
+- DONE: U alternativních zdrojů by měl zdroj šedě obsahovat reálný název souboru
 
-- Potřebujeme dodělat konektory pro remote agenty: ChatGPT, Claude, Geminy, Grok, Kimi, DeepSeek... Nabízejí se dvě možnosti: API a MCP. Bylo by dobré kdyby StreamerAI uměl obě varianty. 
+- DONE: Potřebujeme dodělat konektory pro remote agenty: ChatGPT, Claude, Geminy, Grok, Kimi, DeepSeek... Nabízejí se dvě možnosti: API a MCP. Bylo by dobré kdyby StreamerAI uměl obě varianty.
  U MCP bych rád tento hybrdní mod:
 Implement a hybrid StreamerAI agent architecture that supports both:
 1. MCP Server mode
@@ -165,4 +165,10 @@ Také bychom měli zajistit aby v případě více dostupných agentů, byl akti
 
 Proved analýzu nasazení a proveditelnost.
 
+Zkontroluj integraci a napoj ji na Settings a Onboarding. U MCP i API je důležitá jednoduchost a přehlednost pro uživatele. Výběr modelů by měl být automatický (voleny by měli být lehké/rychlé levné modely, jako třeba Terra - Light nebo Medium). Uživatel by měl míát možnost kontroly nad úrovni přemýšlení modelu i nad jeho výběrem: v základu jen posuvník mezi "Speed" (no reasoning) a "Quality" (High Reasoning), expert režim otevře konkterétní výběr konkterétního dostupného modelu a modu.
+
 - Databáze se ted staví per-user: co kdyby si uživatelé uměli sdílet DB?  Tzn, když už uživatel ověří že je to správný zdroj, měla by se tato informace nasdílet i zbytku. Taková komuniktní DB
+
+- Hellspy adapter jako stream source
+
+- "Local folder or drive" nenamountuje lokální složku, třeba "D:\Download" - hlásí "Open StreamerAI on the home server to use Select folder, or enter the server path manually."
