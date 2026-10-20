@@ -869,8 +869,11 @@ textarea:not(:disabled):hover {
   width: 100%;
 }
 .title-detail__source-menu .title-detail__source-row > .download-button {
-  display: grid;
-  place-items: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: nowrap;
+  gap: 0;
   min-height: 34px;
   padding: 0;
   border-radius: 9px;

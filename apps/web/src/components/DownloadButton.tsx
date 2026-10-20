@@ -50,6 +50,7 @@ export function DownloadButton({
   multiFile = false,
   multiFileCount = 3,
   preparing = false,
+  showCompleteCheck = true,
 }: {
   state: "idle" | "downloading" | "complete";
   progress: number | null;
@@ -65,6 +66,7 @@ export function DownloadButton({
   multiFile?: boolean;
   multiFileCount?: 2 | 3;
   preparing?: boolean;
+  showCompleteCheck?: boolean;
 }) {
   const percentage = Math.max(0, Math.min(100, progress ?? 0));
   const deleting = state === "complete" && deletable;
@@ -120,7 +122,7 @@ export function DownloadButton({
       ) : deleting ? (
         <TrashGlyph />
       ) : (
-        <DownloadGlyph checked={state === "complete"} />
+        <DownloadGlyph checked={state === "complete" && showCompleteCheck} />
       )}
       {multiFile && (
         <span className="download-button__multifile" aria-hidden="true">

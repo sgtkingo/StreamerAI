@@ -366,7 +366,10 @@ export class OfflineDownloadManager {
       const localSource = title?.sources?.find(
         (source) =>
           source.providerId === "local-files" &&
-          source.candidateId === indexed?.id,
+          (source.candidateId === indexed?.id ||
+            (indexed?.contentHash !== undefined &&
+              this.local.getFile(source.candidateId)?.contentHash ===
+                indexed.contentHash)),
       );
       if (!indexed || !localSource)
         throw new Error("The saved file was not indexed in Library.");

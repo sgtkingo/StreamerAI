@@ -1583,6 +1583,7 @@ export function TitleDetail({
                       {isDownloadableSource(source) && (
                         <DownloadButton
                           compact
+                          showCompleteCheck={false}
                           state={downloadStateFor(undefined, source).state}
                           deletable={Boolean(
                             downloadStateFor(undefined, source).saved,
@@ -1718,6 +1719,7 @@ export function TitleDetail({
                       {isDownloadableSource(source) && (
                         <DownloadButton
                           compact
+                          showCompleteCheck={false}
                           state={
                             downloadStateFor(selectedEpisode, source).state
                           }
@@ -1996,6 +1998,7 @@ export function TitleDetail({
                                     {isDownloadableSource(source) && (
                                       <DownloadButton
                                         compact
+                                        showCompleteCheck={false}
                                         state={
                                           downloadStateFor(selection, source)
                                             .state

@@ -37,6 +37,75 @@ afterEach(async () => {
 });
 
 describe("local folder connector", () => {
+  it("indexes equal-content local copies once while keeping different files of the same size", async () => {
+    const folder = await mkdtemp(join(tmpdir(), "streamer-local-duplicates-"));
+    temporary.push(folder);
+    const first = join(folder, "Example.Show.S01E01.A.mkv");
+    const copy = join(folder, "Example.Show.S01E01.B.mkv");
+    await writeFile(first, "episode-one");
+    await writeFile(copy, "episode-one");
+    await writeFile(join(folder, "Example.Show.S01E02.mkv"), "episode-two");
+    const db = openStreamerDatabase({ filename: ":memory:" });
+    db.profiles.create({ id: "default", name: "Viewer", locale: "en" });
+    const library = new LocalMediaLibrary(db);
+    try {
+      await library.addRoot(folder);
+      await library.waitForScan();
+      const files = library.allFiles();
+      expect(files).toHaveLength(3);
+      expect(files[0]?.contentHash).toMatch(/^[a-f0-9]{64}$/);
+      expect(library.uniqueFiles()).toHaveLength(2);
+      const title = db.titles
+        .list()
+        .find((item) => item.title === "Example Show");
+      expect(
+        title?.sources?.map((source) => source.episodeNumber).sort(),
+      ).toEqual([1, 2]);
+
+      const indexedCopy = title?.sources?.find(
+        (source) => source.episodeNumber === 1,
+      );
+      const remaining =
+        indexedCopy?.releaseName === "Example.Show.S01E01.A.mkv" ? copy : first;
+      await rm(
+        indexedCopy?.releaseName === "Example.Show.S01E01.A.mkv" ? first : copy,
+      );
+      library.startScan();
+      await library.waitForScan();
+      expect(
+        db.titles
+          .get(title!.id)
+          ?.sources?.find((source) => source.episodeNumber === 1)?.releaseName,
+      ).toBe(remaining.split(/[\\/]/).at(-1));
+    } finally {
+      await library.close();
+      db.close();
+    }
+  });
+
+  it("keeps distinct local files with the same name and size", async () => {
+    const folder = await mkdtemp(join(tmpdir(), "streamer-local-same-name-"));
+    temporary.push(folder);
+    const other = join(folder, "other");
+    await mkdir(other);
+    await writeFile(join(folder, "Example.Show.S01E01.mkv"), "first");
+    await writeFile(join(other, "Example.Show.S01E01.mkv"), "other");
+    const db = openStreamerDatabase({ filename: ":memory:" });
+    db.profiles.create({ id: "default", name: "Viewer", locale: "en" });
+    const library = new LocalMediaLibrary(db);
+    try {
+      await library.addRoot(folder);
+      await library.waitForScan();
+      expect(library.uniqueFiles()).toHaveLength(2);
+      expect(
+        db.titles.list().find((item) => item.title === "Example Show")?.sources,
+      ).toHaveLength(2);
+    } finally {
+      await library.close();
+      db.close();
+    }
+  });
+
   it("keeps Season 0 playable without counting its episodes in series coverage", async () => {
     const folder = await mkdtemp(join(tmpdir(), "streamer-local-specials-"));
     temporary.push(folder);
@@ -48,7 +117,9 @@ describe("local folder connector", () => {
     try {
       await library.addRoot(folder);
       await library.waitForScan();
-      const item = db.titles.list().find((candidate) => candidate.title === "Example Show");
+      const item = db.titles
+        .list()
+        .find((candidate) => candidate.title === "Example Show");
       expect(item?.sources).toHaveLength(2);
       expect(item?.seriesCoverage).toMatchObject({
         seasonsAvailable: 1,
@@ -540,7 +611,9 @@ describe("local folder connector", () => {
         );
       const client = {
         forProfile: vi.fn().mockReturnValue({
-          createVideoLink: vi.fn().mockResolvedValue("https://download.webshare.cz/file"),
+          createVideoLink: vi
+            .fn()
+            .mockResolvedValue("https://download.webshare.cz/file"),
         }),
       } as unknown as WebshareClient;
       const downloads = new OfflineDownloadManager(

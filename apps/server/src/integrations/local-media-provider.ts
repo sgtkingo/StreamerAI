@@ -92,7 +92,7 @@ export class LocalMediaProvider implements MediaProvider {
     const original = request.originalTitle && normalize(request.originalTitle);
     const retrievedAt = this.now().toISOString();
     return this.library
-      .allFiles()
+      .uniqueFiles()
       .filter((file) => {
         const name = normalize(file.name);
         if (!name.includes(title) && (!original || !name.includes(original)))

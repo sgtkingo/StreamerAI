@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { createReadStream } from "node:fs";
 import { mkdir, opendir, realpath, stat } from "node:fs/promises";
 import { extname, join, relative, sep } from "node:path";
 import type { StreamerDatabase } from "@streamer-ai/database";
@@ -28,6 +29,7 @@ export interface LocalMediaFile {
   name: string;
   sizeBytes: number;
   modifiedMs: number;
+  contentHash?: string;
 }
 interface LocalSettings {
   roots: LocalRoot[];
@@ -145,6 +147,42 @@ export class LocalMediaLibrary {
   }
   allFiles(): LocalMediaFile[] {
     return [...this.files.values()];
+  }
+  uniqueFiles(): LocalMediaFile[] {
+    const files = this.allFiles().sort(
+      (a, b) =>
+        Number(this.managedLinks.has(b.path)) -
+        Number(this.managedLinks.has(a.path)),
+    );
+    const matchedByKey = new Map<string, string>();
+    for (const title of this.database.titles.list())
+      for (const label of [title.title, title.originalTitle]) {
+        if (!label) continue;
+        const key = `${title.kind}:${normalize(label)}`;
+        if (!matchedByKey.has(key)) matchedByKey.set(key, title.id);
+      }
+    const seen = new Set<string>();
+    return files.filter((file) => {
+      if (!file.contentHash) return true;
+      const link = this.managedLinks.get(file.path);
+      const parsed = episode(file.name);
+      const kind =
+        (link && this.database.titles.get(link.titleId)?.kind) ||
+        (parsed ? "series" : "movie");
+      const rawTitle =
+        parsed?.title ||
+        displayName(file.name)
+          .replace(/\b(?:19|20)\d{2}\b.*$/, "")
+          .trim();
+      const titleKey = `${kind}:${normalize(rawTitle)}`;
+      const titleId = link?.titleId ?? matchedByKey.get(titleKey) ?? titleKey;
+      const season = link?.seasonNumber ?? parsed?.season ?? null;
+      const number = link?.episodeNumber ?? parsed?.number ?? null;
+      const key = `${titleId}\u0000${season}\u0000${number}\u0000${file.contentHash}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
   }
   getRoot(id: string): LocalRoot | null {
     return this.settings.roots.find((root) => root.id === id) ?? null;
@@ -345,12 +383,44 @@ export class LocalMediaLibrary {
               name: entry.name,
               sizeBytes: info.size,
               modifiedMs: info.mtimeMs,
+              contentHash:
+                this.files.get(id)?.sizeBytes === info.size &&
+                this.files.get(id)?.modifiedMs === info.mtimeMs
+                  ? this.files.get(id)?.contentHash
+                  : undefined,
             });
           } catch {
             continue;
           }
           if (next.size > MAX_FILES)
             throw new Error("Local library limit of 50,000 files reached.");
+        }
+      }
+    }
+    const bySize = new Map<number, LocalMediaFile[]>();
+    for (const file of next.values()) {
+      const group = bySize.get(file.sizeBytes) ?? [];
+      group.push(file);
+      bySize.set(file.sizeBytes, group);
+    }
+    for (const group of bySize.values()) {
+      if (group.length < 2) continue;
+      for (const file of group) {
+        signal.throwIfAborted();
+        if (file.contentHash) continue;
+        try {
+          const hash = createHash("sha256");
+          for await (const chunk of createReadStream(file.path, { signal }))
+            hash.update(chunk);
+          const current = await stat(file.path);
+          if (
+            current.size === file.sizeBytes &&
+            current.mtimeMs === file.modifiedMs
+          )
+            file.contentHash = hash.digest("hex");
+        } catch (error) {
+          if (signal.aborted) throw error;
+          // Keep an unreadable file indexed without assuming it is a duplicate.
         }
       }
     }
@@ -383,7 +453,7 @@ export class LocalMediaLibrary {
         files: LocalMediaFile[];
       }
     >();
-    for (const file of this.files.values()) {
+    for (const file of this.uniqueFiles()) {
       const link = this.managedLinks.get(file.path);
       const linkedTitle = link && this.database.titles.get(link.titleId);
       const parsed = episode(file.name);
