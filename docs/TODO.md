@@ -171,4 +171,4 @@ Zkontroluj integraci a napoj ji na Settings a Onboarding. U MCP i API je důlež
 
 - Hellspy adapter jako stream source
 
-- "Local folder or drive" nenamountuje lokální složku, třeba "D:\Download" - hlásí "Open StreamerAI on the home server to use Select folder, or enter the server path manually."
+- DONE: "Local folder or drive" nenamountuje lokální složku, třeba "D:\Download" - hlásí "Open StreamerAI on the home server to use Select folder, or enter the server path manually." - při lokálním nasazení to bude OK

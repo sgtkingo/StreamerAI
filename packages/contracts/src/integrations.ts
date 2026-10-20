@@ -4,7 +4,9 @@ import { LocalizedTextSchema, type LocalizedText } from "./locales.js";
 
 export const INTEGRATION_IDS = [
   "tmdb",
+  "imdb",
   "webshare",
+  "hellspy",
   "ollama",
   "csfd",
   "local-files",
@@ -14,7 +16,9 @@ export const INTEGRATION_IDS = [
   "opensubtitles",
   "titulky-com",
   "brave-search",
+  "google-search",
   "cloudflare-sync",
+  "google-drive",
 ] as const;
 
 export const BuiltinIntegrationIdSchema = z.enum(INTEGRATION_IDS);
@@ -183,6 +187,23 @@ export const INTEGRATION_DESCRIPTORS = {
     supportsDisconnect: true,
     documentationUrl: "https://developer.themoviedb.org/",
   }),
+  imdb: descriptor({
+    id: "imdb",
+    kind: "metadata",
+    name: text("IMDb", "IMDb", "IMDb"),
+    description: text(
+      "Planned movie and series database integration.",
+      "Plánovaná integrace filmové a seriálové databáze.",
+      "Geplante Integration einer Film- und Seriendatenbank.",
+    ),
+    setupMode: "informed-consent",
+    planned: true,
+    optional: true,
+    canAutoDetect: false,
+    automatedChecks: false,
+    supportsDisconnect: true,
+    documentationUrl: "https://www.imdb.com/",
+  }),
   webshare: descriptor({
     id: "webshare",
     kind: "media",
@@ -198,6 +219,23 @@ export const INTEGRATION_DESCRIPTORS = {
     automatedChecks: true,
     supportsDisconnect: true,
     documentationUrl: "https://webshare.cz/apidoc/",
+  }),
+  hellspy: descriptor({
+    id: "hellspy",
+    kind: "media",
+    name: text("Hellspy", "Hellspy", "Hellspy"),
+    description: text(
+      "Planned stream source integration.",
+      "Plánovaná integrace zdroje streamů.",
+      "Geplante Integration einer Streamingquelle.",
+    ),
+    setupMode: "informed-consent",
+    planned: true,
+    optional: true,
+    canAutoDetect: false,
+    automatedChecks: false,
+    supportsDisconnect: true,
+    documentationUrl: "https://www.hellspy.to/",
   }),
   ollama: descriptor({
     id: "ollama",
@@ -350,6 +388,23 @@ export const INTEGRATION_DESCRIPTORS = {
     supportsDisconnect: true,
     documentationUrl: "https://brave.com/search/api/",
   }),
+  "google-search": descriptor({
+    id: "google-search",
+    kind: "search",
+    name: text("Google Search", "Vyhledávání Google", "Google Suche"),
+    description: text(
+      "Planned Google integration for web search.",
+      "Plánovaná integrace vyhledávání Google na webu.",
+      "Geplante Google-Integration für die Websuche.",
+    ),
+    setupMode: "informed-consent",
+    planned: true,
+    optional: true,
+    canAutoDetect: false,
+    automatedChecks: false,
+    supportsDisconnect: true,
+    documentationUrl: "https://www.google.com/",
+  }),
   "cloudflare-sync": descriptor({
     id: "cloudflare-sync",
     kind: "sync",
@@ -368,5 +423,22 @@ export const INTEGRATION_DESCRIPTORS = {
     canAutoDetect: false,
     automatedChecks: true,
     supportsDisconnect: true,
+  }),
+  "google-drive": descriptor({
+    id: "google-drive",
+    kind: "sync",
+    name: text("Google Drive", "Google Drive", "Google Drive"),
+    description: text(
+      "Planned integration for syncing supported user data with Google Drive.",
+      "Plánovaná integrace synchronizace podporovaných uživatelských dat s Google Drive.",
+      "Geplante Integration zur Synchronisierung unterstützter Benutzerdaten mit Google Drive.",
+    ),
+    setupMode: "informed-consent",
+    planned: true,
+    optional: true,
+    canAutoDetect: false,
+    automatedChecks: false,
+    supportsDisconnect: true,
+    documentationUrl: "https://drive.google.com/",
   }),
 } as const satisfies Record<BuiltinIntegrationId, IntegrationDescriptor>;

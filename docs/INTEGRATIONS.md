@@ -237,9 +237,10 @@ does not affect retaining several media alternatives on one resolved title.
 
 ### Planned choices in onboarding and Settings
 
-The built-in ČSFD, local folder/drive, FTP, FTPS, NAS, OpenSubtitles, and
-Titulky.com entries have `planned: true` in the integration catalog. Onboarding
-and Settings can persist a user's interest through
+The built-in IMDb, Hellspy, ČSFD, local folder/drive, FTP, FTPS, NAS,
+OpenSubtitles, Titulky.com, Google Search, and Google Drive entries have
+`planned: true` in the integration catalog. Onboarding and Settings can persist
+a user's interest through
 `PUT /api/v1/integrations/:integrationId/selection`. Selecting one records
 `action_required` with `configured: false`; deselecting clears that selection.
 The catalog reports `selected` separately from `configured`. These choices
@@ -481,8 +482,8 @@ system policy, request credentials or call arbitrary URLs.
 
 The `SearchProvider` contract is available for a future web-search adapter, but
 no web-search provider is registered in the application composition root yet.
-Brave Search is shown as a planned integration. A thematic request such as
-"mystery tonight" or "complete scify series" first maps to catalog genres and
+Brave Search and Google Search are shown as planned integrations. A thematic
+request such as "mystery tonight" or "complete scify series" first maps to catalog genres and
 searches a connected metadata provider through its optional `discover` method.
 TMDB uses its genre discovery endpoint and excludes titles that have not yet
 premiered; a request for a complete series also requires TMDB's `Ended` status.
