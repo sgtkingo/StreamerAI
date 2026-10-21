@@ -7,9 +7,94 @@
 - On Home, compact links such as `Continue`, `New`, `Trending`,
   `Top Rated`, and `For You` scroll smoothly to section anchors rather than
   opening separate catalog pages.
-- Profile medallion and setup/health entry on the right.
-- Dark cinematic presentation derived from `DESIGN.md`.
+- A compact Seasonal/Cinematic selector immediately beside the profile medallion,
+  with the setup/health entry on the right.
+- Automatic seasonal, weather and day/night presentation derived from
+  `DESIGN.md`; Cinematic retains the fixed black/white/red presentation.
 - English is primary; Czech and German are alternative interface languages.
+
+## Appearance, time and weather
+
+Theme defaults to automatic seasonal composition for existing and new viewers.
+The top bar and profile chooser offer only Seasonal and Cinematic. Seasonal
+restores the remembered automatic/season/holiday choice when leaving Cinematic;
+the compact toggle preserves weather and lighting preferences. Detailed Settings
+offers Automatic, Spring, Summer, Autumn, Winter, Christmas and New Year's Eve,
+plus independent Weather (`auto`, clear, cloudy, fog, rain, snow, storm) and
+Lighting (`auto`, day, night) controls. A pinned base still follows automatic
+weather and daylight unless those axes are overridden. The chooser uses its last
+acknowledged local appearance; selecting a viewer activates that viewer's saved
+appearance.
+
+Manual weather and lighting previews work without location or forecast access.
+Label them as appearance choices, separately from actual weather observations.
+Fix current appearance in Settings captures the resolved season, weather effect
+and day/night into those three controls, with neutral weather stored as clear.
+The result remains fixed across calendar and forecast changes. The Fix button
+shows a closed lock and pressed state while fixed, and an open lock otherwise;
+pressing it again unlocks all three axes. Use automatic settings also resets all
+three axes to auto and restores live composition.
+
+Onboarding retains the full theme selection and previews its draft appearance
+immediately, including weather, lighting and the ambient-motion checkbox.
+Completing setup persists the choice on that viewer; leaving
+setup without completing it removes the preview and restores the saved theme.
+Changing Theme or ambient motion from Settings saves independently of playback
+and taste preferences. A failed save restores the acknowledged preference and
+provides a retry; rapid changes remain ordered.
+
+Settings puts Theme in Appearance, then groups Local time and Weather atmosphere
+in one device-settings section below. Use
+subdued gray for motion/persistence notes, approximate-daylight guidance and
+weather attribution, including its links. The local clock displays seconds and
+ticks once per second only while visible, without restarting the ambient scene.
+Time autodetection (`Autodetekce` in Czech) uses the device clock and
+IANA timezone without requesting location permission. Disabling it enables
+timezone and manual wall-time controls. Changing only the timezone preserves
+the instant; a manual clock continues advancing after reload. Reject times
+skipped by daylight saving and require an explicit UTC-offset choice when a
+time occurs twice. The effective clock changes theme evaluation only; History
+uses real stored instants formatted in the chosen zone.
+
+Weather is optional and starts disabled. Selecting a searched city or explicitly
+choosing Use my location enables weather for coarse coordinates rounded to two
+decimal places. Explain that this approximate location is sent to Open-Meteo.
+Never request geolocation as a side effect of time autodetection or infer a city
+from the timezone. Denied location permission leaves city search available.
+Place a location card immediately below Weather atmosphere, showing the place,
+administrative address, country, subtle condition icon, actual observation and
+freshness. Unknown metadata stays explicitly unavailable rather than inferred.
+Keep the location timezone and provider/license attribution visible. Place the
+44 px square crosshair button beside city search, with an accessible Use my
+location label and loading state. Disabling weather clears its device cache.
+Unavailable automatic weather leaves season, local-time styling and manual
+appearance overrides usable, without interrupting navigation or playback.
+
+Use location sunrise/sunset as absolute instants where available. When solar
+data cannot describe the effective date, label day/night as approximate and use
+07:00–19:00 in the selected zone. Manual dates never reinterpret current weather
+as historical weather. Cinematic stops recurring weather requests and ambient
+effects.
+
+The shared background appears behind onboarding, the chooser and application
+chrome. Christmas uses green, red and gold, colorful lights and decorative
+falling snow. New Year's Eve uses navy, violet and gold, fireworks and decorative
+falling snow. Festive snow remains visible as decoration independently of actual
+or manually selected weather and never changes the reported weather condition.
+The requested fireworks supersede the earlier prohibition on fireworks bursts;
+use bounded, soft bursts without strobing or full-screen flashes. Rain lands on
+the back of the glass: irregular refractive beads, localized condensation at each
+impact and slow sliding trails. Half of the beads remain stationary without trails;
+the rest subtly deform and evaporate while still sliding, with wet tails sized to
+the bead. Only some impacts mist the glass. Condensation stays at the impact site
+and fades without expanding rings.
+Storm uses a denser, stronger version with irregular diffuse lightning glows in
+the background. Snow lands, sticks briefly and creates bounded frost around the
+edges. Lightning obeys every motion/pause guard and is absent in static mode.
+Weather effects remain subordinate to readable surfaces, media artwork and semantic
+status colors. Respect reduced motion and the ambient-motion checkbox with a
+static treatment; pause particle work while hidden or during playback. Palette
+changes crossfade gently, with immediate static changes under reduced motion.
 
 ## Conversational discovery header
 

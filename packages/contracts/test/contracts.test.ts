@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   CompleteSetupRequestSchema,
+  DEFAULT_APPEARANCE_PREFERENCES,
   DEFAULT_PLAYBACK_PREFERENCES,
   CatalogTitleSchema,
   DiscoveryResponseSchema,
@@ -100,6 +101,7 @@ describe("public contracts", () => {
         locale: "cs",
         preferences: ["Comedy"],
         playback: DEFAULT_PLAYBACK_PREFERENCES,
+        appearance: DEFAULT_APPEARANCE_PREFERENCES,
       },
       localAiEnabled: true,
     });
@@ -185,17 +187,19 @@ describe("public contracts", () => {
         complete: false,
         nextEpisodeLabel: null,
       },
-      sources: [{
-        id: "a".repeat(32),
-        providerId: "webshare",
-        candidateId: "bonus-1",
-        releaseName: "Example.S00E01.mkv",
-        sizeBytes: 100,
-        format,
-        seasonNumber: 0,
-        episodeNumber: 1,
-        checkedAt: "2026-09-27T10:00:00.000Z",
-      }],
+      sources: [
+        {
+          id: "a".repeat(32),
+          providerId: "webshare",
+          candidateId: "bonus-1",
+          releaseName: "Example.S00E01.mkv",
+          sizeBytes: 100,
+          format,
+          seasonNumber: 0,
+          episodeNumber: 1,
+          checkedAt: "2026-09-27T10:00:00.000Z",
+        },
+      ],
       metadataProvider: "metadata-test",
       metadataValidatedAt: "2026-09-27T10:00:00.000Z",
       inLibrary: false,

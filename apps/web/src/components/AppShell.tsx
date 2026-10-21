@@ -14,6 +14,8 @@ import { VideoPlayer } from "./VideoPlayer";
 import { TitleDetail } from "./TitleDetail";
 import { useDownloadManager } from "./DownloadManager";
 import { DownloadPage } from "./DownloadPage";
+import { useTheme } from "../theme/ThemeProvider";
+import { ThemeSelect } from "../theme/ThemeSelect";
 
 type Route = "home" | "library" | "downloads" | ProfilePage;
 
@@ -50,6 +52,8 @@ export function AppShell({
   onIntegrationsChanged: () => void;
   playbackEnabled?: boolean;
 }) {
+  const theme = useTheme();
+  const setPlaybackActive = theme.setPlaybackActive;
   const [route, setRoute] = useState<Route>(routeFromLocation);
   const [homeVisit, setHomeVisit] = useState(0);
   const [libraryVersion, setLibraryVersion] = useState(0);
@@ -60,6 +64,10 @@ export function AppShell({
     episodeTitle?: string;
   } | null>(null);
   const [playbackClosing, setPlaybackClosing] = useState(false);
+  useEffect(() => {
+    setPlaybackActive(activePlayback !== null);
+    return () => setPlaybackActive(false);
+  }, [activePlayback, setPlaybackActive]);
   const [detailTitle, setDetailTitle] = useState<CatalogTitle | null>(null);
   const [detailEpisode, setDetailEpisode] = useState<EpisodeSelection | null>(
     null,
@@ -188,64 +196,88 @@ export function AppShell({
             <a href="#for-you">For You</a>
           </nav>
         )}
-        <div className="profile-menu-anchor" ref={profileMenuRef}>
-          <button
-            className="avatar avatar--button"
-            type="button"
-            aria-label={`Profile menu for ${profile.name}`}
-            aria-expanded={profileMenuOpen}
-            aria-haspopup="menu"
-            onClick={() => setProfileMenuOpen((open) => !open)}
-          >
-            {profile.name.slice(0, 1).toUpperCase()}
-          </button>
-          {profileMenuOpen && (
-            <div className="profile-menu" role="menu" aria-label="Profile menu">
-              <strong>{profile.name}</strong>
-              <button
-                role="menuitem"
-                type="button"
-                onClick={() => navigate("settings")}
+        <div className="topbar__profile-actions">
+          <ThemeSelect
+            compact
+            selection="primary"
+            locale={profile.locale}
+            value={theme.appearance.mode}
+            onChange={(mode) =>
+              theme.setThemeFamily(mode === "cinematic" ? "cinematic" : "auto")
+            }
+          />
+          <div className="profile-menu-anchor" ref={profileMenuRef}>
+            <button
+              className="avatar avatar--button"
+              type="button"
+              aria-label={`Profile menu for ${profile.name}`}
+              aria-expanded={profileMenuOpen}
+              aria-haspopup="menu"
+              onClick={() => setProfileMenuOpen((open) => !open)}
+            >
+              {profile.name.slice(0, 1).toUpperCase()}
+            </button>
+            {profileMenuOpen && (
+              <div
+                className="profile-menu"
+                role="menu"
+                aria-label="Profile menu"
               >
-                Settings
-              </button>
-              <button
-                role="menuitem"
-                type="button"
-                onClick={() => navigate("preferences")}
-              >
-                Preferences
-              </button>
-              <button
-                role="menuitem"
-                type="button"
-                onClick={() => navigate("account")}
-              >
-                My account
-              </button>
-              <button
-                role="menuitem"
-                type="button"
-                onClick={() => navigate("statistics")}
-              >
-                Statistics
-              </button>
-              <span className="profile-menu__divider" aria-hidden="true" />
-              <button
-                className="profile-menu__switch-profile"
-                role="menuitem"
-                type="button"
-                onClick={() => {
-                  setProfileMenuOpen(false);
-                  onSwitchAccount();
-                }}
-              >
-                Log out / Switch profile
-              </button>
-            </div>
-          )}
+                <strong>{profile.name}</strong>
+                <button
+                  role="menuitem"
+                  type="button"
+                  onClick={() => navigate("settings")}
+                >
+                  Settings
+                </button>
+                <button
+                  role="menuitem"
+                  type="button"
+                  onClick={() => navigate("preferences")}
+                >
+                  Preferences
+                </button>
+                <button
+                  role="menuitem"
+                  type="button"
+                  onClick={() => navigate("account")}
+                >
+                  My account
+                </button>
+                <button
+                  role="menuitem"
+                  type="button"
+                  onClick={() => navigate("statistics")}
+                >
+                  Statistics
+                </button>
+                <span className="profile-menu__divider" aria-hidden="true" />
+                <button
+                  className="profile-menu__switch-profile"
+                  role="menuitem"
+                  type="button"
+                  onClick={() => {
+                    setProfileMenuOpen(false);
+                    onSwitchAccount();
+                  }}
+                >
+                  Log out / Switch profile
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </header>
+
+      {theme.appearanceError && (
+        <div className="theme-save-status" role="alert">
+          {theme.appearanceError}{" "}
+          <button type="button" onClick={theme.retryAppearance}>
+            Try again
+          </button>
+        </div>
+      )}
 
       {route === "home" ? (
         <HomePage

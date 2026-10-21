@@ -11,6 +11,7 @@ import { AudioOutputPicker } from "./AudioOutputPicker";
 import { useToasts } from "./ToastProvider";
 import { IntegrationManager } from "./IntegrationManager";
 import { AgentBackendSettings } from "./AgentBackendSettings";
+import { AppearanceSettings } from "../theme/AppearanceSettings";
 
 export type ProfilePage = "settings" | "preferences" | "account" | "statistics";
 
@@ -184,6 +185,7 @@ export function ProfilePages({
               is coming later.
             </p>
           </section>
+          <AppearanceSettings api={api} locale={profile.locale} />
           <section className="profile-page__section" id="settings-audio">
             <p className="eyebrow">02 / Audio</p>
             <h2>Playback languages</h2>

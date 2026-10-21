@@ -13,6 +13,7 @@ import { lockBodyScroll } from "../body-scroll-lock";
 import { useToasts } from "./ToastProvider";
 import { TitleCard } from "./TitleCard";
 import { usePlaybackChecks } from "./usePlaybackChecks";
+import { useTheme } from "../theme/ThemeProvider";
 
 interface LibraryPageProps {
   api: StreamerApi;
@@ -50,6 +51,7 @@ export function LibraryPage({
   onOpenTitle,
   onDownloadSeries,
 }: LibraryPageProps) {
+  const { timeZone } = useTheme();
   const [library, setLibrary] = useState<LibraryResponse | null>(null);
   const [libraryLoading, setLibraryLoading] = useState(true);
   const [libraryError, setLibraryError] = useState("");
@@ -660,7 +662,9 @@ export function LibraryPage({
                       </small>
                     </div>
                     <time dateTime={event.occurredAt}>
-                      {new Date(event.occurredAt).toLocaleString()}
+                      {new Date(event.occurredAt).toLocaleString(undefined, {
+                        timeZone,
+                      })}
                     </time>
                     <button
                       className="history-remove"

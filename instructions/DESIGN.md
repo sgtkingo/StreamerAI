@@ -16,10 +16,59 @@ The visual hierarchy is fixed:
 5. grayscale Found, not currently available tiles;
 6. restrained conversation history and provider diagnostics.
 
-Color comes from validated poster/backdrop artwork. Grayscale is a semantic
-availability state, not decoration, and must always be paired with text. The
-application chrome remains black, white and cool gray with no decorative
-gradients or shadows.
+Validated poster/backdrop artwork remains the dominant source of color.
+Grayscale is a semantic availability state, not decoration, and must always be
+paired with text. Cinematic keeps black, white and cool-gray chrome with the
+existing red brand/actions. Automatic and pinned seasonal themes also use the
+restrained environmental treatment below. These product-specific rules take
+precedence over the monochrome and no-gradient reference guidance later in this
+document.
+
+### Adaptive environmental treatment
+
+Automatic seasonal composition is the default appearance. The compact control
+offers Seasonal and Cinematic; detailed Settings and onboarding expose season,
+weather and lighting choices. Compose a dark seasonal base, current optional
+weather and local day/night; pinning an axis changes only that axis. Manual
+weather and day/night choices work without location access. Fix current
+appearance pins all three resolved axes; Use automatic settings restores them.
+Use muted green and blossom for spring, amber for summer, copper/burgundy for
+autumn, blue-gray for winter, green/red/gold for Christmas, and navy/violet/gold for
+New Year's Eve. Seasons follow the selected zone's calendar and reverse for a
+configured southern-hemisphere location. Christmas covers December 20–30 and
+New Year's Eve December 31–January 1, taking precedence over seasons.
+
+Soft background glows and blurred petals, leaves, light or crystals support the
+seasonal bases. Christmas has colorful lights and decorative falling snow;
+New Year's Eve has soft fireworks bursts and decorative falling snow. These
+festive effects are intentional regardless of actual weather; they never change
+the forecast condition or imply that snowfall was measured. This explicit
+fireworks treatment supersedes the earlier no-fireworks direction. Rain uses
+glass impacts, refractive beads and slow sliding trails. Storm increases their
+intensity and introduces irregular, diffuse background lightning with a smooth
+rise/decay and a quiet interval between events. Avoid strobing. Snowflakes land
+and linger on the glass, gradually creating bounded edge frost; ordinary seasonal
+snow follows the weather choice. Fog lowers decorative density. Share the
+animation budget between festive and weather effects and keep all effects below
+controls, dialogs, cards and playback. Static treatments retain glass/frost
+details without lightning.
+
+Theme tokens cover page and surface colors, borders, primary/secondary text,
+accent and focus. Retain dark readable surfaces during daytime. Keep error,
+warning, success, availability and poster treatments independent of the theme.
+Apply the same tokens to onboarding, profile medallions and the profile chooser.
+Cinematic preserves the previous palette and renders no new ambient layer.
+
+The ambient renderer uses one pointer-transparent, accessibility-hidden Canvas
+2D layer with cached sprites and bounded weather/festive pools. Ordinary
+decoration starts at 40 desktop or 16 compact-screen particles; denser glass and
+festive combinations use explicit caps. Device pixel ratio is capped at 1.5 and
+rendering at 30 frames per second.
+Reduced motion or disabled Ambient motion retains static atmosphere and colors;
+hidden pages, active playback and sustained slow frames stop animation work.
+Crossfade palette changes over about one second; reduced motion changes them
+immediately. Review contrast and layering at desktop and 320 px widths before
+acceptance.
 
 ## 1. Visual Theme & Atmosphere
 

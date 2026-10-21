@@ -1,0 +1,355 @@
+.theme-settings .theme-select {
+  max-width: 25rem;
+}
+
+.theme-family-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px 20px;
+}
+
+.theme-family-controls > .theme-select {
+  flex: 0 1 300px;
+}
+
+.theme-motion-options {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  min-width: 0;
+  gap: 8px 16px;
+  margin-bottom: 4px;
+}
+
+.theme-motion-options > .theme-checkbox {
+  min-width: 0;
+  margin: 0;
+}
+
+.theme-settings__subsection + .theme-settings__subsection {
+  margin-top: 32px;
+  padding-top: 28px;
+  border-top: 1px solid var(--graphite);
+}
+
+.theme-settings .theme-settings__subsection > h3 {
+  margin: 0 0 18px;
+  font-size: 19px;
+  font-weight: 500;
+}
+
+.profile-page__section.theme-settings .theme-muted-note,
+.profile-page__section.theme-settings .theme-muted-note a {
+  color: var(--slate);
+}
+
+.profile-page__section.theme-settings .theme-saved-note,
+.profile-page__section.theme-settings .theme-saved-note a {
+  color: #969696;
+}
+
+.profile-page__section.theme-settings .theme-muted-note a {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.theme-lock-icon {
+  width: 19px;
+  height: 19px;
+  flex: 0 0 auto;
+}
+
+.theme-fix-toggle input:checked {
+  accent-color: var(--accent);
+}
+
+.theme-fix-toggle input:checked + .theme-lock-icon {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.theme-fix-toggle {
+  display: inline-flex;
+  width: fit-content;
+  min-height: 44px;
+  margin: 0;
+  padding: 6px 12px;
+  border: 1px solid var(--graphite);
+  border-radius: 6px;
+}
+
+.theme-fix-toggle:has(input:checked) {
+  border-color: var(--accent);
+}
+
+.theme-fix-toggle:has(input:disabled) {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.theme-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  margin-block: 20px;
+}
+
+.theme-detail-grid .theme-select {
+  width: 100%;
+  max-width: none;
+}
+
+.theme-detail-grid--onboarding {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.theme-fix-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+  margin-block: 20px 12px;
+}
+
+.theme-fix-actions > .text-button {
+  margin-left: auto;
+}
+
+.theme-current-look {
+  color: var(--accent);
+  text-transform: capitalize;
+  font-size: 13px;
+}
+
+@media (max-width: 600px) {
+  .theme-detail-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.theme-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 36px;
+  margin-top: 1rem;
+  color: var(--white);
+  cursor: pointer;
+}
+
+label.theme-checkbox input {
+  position: static;
+  width: 18px;
+  height: 18px;
+  min-height: 18px;
+  margin: 0;
+  opacity: 1;
+  accent-color: var(--accent);
+}
+
+.theme-checkbox span {
+  font-size: 14px;
+}
+
+.theme-time-fields {
+  margin-top: 1.25rem;
+  max-width: 28rem;
+}
+
+.theme-clock {
+  font-size: 1.3rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--white);
+}
+
+.theme-clock span {
+  display: block;
+  font-size: 0.85rem;
+  margin-top: 0.5rem;
+  color: var(--slate);
+}
+
+.theme-location-results {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.theme-location-results button {
+  white-space: normal;
+  text-align: left;
+  justify-content: space-between;
+  width: 100%;
+}
+
+.theme-location-results small {
+  color: var(--slate);
+}
+
+.theme-location-search {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.theme-location-search > .field {
+  flex: 1;
+  min-width: 0;
+}
+
+.theme-location-search input {
+  min-height: 44px;
+}
+
+.theme-location-action {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  padding: 0;
+  border: 1px solid var(--graphite);
+  border-radius: 8px;
+  color: var(--slate);
+  background: var(--surface);
+  cursor: pointer;
+}
+
+.theme-location-action svg {
+  width: 21px;
+  height: 21px;
+}
+
+.theme-location-action:hover:not(:disabled),
+.theme-location-action:focus-visible {
+  border-color: var(--accent);
+  color: var(--white);
+}
+
+.theme-location-action:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+
+.weather-location-card {
+  padding: 20px;
+  border: 1px solid var(--graphite);
+  border-radius: 9px;
+  background: var(--surface);
+  margin-bottom: 20px;
+}
+
+.weather-location-card__identity {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.weather-location-card__icon {
+  color: var(--slate);
+  flex: 0 0 40px;
+  opacity: 0.7;
+}
+
+.weather-location-card__icon svg {
+  display: block;
+  width: 40px;
+  height: 40px;
+}
+
+.weather-location-card__place {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.weather-location-card__place h4 {
+  margin: 0 0 5px;
+  color: var(--white);
+  font-size: 17px;
+  font-weight: 500;
+}
+
+.weather-location-card p {
+  margin: 6px 0 0;
+  color: var(--slate);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.weather-location-card .weather-location-card__state {
+  margin-top: 16px;
+}
+
+.weather-location-card__refresh {
+  flex: 0 0 auto;
+  margin-top: 2px;
+  font-size: 12px;
+}
+
+.weather-location-card__observation {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+}
+
+.weather-location-card__observation strong {
+  color: var(--white);
+  font-weight: 500;
+}
+
+.weather-location-card .weather-location-card__preview {
+  margin-top: 12px;
+  border-top: 1px solid var(--graphite);
+  padding-top: 10px;
+}
+
+@media (max-width: 480px) {
+  .weather-location-card {
+    padding: 16px;
+  }
+
+  .weather-location-card__identity {
+    flex-wrap: wrap;
+  }
+
+  .weather-location-card__place {
+    flex-basis: calc(100% - 54px);
+  }
+
+  .weather-location-card__refresh {
+    margin-left: 54px;
+  }
+}
+
+.theme-save-status {
+  padding: 0.75rem 1.5rem;
+  color: var(--error);
+  background: var(--surface);
+}
+
+.topbar__profile-actions {
+  grid-column: -2 / -1;
+}
+
+@media (max-width: 600px) {
+  html[data-theme] .topbar {
+    grid-template-columns: minmax(0, 1fr) auto;
+    padding-block: 8px;
+    row-gap: 2px;
+  }
+
+  .topbar .brand-button,
+  .topbar__profile-actions {
+    grid-row: 1;
+  }
+
+  .topbar > .primary-nav {
+    grid-row: 2;
+    grid-column: 1 / -1;
+    justify-self: center;
+  }
+}

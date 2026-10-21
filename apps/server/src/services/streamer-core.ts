@@ -1,4 +1,5 @@
 import {
+  AppearancePreferencesSchema,
   CatalogTitleSchema,
   DiscoveryRequestSchema,
   DiscoveryResponseSchema,
@@ -6,9 +7,11 @@ import {
   LibraryResponseSchema,
   PlaybackGrantSchema,
   PlaybackPreferencesSchema,
+  mergeAppearancePreferences,
   ViewerProfileSchema,
   TitleDetailSchema,
   type PlaybackPreferences,
+  type AppearancePreferences,
   type UpdateViewerProfile,
   type ViewerProfile,
   type CatalogTitle,
@@ -42,6 +45,11 @@ import {
   watchedTitlesFromReply,
   type UnseenExclusions,
 } from "./unseen-discovery.js";
+
+function appearancePreferences(value: unknown): AppearancePreferences {
+  const parsed = AppearancePreferencesSchema.safeParse(value);
+  return parsed.success ? parsed.data : AppearancePreferencesSchema.parse({});
+}
 
 function storageTitle(item: CatalogTitle) {
   const {
@@ -176,6 +184,7 @@ export class StreamerCore {
     locale: "en" | "cs" | "de";
     preferences: string[];
     playback: PlaybackPreferences;
+    appearance?: AppearancePreferences;
     localAiEnabled: boolean;
   }): void {
     const existing = this.database.profiles.get(input.id);
@@ -183,6 +192,9 @@ export class StreamerCore {
       ...existing?.preferences,
       genres: input.preferences,
       playback: input.playback,
+      appearance:
+        input.appearance ??
+        appearancePreferences(existing?.preferences.appearance),
       onboardingComplete: true,
       localAiEnabled: input.localAiEnabled,
     };
@@ -224,6 +236,7 @@ export class StreamerCore {
       playback: playback.success
         ? playback.data
         : PlaybackPreferencesSchema.parse({}),
+      appearance: appearancePreferences(profile.preferences.appearance),
     });
   }
 
@@ -246,6 +259,7 @@ export class StreamerCore {
         genres: [],
         prompt: "",
         playback: PlaybackPreferencesSchema.parse({}),
+        appearance: AppearancePreferencesSchema.parse({}),
         onboardingComplete: false,
       },
     });
@@ -263,6 +277,14 @@ export class StreamerCore {
       ...(patch.genres === undefined ? {} : { genres: patch.genres }),
       ...(patch.prompt === undefined ? {} : { prompt: patch.prompt }),
       ...(patch.playback === undefined ? {} : { playback: patch.playback }),
+      ...(patch.appearance === undefined
+        ? {}
+        : {
+            appearance: mergeAppearancePreferences(
+              appearancePreferences(current.preferences.appearance),
+              patch.appearance,
+            ),
+          }),
     };
     return this.publicProfile(
       this.database.profiles.update(profileId, {
@@ -1054,7 +1076,8 @@ export class StreamerCore {
         )
         .slice(0, 24);
       const regularSeasons =
-        detail.series?.seasons.filter((season) => season.seasonNumber > 0) ?? [];
+        detail.series?.seasons.filter((season) => season.seasonNumber > 0) ??
+        [];
       const episodes = regularSeasons.flatMap((season) => season.episodes);
       const available = episodes.filter(
         (item) => item.availability === "available",

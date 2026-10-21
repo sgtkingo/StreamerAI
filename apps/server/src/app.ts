@@ -59,6 +59,12 @@ import {
 import { registerTmdbRoutes } from "./routes/tmdb.js";
 import { registerWebshareRoutes } from "./routes/webshare.js";
 import { registerLocalFilesRoutes } from "./routes/local-files.js";
+import { registerEnvironmentRoutes } from "./routes/environment.js";
+import {
+  OpenMeteoClient,
+  type EnvironmentFetch,
+} from "./integrations/open-meteo-client.js";
+import { EnvironmentWeatherService } from "./services/environment-weather.js";
 import { StreamerCore } from "./services/streamer-core.js";
 import { LocalMediaLibrary } from "./services/local-media-library.js";
 import { OfflineDownloadManager } from "./services/offline-download-manager.js";
@@ -93,6 +99,8 @@ export interface CreateAppOptions {
   providerFetch?: ProviderFetch;
   inferenceFetch?: InferenceFetch;
   remoteApiFetch?: typeof fetch;
+  /** Optional, fixed-host Open-Meteo transport, independent of media providers. */
+  environmentFetch?: EnvironmentFetch;
   now?: () => Date;
   tmdbTimeoutMs?: number;
   secretStore?: SecretStore;
@@ -483,6 +491,13 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
     });
   });
 
+  registerEnvironmentRoutes(
+    app,
+    new EnvironmentWeatherService(
+      new OpenMeteoClient({ fetch: options.environmentFetch, now }),
+      { now },
+    ),
+  );
   registerSystemRoutes(app, {
     agentStatus: async (profileId) => {
       const selection = agent.selection(profileId);

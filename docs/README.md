@@ -11,6 +11,9 @@ and approved future decisions remain authoritative in [`../instructions`](../ins
 - [`API.md`](API.md) - currently implemented HTTP endpoints.
 - [`TITLE_DETAILS.md`](TITLE_DETAILS.md) - film details, progressive episode discovery, and exact-episode playback.
 - [`PLAYER.md`](PLAYER.md) - audio outputs, subtitles, seek timing and series autoplay.
+- [`PROFILES.md`](PROFILES.md) - local viewers, onboarding, appearance and device context.
+- [`ADAPTIVE_THEMES_PLAN.md`](ADAPTIVE_THEMES_PLAN.md) - implemented seasonal,
+  weather-aware day/night themes, ambient backgrounds and appearance/time settings.
 - [`INTEGRATIONS.md`](INTEGRATIONS.md) - how to add metadata, media, subtitle,
   search, agent and sync providers.
 - [`VALIDATION.md`](VALIDATION.md) - second-sight findings, verified invariants
@@ -29,6 +32,8 @@ The repository contains a working local vertical slice:
   just-in-time media recheck;
 - SQLite canonical-title cache and provider ID mappings;
 - guided TMDB and Webshare credential verification with sanitized public responses;
+- shared adaptive themes across onboarding, chooser and application chrome,
+  with per-profile appearance and optional device-local weather/time context;
 - durable conversational sessions and idempotent replay;
 - full local Ollama capability preflight and a structured-agent adapter;
 - provider-neutral contracts, family registries, TMDB normalization, portable

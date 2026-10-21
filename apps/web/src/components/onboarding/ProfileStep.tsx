@@ -1,5 +1,8 @@
 import type { ProfileDraft } from "../../api/client";
 import { PlaybackLanguageFields } from "../PlaybackLanguageFields";
+import { ThemeSelect } from "../../theme/ThemeSelect";
+import { mergeAppearancePreferences } from "@streamer-ai/contracts";
+import { AppearanceInfluenceFields } from "../../theme/AppearanceInfluenceFields";
 
 const preferences = [
   "Drama",
@@ -65,6 +68,66 @@ export function ProfileStep({ profile, onChange }: ProfileStepProps) {
           </select>
         </label>
 
+        <fieldset className="preference-fieldset">
+          <legend>Theme</legend>
+          <p>
+            Choose your atmosphere. Seasonal follows the calendar and local
+            time. Preview weather and lighting here, or fine-tune and fix the
+            look in Settings.
+          </p>
+          <ThemeSelect
+            value={profile.appearance.mode}
+            locale={profile.locale}
+            onChange={(mode) =>
+              onChange({
+                ...profile,
+                appearance: mergeAppearancePreferences(profile.appearance, {
+                  mode,
+                }),
+              })
+            }
+          />
+          <div className="theme-detail-grid theme-detail-grid--onboarding">
+            <AppearanceInfluenceFields
+              locale={profile.locale}
+              weather={profile.appearance.weatherOverride}
+              daylight={profile.appearance.daylightOverride}
+              disabled={profile.appearance.mode === "cinematic"}
+              onWeatherChange={(weatherOverride) =>
+                onChange({
+                  ...profile,
+                  appearance: mergeAppearancePreferences(profile.appearance, {
+                    weatherOverride,
+                  }),
+                })
+              }
+              onDaylightChange={(daylightOverride) =>
+                onChange({
+                  ...profile,
+                  appearance: mergeAppearancePreferences(profile.appearance, {
+                    daylightOverride,
+                  }),
+                })
+              }
+            />
+          </div>
+          <label className="theme-checkbox">
+            <input
+              type="checkbox"
+              checked={profile.appearance.ambientMotion}
+              onChange={(event) =>
+                onChange({
+                  ...profile,
+                  appearance: {
+                    ...profile.appearance,
+                    ambientMotion: event.target.checked,
+                  },
+                })
+              }
+            />
+            <span>Ambient motion</span>
+          </label>
+        </fieldset>
         <fieldset className="preference-fieldset">
           <legend>What do you enjoy?</legend>
           <p>Select any, or let StreamerAI learn naturally.</p>

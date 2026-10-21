@@ -781,6 +781,13 @@ export function registerContentRoutes(
       dependencies.core.configureProfile({
         id: profileId,
         ...parsed.data.profile,
+        // Old setup clients omit appearance; rerunning setup must preserve it.
+        appearance: Object.hasOwn(
+          (request.body as { profile: object }).profile,
+          "appearance",
+        )
+          ? parsed.data.profile.appearance
+          : undefined,
         localAiEnabled: parsed.data.localAiEnabled,
       });
     } catch (error) {

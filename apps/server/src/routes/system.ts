@@ -1,4 +1,6 @@
 import {
+  AppearancePreferencesSchema,
+  DEFAULT_APPEARANCE_PREFERENCES,
   INTEGRATION_DESCRIPTORS,
   type ProviderDescriptor,
   type IntegrationDescriptor,
@@ -16,9 +18,7 @@ import type { SecretStore } from "../stores/secret-store.js";
 import { profileSecretKey } from "../stores/secret-store.js";
 
 export interface SystemRouteDependencies {
-  agentStatus?: (
-    profileId: string,
-  ) => Promise<{
+  agentStatus?: (profileId: string) => Promise<{
     configured: boolean;
     status: string;
     checkedAt: string | null;
@@ -231,6 +231,9 @@ export function registerSystemRoutes(
                     (value): value is string => typeof value === "string",
                   )
                 : [],
+              appearance: AppearancePreferencesSchema.catch(
+                DEFAULT_APPEARANCE_PREFERENCES,
+              ).parse(profile.preferences.appearance),
             },
       integrations: {
         tmdb,

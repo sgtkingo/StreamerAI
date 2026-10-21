@@ -1,5 +1,10 @@
 import { z } from "zod";
 
+import {
+  AppearancePatchSchema,
+  AppearancePreferencesSchema,
+  DEFAULT_APPEARANCE_PREFERENCES,
+} from "./appearance.js";
 import { IntegrationIdSchema } from "./integrations.js";
 import { SupportedLocaleSchema } from "./locales.js";
 
@@ -130,6 +135,9 @@ export const ViewerProfileSchema = z
     genres: z.array(z.string().min(1).max(80)).max(50),
     prompt: z.string().max(3000),
     playback: PlaybackPreferencesSchema,
+    appearance: AppearancePreferencesSchema.default(
+      DEFAULT_APPEARANCE_PREFERENCES,
+    ),
   })
   .strict();
 export type ViewerProfile = z.infer<typeof ViewerProfileSchema>;
@@ -148,6 +156,7 @@ export const UpdateViewerProfileSchema = z
     genres: z.array(z.string().trim().min(1).max(80)).max(50).optional(),
     prompt: z.string().trim().max(3000).optional(),
     playback: PlaybackPreferencesSchema.optional(),
+    appearance: AppearancePatchSchema.optional(),
   })
   .strict();
 export type UpdateViewerProfile = z.infer<typeof UpdateViewerProfileSchema>;
@@ -158,6 +167,9 @@ export const SetupProfileSchema = z
     locale: SupportedLocaleSchema,
     preferences: z.array(z.string().trim().min(1).max(80)).max(50).default([]),
     playback: PlaybackPreferencesSchema.default(DEFAULT_PLAYBACK_PREFERENCES),
+    appearance: AppearancePreferencesSchema.default(
+      DEFAULT_APPEARANCE_PREFERENCES,
+    ),
   })
   .strict();
 

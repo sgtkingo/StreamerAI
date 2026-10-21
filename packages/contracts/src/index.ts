@@ -6,3 +6,5 @@ export * from "./onboarding.js";
 export * from "./provider-common.js";
 export * from "./connector-contract.js";
 export * from "./providers.js";
+export * from "./appearance.js";
+export * from "./environment.js";

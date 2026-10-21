@@ -31,11 +31,102 @@ and used by subsequent agent requests.
   "profile": {
     "name": "Viewer",
     "locale": "cs",
-    "preferences": ["mystery", "comedy"]
+    "preferences": ["mystery", "comedy"],
+    "appearance": {
+      "mode": "auto",
+      "ambientMotion": true,
+      "seasonalMode": "auto",
+      "weatherOverride": "auto",
+      "daylightOverride": "auto"
+    }
   },
   "localAiEnabled": true
 }
 ```
+
+`appearance` is optional and defaults to automatic composition on all three
+appearance axes, with ambient motion enabled.
+An existing viewer's unrelated preference fields are preserved when rerunning
+setup.
+
+## Environment and appearance
+
+These optional environment endpoints work before profile selection and do not
+require catalog integrations or Ollama:
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/environment/locations?q=Prague&language=en` | Search up to five normalized city locations with coarse coordinates and an IANA timezone. `q` is 2–100 characters; `language` is a two-letter code. |
+| `GET` | `/environment/weather?latitude=50.08&longitude=14.42` | Return normalized current conditions and absolute sunrise/sunset instants for a coarse location. Coordinates must be in latitude/longitude range. |
+
+Location responses contain `items: [{ id, label, latitude, longitude, timezone }]`.
+Items can also include `name`, `address`, `country` and `countryCode` when
+supplied by city geocoding. `address` is the administrative area, not a street
+address. Missing metadata remains absent, and older saved locations remain
+valid. Device geolocation retains coarse coordinates; no reverse-geocoding
+provider is enabled or contacted.
+An upstream city-search failure returns HTTP 503 with the stable code
+`ENVIRONMENT_LOCATIONS_UNAVAILABLE` and `Retry-After`; a successful search with
+no matches returns HTTP 200 with an empty `items` array.
+Weather responses contain `status: "fresh" | "stale" | "unavailable"`, a nullable
+`weather`, optional `retryAfterSeconds`, and `attribution: { name, url,
+licenseUrl }`. A non-null snapshot contains `condition`, `precipitation`,
+`cloudCover`, `observedAt`, `fetchedAt`, `isDay`, `timezone` and
+`solar: [{ date, sunrise, sunset }]`. Instants are ISO strings; absent polar
+sunrise/sunset values are `null`. Conditions normalize to `clear`, `cloudy`,
+`fog`, `rain`, `snow`, `storm` or `unknown`.
+
+Freshness uses the real observed instant, independently of a viewer's manual
+appearance clock. Conditions expire after two hours; a retained snapshot can
+then contain neutral `unknown` weather while keeping solar intervals for their
+valid location dates. `unavailable` also covers an empty cache during provider
+failure. These routes return `Cache-Control: private, no-store`; responses in
+backoff can include `Retry-After`. The server adapter bounds upstream requests,
+cache entries, queues and installation-wide request budgets. Query strings and
+coordinates are excluded from application request logs.
+
+Weather uses the server-side [Open-Meteo forecast API](https://open-meteo.com/en/docs)
+and [city geocoding API](https://open-meteo.com/en/docs/geocoding-api).
+It is an opt-in environmental service, separate from metadata/media connectors.
+See [`INTEGRATIONS.md`](INTEGRATIONS.md#environmental-weather) for attribution
+and free-service usage constraints.
+
+Profile responses expose `appearance: { mode, ambientMotion, seasonalMode,
+weatherOverride, daylightOverride }`. Missing preferences resolve to `mode:
+"auto"`, `ambientMotion: true` and `"auto"` for each added field. The existing
+mode union remains `auto`, `cinematic`, `spring`, `summer`, `autumn`, `winter`,
+`christmas` and `new-year`.
+
+`seasonalMode` accepts the same values except `cinematic`; it remembers the
+non-Cinematic selection for the compact Seasonal/Cinematic control. Older
+records infer it from their existing non-Cinematic `mode`, or `auto` when the
+existing mode is Cinematic. `weatherOverride` accepts `auto`, `clear`, `cloudy`,
+`fog`, `rain`, `snow`, `storm`; `daylightOverride` accepts `auto`, `day`, `night`.
+The latter two fields default to `auto` on older records. Manual overrides are
+visual choices independent of location permissions and the environment API.
+
+`PATCH /profiles/:profileId` accepts partial nested appearance changes, for example:
+
+```json
+{
+  "appearance": {
+    "mode": "autumn",
+    "weatherOverride": "rain",
+    "daylightOverride": "night"
+  }
+}
+```
+
+Changing one field preserves all other appearance fields and unrelated
+preferences. A non-Cinematic `mode` patch also updates `seasonalMode` unless
+that field is explicitly provided. Entering Cinematic preserves the remembered
+season; restoring Seasonal sends that remembered mode. Fix current appearance
+persists the resolved base, weather effect (`none` becomes `clear`) and lighting
+through these existing fields; it does not introduce a locked-snapshot API.
+Returning to automatic resets `mode`, `weatherOverride` and `daylightOverride`
+to `auto`.
+Device clock, timezone, weather enablement and coarse location remain validated
+browser context; they are not part of this profile PATCH.
 
 ## Home and discovery
 
@@ -112,9 +203,9 @@ afterward.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| `GET` | `/profiles` | List up to five viewer profiles with non-secret playback and taste preferences, including `onboardingComplete`. |
+| `GET` | `/profiles` | List up to five viewer profiles with non-secret playback, taste and appearance preferences, including `onboardingComplete`. |
 | `POST` | `/profiles` | Create an incomplete viewer profile from `{ "name": "Alex", "locale": "cs" }`; returns `409 PROFILE_LIMIT_REACHED` after five. |
-| `PATCH` | `/profiles/:profileId` | Update display name, interface locale, genre list, taste prompt or playback preferences. |
+| `PATCH` | `/profiles/:profileId` | Update display name, interface locale, genre list, taste prompt, playback or partial appearance preferences. |
 | `GET` | `/profiles/:profileId/library` | List the profile Library. |
 | `GET` | `/profiles/:profileId/titles/:titleId` | Open a validated film/series detail. A series response includes a progressively updated season/episode guide; poll while `series.status` is `searching`. Related titles come only from the validated local catalogue. |
 | `PUT` | `/profiles/:profileId/library/:titleId` | Explicitly save a validated title. |

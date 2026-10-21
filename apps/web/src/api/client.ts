@@ -16,7 +16,10 @@ import type {
   TitleDetail,
   TitleSource,
   EpisodeSelection,
+  EnvironmentLocationsResponse,
+  EnvironmentWeatherResponse,
 } from "@streamer-ai/contracts";
+import { AppearancePreferencesSchema } from "@streamer-ai/contracts";
 import { DEFAULT_PLAYBACK_PREFERENCES } from "../playback-preferences";
 
 export type ConnectionState = "connected" | "not-configured" | "unavailable";
@@ -280,6 +283,16 @@ export interface StreamerApi {
   ): Promise<{ state: "loaded" | "unloaded" | "unknown"; checkedAt: string }>;
   completeSetup(request: CompleteSetupRequest): Promise<void>;
   getProfiles(): Promise<{ items: ViewerProfile[]; limit: number }>;
+  searchEnvironmentLocations?(
+    query: string,
+    language?: string,
+    signal?: AbortSignal,
+  ): Promise<EnvironmentLocationsResponse>;
+  getEnvironmentWeather?(
+    latitude: number,
+    longitude: number,
+    signal?: AbortSignal,
+  ): Promise<EnvironmentWeatherResponse>;
   createProfile(request: {
     name: string;
     locale: "en" | "cs" | "de";
@@ -392,6 +405,8 @@ const domainErrorMessages: Record<string, string> = {
   LOCAL_AGENT_ADDRESS_INVALID:
     "Enter a local or private Ollama API address and a valid model name.",
   RATE_LIMITED: "The provider is busy. Wait a moment and try again.",
+  ENVIRONMENT_LOCATIONS_UNAVAILABLE:
+    "City search is temporarily unavailable. Please try again in a moment.",
   FOLDER_PICKER_LOCAL_ONLY:
     "Open StreamerAI on the home server to use Select folder, or enter the server path manually.",
   FOLDER_PICKER_BUSY: "A folder picker is already open on the home server.",
@@ -603,15 +618,31 @@ function readProfile(value: unknown): ProfileDraft | undefined {
   ) {
     return undefined;
   }
+  const appearance = AppearancePreferencesSchema.safeParse(
+    value.appearance ?? {},
+  );
   return {
     name: value.name,
     locale: value.locale as ProfileDraft["locale"],
     preferences: value.preferences,
     playback: DEFAULT_PLAYBACK_PREFERENCES,
+    appearance: appearance.success
+      ? appearance.data
+      : AppearancePreferencesSchema.parse({}),
   };
 }
 
 export const apiClient: StreamerApi = {
+  searchEnvironmentLocations: (query, language = "en", signal) =>
+    request<EnvironmentLocationsResponse>(
+      `/environment/locations?${new URLSearchParams({ q: query, language })}`,
+      { signal },
+    ),
+  getEnvironmentWeather: (latitude, longitude, signal) =>
+    request<EnvironmentWeatherResponse>(
+      `/environment/weather?${new URLSearchParams({ latitude: String(latitude), longitude: String(longitude) })}`,
+      { signal },
+    ),
   getIntegrations: (profileId = "default") =>
     request<{ items: IntegrationCatalogItem[] }>(
       `/integrations?profileId=${encodeURIComponent(profileId)}`,

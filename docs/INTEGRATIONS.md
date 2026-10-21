@@ -4,6 +4,51 @@ Integrations are replaceable adapters. A provider name must not leak into
 Library, History, UI routing or canonical identity. The normative product and
 compliance rules are in [`../instructions/INTEGRATIONS.md`](../instructions/INTEGRATIONS.md).
 
+## Environmental weather
+
+Adaptive appearance uses a separate optional environmental adapter, rather than
+expanding the catalog connector families. `OpenMeteoClient` calls fixed forecast
+and geocoding origins; `EnvironmentWeatherService` provides caching, request
+deduplication, bounded queues and backoff. `createApp()` accepts injected
+`environmentFetch` and `now` dependencies for deterministic offline tests.
+No API credential, catalog connection or Ollama setup is required.
+
+The adapter requests current WMO weather code, precipitation, cloud cover and
+day/night plus two days of sunrise/sunset. It requests Unix timestamps and
+preserves absolute instants, assigning solar dates in the provider location's
+IANA zone. This avoids applying a fixed UTC offset over DST. Upstream responses
+are validated before crossing the contracts boundary, limited to 256 KiB and
+timed out after five seconds; redirects and arbitrary upstream URLs are not
+accepted. Technical references are the official
+[forecast documentation](https://open-meteo.com/en/docs) and
+[geocoding documentation](https://open-meteo.com/en/docs/geocoding-api).
+
+Weather has a 256-entry LRU and 15-minute fetch TTL; city search has a 64-entry
+six-hour cache. Condition age is based on the real observation and expires
+after two hours even if an HTTP fetch succeeded more recently. Old solar data
+can remain useful for the same location/date. Rate limits and provider failures
+share exponential backoff with jitter across requests. Installation budgets
+limit upstream calls to 30 per minute, 500 per hour and 8,000 per day, with at
+most two active weather and one active geocoding requests. Each kind has a
+separately bounded queue; this does not depend on untrusted proxy headers.
+
+The browser starts without weather and never infers a city from timezone or IP.
+City selection and the explicit one-shot location action use coordinates rounded
+to two decimal places before storage or transmission. Time autodetection does
+not request location permission. The browser refreshes at most every 15 minutes
+while visible and online, and stops recurring requests for Cinematic or disabled
+weather. Location changes cancel/ignore older responses. Disabling weather
+clears device location and cache. Provider failure leaves seasonal/day-night
+appearance and playback usable. Request logging redacts environment queries.
+
+Settings links the provider and the data license. The implemented free API is
+for noncommercial use; commercial distribution needs a suitable provider plan
+or replacement. Open-Meteo data requires attribution under CC BY 4.0. Check the
+current [terms](https://open-meteo.com/en/terms),
+[plans and attribution guidance](https://open-meteo.com/en/pricing), and
+[CC BY 4.0 license](https://creativecommons.org/licenses/by/4.0/) before changing
+the deployment model.
+
 ## Connector contract v1
 
 `@streamer-ai/contracts` is the boundary between StreamerAI and every source.

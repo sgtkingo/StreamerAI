@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import type { ViewerProfile } from "@streamer-ai/contracts";
 import { Brand } from "./Brand";
 import { useToasts } from "./ToastProvider";
+import { useTheme } from "../theme/ThemeProvider";
+import { ThemeSelect } from "../theme/ThemeSelect";
 
 interface ProfileChooserProps {
   profiles: ViewerProfile[];
@@ -18,6 +20,7 @@ export function ProfileChooser({
   error,
   onRetry,
 }: ProfileChooserProps) {
+  const theme = useTheme();
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState("");
   const [pending, setPending] = useState(false);
@@ -69,7 +72,22 @@ export function ProfileChooser({
 
   return (
     <main className="profile-chooser">
-      <Brand />
+      <div className="profile-chooser__header">
+        <Brand />
+        <ThemeSelect
+          compact
+          selection="primary"
+          value={theme.appearance.mode}
+          onChange={(mode) =>
+            theme.setThemeFamily(mode === "cinematic" ? "cinematic" : "auto")
+          }
+        />
+      </div>
+      {theme.storageError && (
+        <p className="settings-note" role="alert">
+          {theme.storageError}
+        </p>
+      )}
       <div className="profile-chooser__content">
         <p className="eyebrow">Your private cinema</p>
         <h1>Who's watching?</h1>

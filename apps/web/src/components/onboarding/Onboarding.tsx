@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import type { ViewerProfile } from "@streamer-ai/contracts";
+import {
+  DEFAULT_APPEARANCE_PREFERENCES,
+  type ViewerProfile,
+} from "@streamer-ai/contracts";
 import type {
   ConnectionState,
   ProfileDraft,
@@ -13,6 +16,7 @@ import { FinishStep } from "./FinishStep";
 import { LocalAiStep } from "./LocalAiStep";
 import { ProfileStep } from "./ProfileStep";
 import { WelcomeStep } from "./WelcomeStep";
+import { useTheme } from "../../theme/ThemeProvider";
 
 const steps = [
   "Welcome",
@@ -35,6 +39,7 @@ export function Onboarding({
   existingProfile,
   onCancel,
 }: OnboardingProps) {
+  const { previewAppearance, rememberAppearance } = useTheme();
   const profileId = existingProfile?.id ?? "default";
   const [step, setStep] = useState(0);
   const [profile, setProfile] = useState<ProfileDraft>({
@@ -42,6 +47,7 @@ export function Onboarding({
     locale: existingProfile?.locale ?? "en",
     preferences: existingProfile?.genres ?? [],
     playback: existingProfile?.playback ?? DEFAULT_PLAYBACK_PREFERENCES,
+    appearance: existingProfile?.appearance ?? DEFAULT_APPEARANCE_PREFERENCES,
   });
   const [tmdbState, setTmdbState] = useState<ConnectionState>("not-configured");
   const [webshareState, setWebshareState] =
@@ -50,6 +56,11 @@ export function Onboarding({
   const [isCompleting, setIsCompleting] = useState(false);
   const [finishError, setFinishError] = useState("");
   const contentRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    previewAppearance(profile.appearance);
+    return () => previewAppearance(null);
+  }, [profile.appearance, previewAppearance]);
 
   useEffect(() => {
     let active = true;
@@ -90,6 +101,7 @@ export function Onboarding({
         localAiEnabled,
         profileId,
       });
+      rememberAppearance(profile.appearance);
       onComplete(profile);
     } catch (error) {
       setFinishError(safeErrorMessage(error));
