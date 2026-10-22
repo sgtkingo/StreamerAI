@@ -64,6 +64,8 @@ beforeEach(() => {
   const context = {
     translate: noop,
     beginPath: noop,
+    rect: noop,
+    clip: noop,
     ellipse: noop,
     fill: noop,
     createRadialGradient: () => ({ addColorStop: noop }),
@@ -87,6 +89,65 @@ beforeEach(() => {
 });
 
 describe("glass weather accessibility and pause", () => {
+  it("hides search spray on reduced motion, weather changes and unmount", () => {
+    const form = document.createElement("form");
+    form.className = "composer-form";
+    const surface = document.createElement("canvas");
+    surface.className = "theme-search-splash";
+    form.append(surface);
+    document.body.append(form);
+    const bounds = vi.spyOn(form, "getBoundingClientRect").mockReturnValue({
+      left: 100,
+      top: 250,
+      right: 900,
+      bottom: 324,
+      width: 800,
+      height: 74,
+    } as DOMRect);
+    const { rerender, unmount } = render(
+      <AmbientBackground theme={weatherTheme("storm")} />,
+    );
+    expect(surface.style.visibility).toBe("visible");
+    bounds.mockReturnValue({
+      left: 20,
+      top: 250,
+      right: 340,
+      bottom: 324,
+      width: 320,
+      height: 74,
+    } as DOMRect);
+    act(() => window.dispatchEvent(new Event("resize")));
+    expect(surface.style.width).toBe("440px");
+    reducedMotion = true;
+    act(() => motionChange?.());
+    expect(surface.style.visibility).toBe("hidden");
+    reducedMotion = false;
+    act(() => motionChange?.());
+    // Weather cleanup hides the local canvas even though it belongs to Home.
+    rerender(<AmbientBackground theme={weatherTheme("rain")} />);
+    expect(surface.style.visibility).toBe("hidden");
+    rerender(<AmbientBackground theme={weatherTheme("storm")} />);
+    expect(surface.style.visibility).toBe("visible");
+    unmount();
+    expect(surface.style.visibility).toBe("hidden");
+    form.remove();
+  });
+
+  it("keeps autumn foliage static when motion is disabled", () => {
+    const theme = { ...weatherTheme("rain"), weatherEffect: "none" as const };
+    const { container } = render(
+      <AmbientBackground theme={theme} enabled={false} />,
+    );
+    expect(
+      container.querySelectorAll(".theme-ambient__autumn-leaves > span"),
+    ).toHaveLength(2);
+    expect(container.querySelector(".theme-ambient")).toHaveAttribute(
+      "data-static",
+      "true",
+    );
+    expect(requestFrame).not.toHaveBeenCalled();
+  });
+
   it.each(["rain", "storm"] as const)(
     "retains static %s glass beads when motion is disabled",
     (condition) => {

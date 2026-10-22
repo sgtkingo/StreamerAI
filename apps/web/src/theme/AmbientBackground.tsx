@@ -2,6 +2,14 @@ import { useEffect, useMemo, useRef } from "react";
 import type { CSSProperties } from "react";
 import type { ResolvedTheme, ThemeMotif } from "./resolve-theme";
 import { createRainSprite } from "./rain-sprites";
+import { createSearchSplashPainter } from "./storm-search-splash";
+import {
+  advanceAutumnWind,
+  createAutumnWind,
+  windLeafAppearance,
+  type AutumnWindScene,
+} from "./autumn-wind";
+import { createWindLeafSprites } from "./leaf-sprites";
 import {
   CHRISTMAS_LIGHT_COLORS,
   advanceFireworkBurst,
@@ -186,12 +194,20 @@ export function AmbientBackground({
       theme.motif === "leaves" ? "#d6ac59" : theme.palette.particle,
     ].map((color) => createSprite(theme.motif, color));
     const snowSprite = createSprite("snow", "#dbe8f2");
+    const windLeafSprites =
+      theme.id === "autumn"
+        ? createWindLeafSprites([theme.palette.particle, "#97513d", "#cda15b"])
+        : [];
     const dropletSprites =
       glassWeather && glassWeather !== "snow"
         ? Array.from({ length: 6 }, (_, index) => createRainSprite(index))
         : [];
     const crystalSprite =
       glassWeather === "snow" ? createGlassSprite("crystal") : null;
+    const searchSplash =
+      glassWeather === "storm"
+        ? createSearchSplashPainter(dropletSprites)
+        : null;
     const lightningSprite =
       glassWeather === "storm" ? createGlassSprite("lightning") : null;
     const lightSprites = christmasLights
@@ -204,6 +220,7 @@ export function AmbientBackground({
     let lightCount = 0;
     let bursts: FireworkBurst[] = [];
     let glass: GlassWeatherScene | null = null;
+    let autumnWind: AutumnWindScene | null = null;
     let paintedFrost = -1;
     let paintedRainHaze = -1;
     let frame = 0;
@@ -221,6 +238,10 @@ export function AmbientBackground({
       canvas.style.width = `${width}px`;
       canvas.style.height = `${height}px`;
       context.setTransform(ratio, 0, 0, ratio, 0, 0);
+      autumnWind =
+        theme.id === "autumn"
+          ? createAutumnWind(width, height, width < 768, Boolean(glassWeather))
+          : null;
       const budget = width < 768 ? 16 : 40;
       const festiveBudget = festiveSceneBudget(width < 768);
       lightCount = christmasLights ? festiveBudget.lights : 0;
@@ -310,8 +331,36 @@ export function AmbientBackground({
           context.restore();
         }
       }
+      if (autumnWind) {
+        advanceAutumnWind(autumnWind, elapsed);
+        for (const leaf of autumnWind.leaves) {
+          const look = windLeafAppearance(leaf);
+          const levels = windLeafSprites[leaf.variant];
+          if (!levels?.length) continue;
+          const lower = Math.floor(look.blurLevel);
+          const upper = Math.min(levels.length - 1, lower + 1);
+          const blend = look.blurLevel - lower;
+          const sizeX = look.size * look.foreshortening;
+          const sizeY = look.size * look.tilt;
+          context.save();
+          context.translate(look.x, look.y);
+          context.rotate(look.rotation);
+          const sharp = levels[lower],
+            diffuse = levels[upper];
+          if (sharp) {
+            context.globalAlpha = look.opacity * (1 - blend);
+            context.drawImage(sharp, -sizeX / 2, -sizeY / 2, sizeX, sizeY);
+          }
+          if (diffuse && blend > 0) {
+            context.globalAlpha = look.opacity * blend;
+            context.drawImage(diffuse, -sizeX / 2, -sizeY / 2, sizeX, sizeY);
+          }
+          context.restore();
+        }
+      }
       if (glass) {
         advanceGlassWeather(glass, elapsed);
+        searchSplash?.draw(glass, elapsed);
         const haze = Math.round(glass.rainHaze * 1000);
         if (haze !== paintedRainHaze && layerRef.current) {
           layerRef.current.style.setProperty(
@@ -520,6 +569,7 @@ export function AmbientBackground({
           performancePaused = true;
           if (layerRef.current) layerRef.current.dataset.static = "true";
           canvas.style.visibility = "hidden";
+          searchSplash?.hide();
         }
       }
       if (canAnimate()) frame = requestAnimationFrame(animate);
@@ -532,6 +582,7 @@ export function AmbientBackground({
       // Reduced motion renders the atmosphere through static CSS only.
       canvas.style.visibility =
         reducedMotion?.matches || performancePaused ? "hidden" : "visible";
+      if (reducedMotion?.matches || performancePaused) searchSplash?.hide();
       if (layerRef.current)
         layerRef.current.dataset.static = String(
           Boolean(reducedMotion?.matches || performancePaused),
@@ -551,6 +602,7 @@ export function AmbientBackground({
     reducedMotion?.addEventListener("change", synchronize);
     return () => {
       disposed = true;
+      searchSplash?.hide();
       synchronizeRef.current = () => undefined;
       if (frame) cancelAnimationFrame(frame);
       window.removeEventListener("resize", handleResize);
@@ -581,6 +633,12 @@ export function AmbientBackground({
       data-static="true"
     >
       <div className="theme-ambient__wash" />
+      {theme.id === "autumn" && (
+        <div className="theme-ambient__autumn-leaves">
+          <span />
+          <span />
+        </div>
+      )}
       {theme.weatherEffect !== "storm" && (
         <div className="theme-ambient__haze" />
       )}

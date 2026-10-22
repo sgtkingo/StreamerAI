@@ -40,6 +40,20 @@ html[data-theme] body {
   transition: background-color 1s ease;
 }
 
+.composer-form {
+  position: relative;
+}
+
+.theme-search-splash {
+  position: absolute;
+  max-width: 100vw;
+  z-index: 2;
+  left: -101px;
+  top: -121px;
+  pointer-events: none;
+  visibility: hidden;
+}
+
 .theme-ambient__wash,
 .theme-ambient__haze,
 .theme-ambient__particles {
@@ -88,6 +102,62 @@ html[data-theme] body {
   inset: 0;
   pointer-events: none;
   opacity: 0;
+}
+
+.theme-ambient__autumn-leaves {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.theme-ambient[data-static="true"] .theme-ambient__autumn-leaves {
+  opacity: 0.2;
+}
+
+.theme-ambient__autumn-leaves > span {
+  position: absolute;
+  top: 32%;
+  left: 5%;
+  width: 54px;
+  height: 74px;
+  background: linear-gradient(145deg, #d6ac59, #a15436 65%, #613724);
+  clip-path: polygon(
+    50% 0,
+    61% 30%,
+    80% 18%,
+    75% 47%,
+    100% 50%,
+    73% 68%,
+    78% 86%,
+    54% 78%,
+    50% 100%,
+    43% 79%,
+    20% 88%,
+    27% 68%,
+    0 48%,
+    27% 45%,
+    20% 20%,
+    40% 30%
+  );
+  filter: blur(1.3px);
+  transform: rotate(-32deg);
+}
+
+.theme-ambient__autumn-leaves > span + span {
+  top: 68%;
+  left: auto;
+  right: 5%;
+  width: 30px;
+  height: 42px;
+  filter: blur(3px);
+  transform: rotate(48deg);
+}
+
+@media (max-width: 767px) {
+  .theme-ambient__autumn-leaves > span + span {
+    display: none;
+  }
 }
 
 .theme-ambient[data-static="true"] .theme-ambient__wet-glass {

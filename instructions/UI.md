@@ -77,7 +77,14 @@ as historical weather. Cinematic stops recurring weather requests and ambient
 effects.
 
 The shared background appears behind onboarding, the chooser and application
-chrome. Christmas uses green, red and gold, colorful lights and decorative
+chrome. Autumn occasionally sends an individual leaf in from either side: fast
+wind sweeps alternate with gliding, one or two smooth loops and an off-screen exit.
+Apparent depth smoothly changes its size, opacity, plane tilt and focus: distant
+leaves are small and diffuse, nearby leaves larger and sharper behind frosted
+glass. Blend cached focal-distance sprites instead of blurring every frame.
+Keep at most two flying leaves on desktop and one on compact screens or alongside
+glass weather. Motion guards apply; reduced motion uses static leaf silhouettes.
+Christmas uses green, red and gold, colorful lights and decorative
 falling snow. New Year's Eve uses navy, violet and gold, fireworks and decorative
 falling snow. Festive snow remains visible as decoration independently of actual
 or manually selected weather and never changes the reported weather condition.
@@ -104,8 +111,13 @@ Random gusts sharply raise and lower impact density and force. A peak holds for
 1–2 seconds, with a quick rise and fall and a longer, variable lull.
 Already landed beads finish evaporating naturally; gusts reuse a bounded pool and
 advance only with the ambient simulation, respecting all motion and playback guards.
-Storm has no haze or impact condensation, including in static mode. Isolated,
-contrasting lightning flashes have a quick bright crest and smooth afterglow;
+Storm has no haze or impact condensation, including in static mode.
+Storm also strikes the main Home composer: incoming drops share the wind angle,
+hit its top and windward edge and rebound into five tiny spray beads. Keep spray
+outside the input and button, use the same gust intensity and ambient clock,
+and stop or hide it under the existing playback and motion guards. Bound the
+local impact pool and follow the form dimensions on responsive layouts.
+Isolated, contrasting lightning flashes have a quick bright crest and smooth afterglow;
 motion and playback guards still apply. Snow lands, sticks briefly and creates bounded frost around the
 edges. Lightning obeys every motion/pause guard and is absent in static mode.
 Weather effects remain subordinate to readable surfaces, media artwork and semantic

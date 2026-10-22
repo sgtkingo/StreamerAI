@@ -837,6 +837,7 @@ export function HomePage({
           Describe a feeling, actor, era or the people you are watching with.
         </p>
         <form className="composer-form" onSubmit={submit}>
+          <canvas className="theme-search-splash" aria-hidden="true" />
           <label className="sr-only" htmlFor="discovery-query">
             Ask StreamerAI for a movie or series
           </label>
