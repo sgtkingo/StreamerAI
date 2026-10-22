@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef } from "react";
 import type { CSSProperties } from "react";
 import type { ResolvedTheme, ThemeMotif } from "./resolve-theme";
 import { createRainSprite } from "./rain-sprites";
+import { SpringBranches } from "./SpringBranches";
 import { createSearchSplashPainter } from "./storm-search-splash";
 import {
   advanceAutumnWind,
@@ -134,6 +135,7 @@ export function AmbientBackground({
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const layerRef = useRef<HTMLDivElement>(null);
+  const springAgeRef = useRef(0);
   const motionPreferenceRef = useRef<MediaQueryList>();
   const pausedRef = useRef(paused);
   const synchronizedPauseRef = useRef(paused);
@@ -164,6 +166,7 @@ export function AmbientBackground({
 
   useEffect(() => {
     const theme = sceneTheme;
+    if (theme.id !== "spring") springAgeRef.current = 0;
     const canvas = canvasRef.current;
     if (layerRef.current) layerRef.current.dataset.static = "true";
     if (
@@ -304,6 +307,17 @@ export function AmbientBackground({
     };
 
     const draw = (time: number, elapsed: number) => {
+      if (theme.id === "spring" && layerRef.current) {
+        springAgeRef.current += elapsed;
+        layerRef.current.style.setProperty(
+          "--spring-growth",
+          String(Math.min(1, springAgeRef.current / 16)),
+        );
+        layerRef.current.style.setProperty(
+          "--spring-sway",
+          `${Math.sin(springAgeRef.current * 0.45) * 0.7}deg`,
+        );
+      }
       context.clearRect(0, 0, width, height);
       for (const particle of particles) {
         particle.y += elapsed * particle.speed;
@@ -633,6 +647,7 @@ export function AmbientBackground({
       data-static="true"
     >
       <div className="theme-ambient__wash" />
+      {theme.id === "spring" && <SpringBranches />}
       {theme.id === "autumn" && (
         <div className="theme-ambient__autumn-leaves">
           <span />

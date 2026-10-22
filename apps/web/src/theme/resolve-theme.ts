@@ -65,11 +65,11 @@ interface SeasonalPalette {
 
 const palettes: Record<SeasonalTheme, SeasonalPalette> = {
   spring: {
-    background: "#0b1712",
-    surface: "#1b2b23",
-    accent: "#c4ddba",
-    glow: "#426b48",
-    particle: "#d8acbe",
+    background: "#0c2010",
+    surface: "#223d26",
+    accent: "#b9ec86",
+    glow: "#59a83e",
+    particle: "#edc4d6",
     motif: "petals",
   },
   summer: {

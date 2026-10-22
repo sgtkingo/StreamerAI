@@ -34,7 +34,7 @@ function weatherTheme(
 let reducedMotion = false;
 let hidden = false;
 let motionChange: (() => void) | undefined;
-const requestFrame = vi.fn(() => 1);
+const requestFrame = vi.fn((_callback: FrameRequestCallback) => 1);
 const cancelFrame = vi.fn();
 const originalHidden = Object.getOwnPropertyDescriptor(document, "hidden");
 
@@ -89,6 +89,54 @@ beforeEach(() => {
 });
 
 describe("glass weather accessibility and pause", () => {
+  it.each([false, true])(
+    "retains spring twigs without animation (reduced motion: %s)",
+    (reduce) => {
+      reducedMotion = reduce;
+      const theme = { ...weatherTheme("rain"), id: "spring" as const };
+      const { container } = render(
+        <AmbientBackground theme={theme} enabled={reduce} />,
+      );
+      expect(container.querySelectorAll(".spring-branch")).toHaveLength(4);
+      expect(container.querySelectorAll(".spring-branch__catkin")).toHaveLength(
+        36,
+      );
+      expect(container.querySelector(".theme-ambient")).toHaveAttribute(
+        "data-static",
+        "true",
+      );
+      expect(requestFrame).not.toHaveBeenCalled();
+    },
+  );
+
+  it("advances spring growth only with ambient motion and preserves it on resize and weather changes", () => {
+    const theme = { ...weatherTheme("rain"), id: "spring" as const };
+    const { container, rerender } = render(<AmbientBackground theme={theme} />);
+    const tick = (time: number) =>
+      act(() => requestFrame.mock.calls.at(-1)?.[0](time));
+    tick(1000);
+    tick(1060);
+    const layer = container.querySelector<HTMLElement>(".theme-ambient")!;
+    const growth = layer.style.getPropertyValue("--spring-growth");
+    expect(Number(growth)).toBeGreaterThan(0);
+    rerender(<AmbientBackground theme={theme} paused />);
+    tick(2000);
+    expect(layer.style.getPropertyValue("--spring-growth")).toBe(growth);
+    act(() => window.dispatchEvent(new Event("resize")));
+    expect(layer.style.getPropertyValue("--spring-growth")).toBe(growth);
+    rerender(
+      <AmbientBackground theme={{ ...theme, weatherEffect: "storm" }} />,
+    );
+    expect(layer.style.getPropertyValue("--spring-growth")).toBe(growth);
+    tick(3000);
+    tick(3060);
+    expect(
+      Number(layer.style.getPropertyValue("--spring-growth")),
+    ).toBeGreaterThan(Number(growth));
+    rerender(<AmbientBackground theme={weatherTheme("rain")} />);
+    expect(container.querySelector(".theme-ambient__spring")).toBeNull();
+  });
+
   it("hides search spray on reduced motion, weather changes and unmount", () => {
     const form = document.createElement("form");
     form.className = "composer-form";

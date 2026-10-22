@@ -77,7 +77,13 @@ as historical weather. Cinematic stops recurring weather requests and ambient
 effects.
 
 The shared background appears behind onboarding, the chooser and application
-chrome. Autumn occasionally sends an individual leaf in from either side: fast
+chrome. Spring uses a lively green palette, with delicate willow twigs growing
+from all four corners over about 16 seconds. Small light-green leaves and soft
+silver-green catkins unfurl after their supporting stems. Keep the center clear,
+scale back the corner foliage on compact screens and let it sway gently only
+through the existing ambient clock. Preserve growth across weather, clock and
+viewport changes. Disabled/reduced motion shows fully grown static sprigs.
+Autumn occasionally sends an individual leaf in from either side: fast
 wind sweeps alternate with gliding, one or two smooth loops and an off-screen exit.
 Apparent depth smoothly changes its size, opacity, plane tilt and focus: distant
 leaves are small and diffuse, nearby leaves larger and sharper behind frosted

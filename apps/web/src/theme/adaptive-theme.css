@@ -72,6 +72,101 @@ html[data-theme] body {
   transition: opacity 1s ease;
 }
 
+.theme-ambient__spring {
+  position: absolute;
+  inset: 0;
+  --spring-progress: 1;
+  --spring-wind: 0deg;
+  pointer-events: none;
+}
+
+.theme-ambient[data-static="false"] .theme-ambient__spring {
+  --spring-progress: var(--spring-growth, 0);
+  --spring-wind: var(--spring-sway, 0deg);
+}
+
+.spring-branch {
+  position: absolute;
+  bottom: -12px;
+  left: -12px;
+  width: clamp(175px, 22vw, 310px);
+  height: auto;
+  overflow: visible;
+  opacity: 0.65;
+  filter: blur(0.25px);
+}
+
+.spring-branch--top-right {
+  top: -16px;
+  bottom: auto;
+  right: -18px;
+  left: auto;
+  transform: scale(-1);
+  width: clamp(160px, 20vw, 285px);
+  opacity: 0.55;
+}
+
+.spring-branch--bottom-right {
+  right: -22px;
+  left: auto;
+  transform: scaleX(-1);
+  width: clamp(145px, 17vw, 245px);
+  opacity: 0.4;
+  filter: blur(0.7px);
+}
+
+.spring-branch--top-left {
+  top: -28px;
+  bottom: auto;
+  transform: scaleY(-1);
+  width: clamp(135px, 15vw, 220px);
+  opacity: 0.35;
+  filter: blur(0.8px);
+}
+
+.spring-branch__sway {
+  transform-origin: 0px 334px;
+  transform: rotate(var(--spring-wind));
+}
+
+.spring-branch__stem,
+.spring-branch__bud {
+  --sprout: clamp(
+    0,
+    calc((var(--spring-progress) - var(--sprout-birth)) * var(--sprout-rate)),
+    1
+  );
+}
+
+.spring-branch__stem {
+  opacity: clamp(0, calc(var(--sprout) * 10), 1);
+  stroke-dasharray: 1;
+  stroke-dashoffset: calc(1 - var(--sprout));
+}
+
+.spring-branch__bud {
+  transform: scale(var(--sprout));
+  opacity: var(--sprout);
+}
+
+@media (max-width: 767px) {
+  .spring-branch {
+    width: 138px;
+    opacity: 0.5;
+  }
+
+  .spring-branch--top-right {
+    width: 125px;
+    opacity: 0.4;
+  }
+
+  .spring-branch--top-left,
+  .spring-branch--bottom-right {
+    width: 100px;
+    opacity: 0.25;
+  }
+}
+
 .theme-ambient__haze {
   opacity: 0;
   background:

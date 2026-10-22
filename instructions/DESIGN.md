@@ -32,7 +32,7 @@ weather and lighting choices. Compose a dark seasonal base, current optional
 weather and local day/night; pinning an axis changes only that axis. Manual
 weather and day/night choices work without location access. Fix current
 appearance pins all three resolved axes; Use automatic settings restores them.
-Use muted green and blossom for spring, amber for summer, copper/burgundy for
+Use fresh lively green and soft blossom for spring, amber for summer, copper/burgundy for
 autumn, blue-gray for winter, green/red/gold for Christmas, and navy/violet/gold for
 New Year's Eve. Seasons follow the selected zone's calendar and reverse for a
 configured southern-hemisphere location. Christmas covers December 20–30 and
