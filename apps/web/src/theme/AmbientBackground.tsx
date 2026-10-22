@@ -3,6 +3,13 @@ import type { CSSProperties } from "react";
 import type { ResolvedTheme, ThemeMotif } from "./resolve-theme";
 import { createRainSprite } from "./rain-sprites";
 import { SpringBranches } from "./SpringBranches";
+import { SummerSky } from "./SummerSky";
+import {
+  advanceSummerNight,
+  createSummerNight,
+  meteorAppearance,
+  type SummerNight,
+} from "./summer-sky";
 import { createSearchSplashPainter } from "./storm-search-splash";
 import {
   advanceAutumnWind,
@@ -148,6 +155,7 @@ export function AmbientBackground({
   const sceneTheme = useMemo(
     () => ({
       id: theme.id,
+      period: theme.period,
       motif: theme.motif,
       weatherEffect: theme.weatherEffect,
       palette: {
@@ -157,6 +165,7 @@ export function AmbientBackground({
     }),
     [
       theme.id,
+      theme.period,
       theme.motif,
       theme.weatherEffect,
       theme.palette.particle,
@@ -224,6 +233,7 @@ export function AmbientBackground({
     let bursts: FireworkBurst[] = [];
     let glass: GlassWeatherScene | null = null;
     let autumnWind: AutumnWindScene | null = null;
+    let summerNight: SummerNight | null = null;
     let paintedFrost = -1;
     let paintedRainHaze = -1;
     let frame = 0;
@@ -241,6 +251,10 @@ export function AmbientBackground({
       canvas.style.width = `${width}px`;
       canvas.style.height = `${height}px`;
       context.setTransform(ratio, 0, 0, ratio, 0, 0);
+      summerNight =
+        theme.id === "summer" && theme.period === "night"
+          ? createSummerNight(width, height)
+          : null;
       autumnWind =
         theme.id === "autumn"
           ? createAutumnWind(width, height, width < 768, Boolean(glassWeather))
@@ -250,15 +264,16 @@ export function AmbientBackground({
       lightCount = christmasLights ? festiveBudget.lights : 0;
       // Holiday snow is decoration. It never changes the real weather state,
       // and rain can still form a separate small foreground weather layer.
-      const count = decorativeSnow
-        ? 0
-        : glassWeather
-          ? width < 768
-            ? 2
-            : 4
-          : theme.weatherEffect === "fog"
-            ? Math.ceil(budget / 4)
-            : budget;
+      const count =
+        decorativeSnow || summerNight
+          ? 0
+          : glassWeather
+            ? width < 768
+              ? 2
+              : 4
+            : theme.weatherEffect === "fog"
+              ? Math.ceil(budget / 4)
+              : budget;
       particles = Array.from({ length: count }, (_, index) => ({
         x: Math.random() * width,
         y: Math.random() * height,
@@ -319,6 +334,39 @@ export function AmbientBackground({
         );
       }
       context.clearRect(0, 0, width, height);
+      if (summerNight) {
+        advanceSummerNight(summerNight, elapsed);
+        if (summerNight.meteor) {
+          const look = meteorAppearance(summerNight.meteor);
+          const visibility =
+            theme.weatherEffect === "none"
+              ? 1
+              : theme.weatherEffect === "cloudy"
+                ? 0.4
+                : 0.12;
+          context.globalAlpha = look.opacity * visibility;
+          const trail = context.createLinearGradient(
+            look.tailX,
+            look.tailY,
+            look.x,
+            look.y,
+          );
+          trail.addColorStop(0, "#fff0c600");
+          trail.addColorStop(0.65, "#f0e5c080");
+          trail.addColorStop(1, "#fff7df");
+          context.strokeStyle = trail;
+          context.lineWidth = 1.5;
+          context.lineCap = "round";
+          context.beginPath();
+          context.moveTo(look.tailX, look.tailY);
+          context.lineTo(look.x, look.y);
+          context.stroke();
+          context.fillStyle = "#fff9e6";
+          context.beginPath();
+          context.arc(look.x, look.y, 1.7, 0, Math.PI * 2);
+          context.fill();
+        }
+      }
       for (const particle of particles) {
         particle.y += elapsed * particle.speed;
         particle.x +=
@@ -648,6 +696,13 @@ export function AmbientBackground({
     >
       <div className="theme-ambient__wash" />
       {theme.id === "spring" && <SpringBranches />}
+      {theme.id === "summer" && (
+        <SummerSky
+          period={theme.period}
+          phase={theme.moonPhase ?? 0}
+          weather={theme.weatherEffect}
+        />
+      )}
       {theme.id === "autumn" && (
         <div className="theme-ambient__autumn-leaves">
           <span />

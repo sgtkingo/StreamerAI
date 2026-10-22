@@ -88,6 +88,35 @@ describe("seasonal calendar", () => {
 });
 
 describe("theme composition", () => {
+  it("composes honey summer days and dark starry nights with a date-driven moon", () => {
+    const summer = {
+      ...params,
+      location: null,
+      weather: null,
+      appearance: {
+        ...appearance,
+        mode: "summer" as const,
+        daylightOverride: "day" as const,
+      },
+      instant: new Date("2026-06-29T23:57:00Z"),
+    };
+    const day = resolveTheme(summer);
+    const night = resolveTheme({
+      ...summer,
+      appearance: { ...summer.appearance, daylightOverride: "night" },
+    });
+    expect(day.palette.background).toBe("#2a200d");
+    expect(day.palette.accent).toBe("#ffe1a0");
+    expect(night.palette.background).not.toBe(day.palette.background);
+    expect(night.palette.accent).toBe(day.palette.accent);
+    expect(night.moonPhase).toBeCloseTo(0.5, 1);
+    expect(night.moonPhase).toBe(day.moonPhase);
+    expect(
+      resolveTheme({ ...summer, instant: new Date("2026-06-15T02:54:00Z") })
+        .moonPhase,
+    ).not.toBe(day.moonPhase);
+  });
+
   it.each([
     ["clear", "none"],
     ["cloudy", "cloudy"],

@@ -6,6 +6,7 @@ import type {
 } from "@streamer-ai/contracts";
 import type { CSSProperties } from "react";
 import { calendarDate, zonedDateParts } from "./clock";
+import { lunarPhase } from "./summer-sky";
 
 export type SeasonalTheme = Exclude<ThemeMode, "auto" | "cinematic">;
 export type WeatherEffect =
@@ -45,6 +46,7 @@ export interface ResolvedTheme {
   palette: ThemePalette;
   motif: ThemeMotif;
   ambientOpacity: number;
+  moonPhase: number | null;
   cssVariables: ThemeCssVariables;
 }
 
@@ -73,11 +75,11 @@ const palettes: Record<SeasonalTheme, SeasonalPalette> = {
     motif: "petals",
   },
   summer: {
-    background: "#19150d",
-    surface: "#30291d",
-    accent: "#edd6a5",
-    glow: "#966c36",
-    particle: "#e1c181",
+    background: "#2a200d",
+    surface: "#49391d",
+    accent: "#ffe1a0",
+    glow: "#d9a542",
+    particle: "#ffdc89",
     motif: "bokeh",
   },
   autumn: {
@@ -275,6 +277,7 @@ export function resolveTheme({
       motif: "none",
       weatherEffect: "none",
       ambientOpacity: 0,
+      moonPhase: null,
       cssVariables: cssVariables(palette, 0),
     };
   }
@@ -282,7 +285,15 @@ export function resolveTheme({
     appearance.mode === "auto"
       ? resolveSeason(instant, timeZone, location?.latitude ?? null)
       : appearance.mode;
-  const base = palettes[season];
+  const base =
+    season === "summer" && daylight.period === "night"
+      ? {
+          ...palettes.summer,
+          background: "#0b1423",
+          surface: "#1c2938",
+          glow: "#36496a",
+        }
+      : palettes[season];
   const age = weather
     ? realNow.getTime() - Date.parse(weather.observedAt)
     : Infinity;
@@ -329,7 +340,8 @@ export function resolveTheme({
     glow: mix(base.glow, "#3d526a", weatherTint),
     particle: base.particle,
   };
-  const ambientOpacity = daylight.period === "night" ? 0.24 : 0.34;
+  const ambientOpacity =
+    daylight.period === "night" ? 0.24 : season === "summer" ? 0.44 : 0.34;
   return {
     id: season,
     season,
@@ -338,6 +350,7 @@ export function resolveTheme({
     palette,
     motif: base.motif,
     ambientOpacity,
+    moonPhase: season === "summer" ? lunarPhase(instant) : null,
     cssVariables: cssVariables(palette, ambientOpacity),
   };
 }

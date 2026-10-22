@@ -172,3 +172,6 @@ Zkontroluj integraci a napoj ji na Settings a Onboarding. U MCP i API je důlež
 - Hellspy adapter jako stream source
 
 - DONE: "Local folder or drive" nenamountuje lokální složku, třeba "D:\Download" - hlásí "Open StreamerAI on the home server to use Select folder, or enter the server path manually." - při lokálním nasazení to bude OK
+
+- Musíme zjistit proč "some scify from space with spaceships" a "some scify from space" vyhazuje hned instatně (bez uvažování, zdá se) pokaždé to samé - Spider-Man: Brand New Day - což ení správné chování. Až na opravný dotaz to agent opraví. Také zda je posuvník intenzity přemýšlení opavdu napojený na vybraný model a zda něco ovlivuje - také máme nekonzistenci, v Onboardingu když vyberu lokální Ollamu, tak mi posvník umožní vybrat jen "
+No reasoning" a "High reasoning", v Setting ale posuvník umožnuje u téhož modelu vbírat i Light a Balanced. 

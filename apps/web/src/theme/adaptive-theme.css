@@ -80,6 +80,157 @@ html[data-theme] body {
   pointer-events: none;
 }
 
+.theme-ambient__summer {
+  position: absolute;
+  inset: 0;
+  --sky-visibility: 1;
+  opacity: var(--sky-visibility);
+  pointer-events: none;
+  transition: opacity 1s ease;
+}
+
+.theme-ambient__summer[data-weather="cloudy"] {
+  --sky-visibility: 0.45;
+}
+.theme-ambient__summer[data-weather="rain"] {
+  --sky-visibility: 0.25;
+}
+.theme-ambient__summer[data-weather="snow"] {
+  --sky-visibility: 0.3;
+}
+.theme-ambient__summer[data-weather="fog"] {
+  --sky-visibility: 0.08;
+}
+.theme-ambient__summer[data-weather="storm"] {
+  --sky-visibility: 0.12;
+}
+
+.summer-sun {
+  position: absolute;
+  top: clamp(72px, 10vh, 112px);
+  right: clamp(24px, 6vw, 90px);
+  width: 90px;
+  height: 90px;
+}
+
+.summer-sun::before {
+  content: "";
+  position: absolute;
+  inset: -150px;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle,
+    #ffdf9a45 5%,
+    #efb53c22 30%,
+    #f8c65f0a 55%,
+    transparent 72%
+  );
+}
+
+.summer-sun__disc {
+  position: absolute;
+  inset: 8px;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle at 40% 38%,
+    #fff4c7,
+    #ffe49b 46%,
+    #edb955 92%
+  );
+  box-shadow:
+    0 0 18px 5px #ffe6a052,
+    0 0 58px 20px #ffcd642e;
+  filter: blur(0.6px);
+  opacity: 0.85;
+}
+
+.summer-sun__rays {
+  position: absolute;
+  inset: -85px;
+  border-radius: 50%;
+  background: repeating-conic-gradient(
+    from 10deg,
+    transparent 0deg 13deg,
+    #ffdfa333 15deg 18deg,
+    transparent 21deg 30deg
+  );
+  mask-image: radial-gradient(
+    circle,
+    transparent 16%,
+    #0008 25%,
+    transparent 70%
+  );
+  filter: blur(5px);
+  opacity: 0.55;
+}
+
+.summer-stars {
+  position: absolute;
+  inset: 0;
+  mask-image: linear-gradient(#000 60%, #0009 80%, transparent);
+}
+
+.summer-star {
+  position: absolute;
+  border-radius: 50%;
+  background: #fff3d2;
+  box-shadow: 0 0 4px 1px #f5e6bb40;
+}
+
+.summer-star--bright {
+  box-shadow: 0 0 6px 2px #f5e6bb55;
+}
+
+.summer-star--bright::before,
+.summer-star--bright::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 7px;
+  height: 1px;
+  transform: translate(-50%, -50%);
+  background: linear-gradient(90deg, transparent, #fff4d6b3, transparent);
+}
+
+.summer-star--bright::after {
+  transform: translate(-50%, -50%) rotate(90deg);
+}
+
+.summer-moon {
+  position: absolute;
+  top: clamp(55px, 7vh, 92px);
+  right: clamp(20px, 6vw, 96px);
+  width: 150px;
+  height: 150px;
+  opacity: 0.85;
+}
+
+@media (max-width: 767px) {
+  .summer-sun {
+    top: 80px;
+    right: 20px;
+    width: 64px;
+    height: 64px;
+  }
+
+  .summer-sun::before {
+    inset: -105px;
+  }
+  .summer-sun__rays {
+    inset: -60px;
+  }
+  .summer-moon {
+    top: 68px;
+    right: 12px;
+    width: 110px;
+    height: 110px;
+  }
+  .summer-star:nth-child(n + 29) {
+    display: none;
+  }
+}
+
 .theme-ambient[data-static="false"] .theme-ambient__spring {
   --spring-progress: var(--spring-growth, 0);
   --spring-wind: var(--spring-sway, 0deg);

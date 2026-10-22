@@ -89,6 +89,60 @@ beforeEach(() => {
 });
 
 describe("glass weather accessibility and pause", () => {
+  it.each(["day", "night"] as const)(
+    "keeps summer %s sky static with motion disabled",
+    (period) => {
+      const theme = resolveTheme({
+        appearance: AppearancePreferencesSchema.parse({
+          mode: "summer",
+          daylightOverride: period,
+        }),
+        instant: new Date("2026-06-29T23:57:00Z"),
+        timeZone: "UTC",
+        location: null,
+        weather: null,
+        realNow: new Date(),
+      });
+      const { container } = render(
+        <AmbientBackground theme={theme} enabled={false} />,
+      );
+      expect(Boolean(container.querySelector(".summer-sun"))).toBe(
+        period === "day",
+      );
+      expect(container.querySelectorAll(".summer-star")).toHaveLength(
+        period === "night" ? 64 : 0,
+      );
+      expect(Boolean(container.querySelector(".summer-moon"))).toBe(
+        period === "night",
+      );
+      expect(requestFrame).not.toHaveBeenCalled();
+    },
+  );
+
+  it("updates moon illumination without restarting the night simulation", () => {
+    const theme = {
+      ...weatherTheme("rain"),
+      id: "summer" as const,
+      period: "night" as const,
+      moonPhase: 0.25,
+    };
+    const { container, rerender } = render(<AmbientBackground theme={theme} />);
+    const contexts = vi.mocked(HTMLCanvasElement.prototype.getContext).mock
+      .calls.length;
+    expect(container.querySelector(".summer-moon")).toHaveAttribute(
+      "data-phase",
+      "0.2500",
+    );
+    rerender(<AmbientBackground theme={{ ...theme, moonPhase: 0.75 }} />);
+    expect(container.querySelector(".summer-moon")).toHaveAttribute(
+      "data-phase",
+      "0.7500",
+    );
+    expect(
+      vi.mocked(HTMLCanvasElement.prototype.getContext).mock.calls,
+    ).toHaveLength(contexts);
+  });
+
   it.each([false, true])(
     "retains spring twigs without animation (reduced motion: %s)",
     (reduce) => {

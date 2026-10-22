@@ -83,6 +83,16 @@ silver-green catkins unfurl after their supporting stems. Keep the center clear,
 scale back the corner foliage on compact screens and let it sway gently only
 through the existing ambient clock. Preserve growth across weather, clock and
 viewport changes. Disabled/reduced motion shows fully grown static sprigs.
+Summer uses a brighter honey-yellow day palette and a warm sun in the upper-right
+corner. Night has an ink-blue background with golden accents, crisp stars and a
+phase-shaped moon. Compute the approximate lunar phase from the effective clock
+locally using a mean synodic cycle; no forecast or network access is required.
+This decorative phase does not imply astronomical moonrise/altitude accuracy.
+Keep star positions stable across clock renders, with at most one short meteor
+every 14–35 seconds (after an initial 5–10 second wait). Use the ambient clock
+and all existing motion/playback guards; static mode retains sun, stars and moon
+without meteors. Dim the sky under clouds, rain, storm, snow and especially fog.
+Compact screens show fewer stars and smaller sun/moon elements.
 Autumn occasionally sends an individual leaf in from either side: fast
 wind sweeps alternate with gliding, one or two smooth loops and an off-screen exit.
 Apparent depth smoothly changes its size, opacity, plane tilt and focus: distant
