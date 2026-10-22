@@ -101,6 +101,15 @@ describe("glass weather accessibility and pause", () => {
         container.querySelectorAll(".theme-ambient__wet-glass > span"),
       ).toHaveLength(16);
       expect(requestFrame).not.toHaveBeenCalled();
+      if (condition === "rain") {
+        expect(
+          container.querySelector(".theme-ambient__haze"),
+        ).toBeInTheDocument();
+      } else {
+        expect(
+          container.querySelector(".theme-ambient__haze"),
+        ).not.toBeInTheDocument();
+      }
     },
   );
 
@@ -131,6 +140,34 @@ describe("glass weather accessibility and pause", () => {
     });
     expect(cancelFrame).toHaveBeenCalled();
     expect(requestFrame).toHaveBeenCalledTimes(1);
+  });
+
+  it("honors reduced-motion changes after switching from rain to storm", () => {
+    const { container, rerender } = render(
+      <AmbientBackground theme={weatherTheme("rain")} />,
+    );
+    rerender(<AmbientBackground theme={weatherTheme("storm")} />);
+    const frames = requestFrame.mock.calls.length;
+    reducedMotion = true;
+    act(() => motionChange?.());
+    expect(container.querySelector(".theme-ambient")).toHaveAttribute(
+      "data-static",
+      "true",
+    );
+    expect(container.querySelector("canvas")).toHaveStyle({
+      visibility: "hidden",
+    });
+    expect(requestFrame).toHaveBeenCalledTimes(frames);
+    reducedMotion = false;
+    act(() => motionChange?.());
+    expect(container.querySelector(".theme-ambient")).toHaveAttribute(
+      "data-static",
+      "false",
+    );
+    expect(container.querySelector("canvas")).toHaveStyle({
+      visibility: "visible",
+    });
+    expect(requestFrame).toHaveBeenCalledTimes(frames + 1);
   });
 
   it("preserves accumulated glass state across clock renders and playback pause", () => {

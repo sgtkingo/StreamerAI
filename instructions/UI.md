@@ -83,13 +83,30 @@ falling snow. Festive snow remains visible as decoration independently of actual
 or manually selected weather and never changes the reported weather condition.
 The requested fireworks supersede the earlier prohibition on fireworks bursts;
 use bounded, soft bursts without strobing or full-screen flashes. Rain lands on
-the back of the glass: irregular refractive beads, localized condensation at each
-impact and slow sliding trails. Half of the beads remain stationary without trails;
-the rest subtly deform and evaporate while still sliding, with wet tails sized to
-the bead. Only some impacts mist the glass. Condensation stays at the impact site
-and fades without expanding rings.
-Storm uses a denser, stronger version with irregular diffuse lightning glows in
-the background. Snow lands, sticks briefly and creates bounded frost around the
+the back of the glass: irregular refractive beads, slowly developing full-screen
+condensation and sliding trails. Half of the beads remain stationary without trails;
+the rest alternate fast slips with near-stops, occasionally steer sideways and
+travel hundreds of pixels before evaporating. Their bounded wet trails follow the
+actual bends in the path. Touching beads coalesce into a larger moving bead without
+growing the particle pool. Rain gradually fogs the whole glass independently of
+individual impacts. There are no localized impact fog patches or expanding rings.
+Haze builds over tens of seconds with slow changes in humidity, pauses with the
+simulation and survives viewport resizing. Reduced motion uses a static haze.
+Around a third of normal rain impacts scatter two larger, rounder splash beads
+from outside the parent bead's edge, scaled to its impact size. These move gently,
+linger longer than storm spray and
+evaporate through opacity without shrinking. Splash counts remain bounded even
+when holiday effects are also active.
+Storm uses dense, brief diagonal impacts from one shared wind direction with small
+angular variations. Drops deform into long narrow shapes at contact and scatter
+three tiny randomized splash beads, then fade in place without sliding or tails.
+Random gusts sharply raise and lower impact density and force. A peak holds for
+1–2 seconds, with a quick rise and fall and a longer, variable lull.
+Already landed beads finish evaporating naturally; gusts reuse a bounded pool and
+advance only with the ambient simulation, respecting all motion and playback guards.
+Storm has no haze or impact condensation, including in static mode. Isolated,
+contrasting lightning flashes have a quick bright crest and smooth afterglow;
+motion and playback guards still apply. Snow lands, sticks briefly and creates bounded frost around the
 edges. Lightning obeys every motion/pause guard and is absent in static mode.
 Weather effects remain subordinate to readable surfaces, media artwork and semantic
 status colors. Respect reduced motion and the ambient-motion checkbox with a

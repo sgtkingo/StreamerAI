@@ -1,61 +1,10 @@
-/** Small reusable textures: all diffusion is baked once, never blurred per frame. */
-export function createRainSprite(
-  kind: "droplet" | "condensation" | "trail",
-  variant = 0,
-) {
+/** Reusable refractive beads are painted once, never blurred per frame. */
+export function createRainSprite(variant = 0) {
   const sprite = document.createElement("canvas");
   sprite.width = 128;
   sprite.height = 128;
   const context = sprite.getContext("2d");
   if (!context) return null;
-
-  if (kind === "trail") {
-    // A broad wet ribbon joins the bead and tapers into the older dry glass.
-    const wet = context.createLinearGradient(0, 0, 0, 128);
-    wet.addColorStop(0, "#c3d2da00");
-    wet.addColorStop(0.35, "#c3d2da10");
-    wet.addColorStop(0.8, "#b6cbd438");
-    wet.addColorStop(1, "#dce8ee54");
-    context.fillStyle = wet;
-    context.beginPath();
-    context.moveTo(64, 0);
-    context.quadraticCurveTo(44, 55, 8, 128);
-    context.lineTo(120, 128);
-    context.quadraticCurveTo(84, 55, 64, 0);
-    context.fill();
-    return sprite;
-  }
-
-  if (kind === "condensation") {
-    // Overlapping, feathered patches avoid the circular edge of an impact ring.
-    context.filter = "blur(3px)";
-    for (const [x, y, radius] of [
-      [57, 61, 48],
-      [78, 52, 34],
-      [46, 81, 30],
-    ]) {
-      const mist = context.createRadialGradient(x, y, 0, x, y, radius);
-      mist.addColorStop(0, "#bdc9cc38");
-      mist.addColorStop(0.35, "#acbdc326");
-      mist.addColorStop(0.75, "#9baeb510");
-      mist.addColorStop(1, "#9baeb500");
-      context.fillStyle = mist;
-      context.fillRect(0, 0, 128, 128);
-    }
-    context.filter = "none";
-    // Fine condensation beads add texture without another particle simulation.
-    for (let index = 0; index < 90; index += 1) {
-      const angle = index * 2.39996;
-      const distance = Math.sqrt((index + 0.5) / 90) * 45;
-      const x = 64 + Math.cos(angle) * distance;
-      const y = 64 + Math.sin(angle) * distance * 0.82;
-      context.fillStyle = `rgba(210, 222, 225, ${0.1 * (1 - distance / 52)})`;
-      context.beginPath();
-      context.arc(x, y, 0.35 + (index % 3) * 0.18, 0, Math.PI * 2);
-      context.fill();
-    }
-    return sprite;
-  }
 
   const phase = variant * 1.73;
   const points = Array.from({ length: 40 }, (_, index) => {

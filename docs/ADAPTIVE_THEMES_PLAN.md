@@ -17,9 +17,14 @@ Fix current appearance, and adds Christmas lights/snow plus New Year
 fireworks/snow. Onboarding retains detailed theme choices and previews of all
 three appearance axes. Cinematic preserves the previous palette.
 
-The glass-weather refinement adds irregular refractive rain beads, localized
-condensation without impact rings, and sliding trails, plus stronger storm
-impacts with diffuse lightning, and sticking snow with edge frost. Appearance
+The glass-weather refinement adds irregular refractive rain beads, gradually
+developing full-screen condensation, peripheral splashes scaled to the impact bead,
+and long sliding paths with fast slips, near-stops, bends and bead coalescence.
+Rain haze develops independently of impacts, with no localized fog patches or rings.
+Dense, wind-driven
+storm impacts from a shared angle, narrow impact deformation and three tiny splash
+beads per impact, without sliding, tails, fog or condensation. Lightning has a
+brighter crest and a smooth afterglow. Snow sticks with edge frost. Appearance
 contains Theme, with Local time and Weather atmosphere grouped in one section below.
 Fix is a lock toggle, the
 clock ticks per second locally within Settings, and the weather location card

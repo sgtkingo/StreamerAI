@@ -16,6 +16,7 @@ import {
   dropletAppearance,
   lightningOpacity,
   snowflakeAppearance,
+  splashDropletAppearance,
   type GlassWeatherKind,
   type GlassWeatherScene,
 } from "./glass-weather";
@@ -56,9 +57,10 @@ function createGlassSprite(kind: "crystal" | "lightning") {
     }
   } else {
     const glow = context.createRadialGradient(48, 50, 2, 48, 58, 65);
-    glow.addColorStop(0, "#ccdfff");
-    glow.addColorStop(0.32, "#a7bbdfbb");
-    glow.addColorStop(1, "#a7bbdf00");
+    glow.addColorStop(0, "#f6faff");
+    glow.addColorStop(0.12, "#e5effff5");
+    glow.addColorStop(0.38, "#b9d2f5b3");
+    glow.addColorStop(1, "#adc8f000");
     context.fillStyle = glow;
     context.fillRect(0, 0, 96, 128);
   }
@@ -124,6 +126,7 @@ export function AmbientBackground({
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const layerRef = useRef<HTMLDivElement>(null);
+  const motionPreferenceRef = useRef<MediaQueryList>();
   const pausedRef = useRef(paused);
   const synchronizedPauseRef = useRef(paused);
   const synchronizeRef = useRef<() => void>(() => undefined);
@@ -163,9 +166,11 @@ export function AmbientBackground({
       typeof CanvasRenderingContext2D === "undefined"
     )
       return;
-    const reducedMotion = window.matchMedia?.(
+    // Retain the media query across weather changes so preference events keep
+    // reaching the active scene after the previous scene removes its listener.
+    const reducedMotion = (motionPreferenceRef.current ??= window.matchMedia?.(
       "(prefers-reduced-motion: reduce)",
-    );
+    ));
     const context = canvas.getContext("2d", { alpha: true });
     if (!context) return;
 
@@ -183,17 +188,8 @@ export function AmbientBackground({
     const snowSprite = createSprite("snow", "#dbe8f2");
     const dropletSprites =
       glassWeather && glassWeather !== "snow"
-        ? Array.from({ length: 6 }, (_, index) =>
-            createRainSprite("droplet", index),
-          )
+        ? Array.from({ length: 6 }, (_, index) => createRainSprite(index))
         : [];
-    const condensationSprite =
-      glassWeather && glassWeather !== "snow"
-        ? createRainSprite("condensation")
-        : null;
-    const trailSprite = dropletSprites.length
-      ? createRainSprite("trail")
-      : null;
     const crystalSprite =
       glassWeather === "snow" ? createGlassSprite("crystal") : null;
     const lightningSprite =
@@ -209,6 +205,7 @@ export function AmbientBackground({
     let bursts: FireworkBurst[] = [];
     let glass: GlassWeatherScene | null = null;
     let paintedFrost = -1;
+    let paintedRainHaze = -1;
     let frame = 0;
     let lastFrame = 0;
     let slowFrames = 0;
@@ -258,6 +255,7 @@ export function AmbientBackground({
             sprite: index % 3,
           }))
         : [];
+      const previousRainHaze = glass?.rainHaze ?? 0;
       glass = glassWeather
         ? createGlassWeather(
             glassWeather,
@@ -267,6 +265,8 @@ export function AmbientBackground({
             decorativeSnow,
           )
         : null;
+      if (glass?.kind === "rain") glass.rainHaze = previousRainHaze;
+      paintedRainHaze = -1;
       paintedFrost = -1;
       bursts = fireworks
         ? Array.from({ length: festiveBudget.bursts }, (_, index) => {
@@ -312,43 +312,65 @@ export function AmbientBackground({
       }
       if (glass) {
         advanceGlassWeather(glass, elapsed);
-        // Mist remains pinned to each impact while the bead slides away.
-        // Only selected drops mist the glass; the soft texture is prepared once.
-        if (condensationSprite) {
-          for (const drop of glass.droplets) {
-            const appearance = dropletAppearance(drop);
-            if (appearance.condensationOpacity <= 0) continue;
-            context.globalAlpha =
-              appearance.condensationOpacity *
-              (glass.kind === "storm" ? 0.65 : 0.48);
-            const size = drop.radius * 10;
-            context.save();
-            context.translate(drop.originX, drop.originY);
-            context.rotate(drop.tilt);
-            context.drawImage(
-              condensationSprite,
-              -size / 2,
-              -size * 0.42,
-              size,
-              size * 0.84,
-            );
-            context.restore();
-          }
+        const haze = Math.round(glass.rainHaze * 1000);
+        if (haze !== paintedRainHaze && layerRef.current) {
+          layerRef.current.style.setProperty(
+            "--rain-haze",
+            String(haze / 1000),
+          );
+          paintedRainHaze = haze;
         }
         for (const drop of glass.droplets) {
           const appearance = dropletAppearance(drop);
-          if (trailSprite && appearance.trailLength > 2) {
-            context.globalAlpha = appearance.opacity * 0.4;
+          const trail = drop.motion?.trail;
+          if (trail && trail.length > 1 && appearance.trailLength > 2) {
+            const wetTrace = context.createLinearGradient(
+              trail[0].x,
+              trail[0].y,
+              drop.x,
+              drop.y,
+            );
+            wetTrace.addColorStop(0, "#c3d2da00");
+            wetTrace.addColorStop(0.45, "#c3d2da02");
+            wetTrace.addColorStop(0.8, "#c3d2da0a");
+            wetTrace.addColorStop(1, "#dce8ee1a");
+            context.globalAlpha = appearance.opacity;
+            context.strokeStyle = wetTrace;
+            context.lineWidth = appearance.trailWidth * 0.72;
+            context.lineCap = "round";
+            context.lineJoin = "round";
+            context.beginPath();
+            context.moveTo(trail[0].x, trail[0].y);
+            for (let index = 1; index < trail.length - 1; index += 1) {
+              const point = trail[index],
+                next = trail[index + 1];
+              context.quadraticCurveTo(
+                point.x,
+                point.y,
+                (point.x + next.x) / 2,
+                (point.y + next.y) / 2,
+              );
+            }
+            context.lineTo(drop.x, drop.y);
+            context.stroke();
+          }
+          for (const splash of drop.splashlets) {
+            const look = splashDropletAppearance(drop, splash);
+            const sprite = dropletSprites[splash.shape];
+            if (!look || !sprite) continue;
+            const size = look.radius * 3.5;
+            const aspect = glass.kind === "storm" ? 1.3 : 1;
+            context.globalAlpha =
+              look.opacity * (glass.kind === "storm" ? 0.85 : 0.6);
             context.save();
-            context.translate(drop.x, drop.y);
-            context.rotate(-Math.atan2(drop.drift, drop.slideSpeed));
-            const width = appearance.trailWidth / 0.875;
+            context.translate(look.x, look.y);
+            context.rotate(look.rotation);
             context.drawImage(
-              trailSprite,
-              -width / 2,
-              -appearance.trailLength,
-              width,
-              appearance.trailLength,
+              sprite,
+              -size / 2,
+              (-size * aspect) / 2,
+              size,
+              size * aspect,
             );
             context.restore();
           }
@@ -396,6 +418,9 @@ export function AmbientBackground({
         }
         const lightning = lightningOpacity(glass);
         if (lightning && lightningSprite) {
+          context.globalAlpha = lightning * 0.1;
+          context.fillStyle = "#afc9f0";
+          context.fillRect(0, 0, width, height);
           context.globalAlpha = lightning;
           context.drawImage(
             lightningSprite,
@@ -479,7 +504,10 @@ export function AmbientBackground({
       !performancePaused;
     const animate = (time: number) => {
       frame = 0;
-      if (!canAnimate()) return;
+      if (!canAnimate()) {
+        if (!disposed && reducedMotion?.matches) synchronize();
+        return;
+      }
       if (time - lastFrame >= 1000 / 30) {
         const started = performance.now();
         draw(time, Math.min((time - (lastFrame || time)) / 1000, 0.08));
@@ -553,7 +581,9 @@ export function AmbientBackground({
       data-static="true"
     >
       <div className="theme-ambient__wash" />
-      <div className="theme-ambient__haze" />
+      {theme.weatherEffect !== "storm" && (
+        <div className="theme-ambient__haze" />
+      )}
       {["rain", "storm"].includes(theme.weatherEffect) && (
         <div className="theme-ambient__wet-glass">
           {Array.from({ length: 16 }, (_, index) => (

@@ -1,4 +1,31 @@
+import {
+  advanceRainMotion,
+  createRainMotion,
+  rainBeadsTouch,
+  recordRainTrail,
+  type RainMotion,
+} from "./rain-motion";
+import {
+  advanceStormSurge,
+  createStormSurge,
+  type StormSurge,
+} from "./storm-surge";
+
 export type GlassWeatherKind = "rain" | "storm" | "snow";
+
+export const STORM_IMPACT_ANGLE = -0.58;
+export const STORM_SPLASH_COUNT = 3;
+export const RAIN_SPLASH_COUNT = 2;
+
+export interface GlassSplashDroplet {
+  angle: number;
+  distance: number;
+  radius: number;
+  offset: number;
+  delay: number;
+  duration: number;
+  shape: number;
+}
 
 export interface GlassDroplet {
   x: number;
@@ -6,17 +33,18 @@ export interface GlassDroplet {
   originX: number;
   originY: number;
   radius: number;
+  impactRadius: number;
   age: number;
   impactDuration: number;
   holdDuration: number;
   slideDuration: number;
-  slideSpeed: number;
-  drift: number;
   shape: number;
   tilt: number;
   aspect: number;
   stationary: boolean;
-  condensation: boolean;
+  impactDistance: number;
+  splashlets: GlassSplashDroplet[];
+  motion: RainMotion | null;
 }
 
 export interface GlassSnowflake {
@@ -40,11 +68,13 @@ export interface GlassWeatherScene {
   droplets: GlassDroplet[];
   flakes: GlassSnowflake[];
   frost: number;
+  rainHaze: number;
   time: number;
   nextLightning: number;
   lightningAge: number;
   lightningX: number;
   lightningY: number;
+  stormSurge: StormSurge | null;
 }
 
 export function glassWeatherBudget(
@@ -53,35 +83,74 @@ export function glassWeatherBudget(
   festive = false,
 ): number {
   if (kind === "snow") return compact ? 8 : festive ? 18 : 20;
-  if (kind === "storm") return compact ? (festive ? 8 : 14) : festive ? 20 : 36;
+  // Each storm impact owns three small splash beads, including on holiday scenes.
+  if (kind === "storm") return compact ? (festive ? 2 : 28) : festive ? 5 : 72;
   return compact ? (festive ? 6 : 12) : festive ? 14 : 28;
 }
 
 function createDroplet(
-  scene: Pick<GlassWeatherScene, "width" | "height" | "kind">,
+  scene: Pick<GlassWeatherScene, "width" | "height" | "kind" | "stormSurge">,
   random: () => number,
   stationary: boolean,
 ): GlassDroplet {
   const storm = scene.kind === "storm";
+  const intensity = scene.stormSurge?.intensity ?? 1;
   const x = scene.width * (0.025 + random() * 0.95);
   const y = scene.height * (0.04 + random() * 0.8);
+  const radius =
+    (4 + random() * (storm ? 7 : 9)) * (storm ? 0.85 + intensity * 0.25 : 1);
   return {
     x,
     y,
     originX: x,
     originY: y,
-    radius: (storm ? 5 : 4) + random() * (storm ? 11 : 9),
+    radius,
+    impactRadius: radius,
     age: 0,
-    impactDuration: storm ? 0.38 : 0.6,
-    holdDuration: (storm ? 0.8 : 2.5) + random() * (storm ? 2 : 5),
-    slideDuration: 3 + random() * 5,
-    slideSpeed: (storm ? 11 : 4) + random() * (storm ? 18 : 10),
-    drift: -0.5 + random(),
+    impactDuration: storm
+      ? (0.09 + random() * 0.09) * (0.85 + (1 - intensity) * 0.75)
+      : 0.6,
+    holdDuration: storm ? 0.04 + random() * 0.08 : 2.5 + random() * 5,
+    // Storm uses this final interval only to evaporate the impact, never to slide.
+    slideDuration: storm
+      ? (0.45 + random() * 0.35) * (1.2 - intensity * 0.4)
+      : stationary
+        ? 5 + random() * 6
+        : 18 + random() * 14,
     shape: Math.floor(random() * 6),
-    tilt: (random() - 0.5) * 0.8,
+    tilt: storm
+      ? STORM_IMPACT_ANGLE + (random() - 0.5) * 0.14
+      : (random() - 0.5) * 0.8,
     aspect: 0.8 + random() * 0.55,
-    stationary,
-    condensation: random() < 0.35,
+    stationary: storm || stationary,
+    impactDistance: storm
+      ? (140 + random() * 160) * (0.8 + intensity * 0.5)
+      : 0,
+    splashlets:
+      storm || random() < 0.35
+        ? Array.from(
+            { length: storm ? STORM_SPLASH_COUNT : RAIN_SPLASH_COUNT },
+            () => {
+              const splashRadius = storm
+                ? 0.7 + random() * 1.5
+                : Math.min(radius * 0.6, 2.4 + random() * 1.8);
+              return {
+                angle: random() * Math.PI * 2,
+                distance: storm
+                  ? (7 + random() * (radius * 3.5)) * (0.8 + intensity * 0.5)
+                  : radius * (0.7 + random() * 1.1),
+                radius: splashRadius,
+                offset: storm
+                  ? 0
+                  : radius * (1.35 + random() * 0.35) + splashRadius * 1.25,
+                delay: storm ? random() * 0.025 : 0.03 + random() * 0.07,
+                duration: storm ? 0.18 + random() * 0.22 : 1.1 + random() * 0.9,
+                shape: Math.floor(random() * 6),
+              };
+            },
+          )
+        : [],
+    motion: storm ? null : createRainMotion(x, y, radius, random),
   };
 }
 
@@ -118,10 +187,48 @@ export function dropletLifetime(drop: GlassDroplet): number {
 }
 
 export function dropletAppearance(drop: GlassDroplet) {
+  if (drop.impactDistance > 0) {
+    const contactAge = Math.max(0, drop.age - drop.impactDuration);
+    const fade = Math.max(
+      0,
+      Math.min(1, (contactAge - drop.holdDuration) / drop.slideDuration),
+    );
+    // Settle the impact shape, then evaporate through opacity alone.
+    const deformationAge = Math.min(contactAge, drop.holdDuration);
+    const deformation =
+      Math.sin(deformationAge * 24) * Math.exp(-deformationAge * 10);
+    return {
+      phase:
+        drop.age < drop.impactDuration
+          ? "impact"
+          : fade > 0
+            ? "fading"
+            : "bead",
+      opacity:
+        Math.max(0, Math.min(1, drop.age / 0.025)) *
+        (1 - fade * fade * (3 - 2 * fade)),
+      scaleX: 0.28 + deformation * 0.1,
+      scaleY:
+        (drop.age < drop.impactDuration ? 3.2 : 2.6 + deformation * 0.9) *
+        drop.aspect,
+      rotation:
+        drop.tilt +
+        Math.sin(contactAge * 21 + drop.shape) *
+          Math.exp(-contactAge * 9) *
+          0.025,
+      trailLength: 0,
+      trailWidth: 0,
+      trailAngle: drop.tilt,
+    };
+  }
   const slideStart = drop.impactDuration + drop.holdDuration;
   const slideAge = Math.max(0, drop.age - slideStart);
-  const evaporation = Math.min(1, slideAge / drop.slideDuration);
-  const fadeStart = slideStart + drop.slideDuration * 0.6;
+  const fadeDelay = drop.stationary ? 0 : drop.slideDuration * 0.55;
+  const evaporation = Math.max(
+    0,
+    Math.min(1, (slideAge - fadeDelay) / (drop.slideDuration - fadeDelay)),
+  );
+  const fadeStart = slideStart + fadeDelay;
   const phase =
     drop.age < drop.impactDuration
       ? "impact"
@@ -136,28 +243,58 @@ export function dropletAppearance(drop: GlassDroplet) {
     Math.sin(impactProgress * Math.PI * 2) *
     Math.pow(1 - impactProgress, 2) *
     0.22;
-  const sliding = drop.stationary ? 0 : Math.min(1, slideAge / 0.8);
-  const wobble = Math.sin(slideAge * 2.4 + drop.shape * 1.7) * sliding * 0.045;
-  const shrink = 1 - evaporation * 0.45;
-  const scaleX = (1 + squash - sliding * 0.12 + wobble) * shrink;
+  const sliding = drop.stationary
+    ? 0
+    : Math.min(1, (drop.motion?.speed ?? 0) / 140);
+  const windAngle = -Math.atan2(
+    drop.motion?.velocityX ?? 0,
+    drop.motion?.velocityY || 1,
+  );
+  const wobble = Math.sin(slideAge * 13 + drop.shape * 1.7) * sliding * 0.035;
+  const scaleX = 1 + squash - sliding * 0.15 + wobble;
   return {
     phase,
     opacity:
       Math.min(1, drop.age / 0.16) *
       (1 - evaporation * evaporation * (3 - 2 * evaporation)),
     scaleX,
-    scaleY: drop.aspect * (1 - squash + sliding * 0.32 - wobble) * shrink,
-    rotation: drop.tilt * (1 - sliding * 0.65) + wobble * 0.7,
-    // Condensation stays at the impact site rather than spreading as a wave.
-    condensationOpacity:
-      Number(drop.condensation) *
-      Math.min(1, drop.age / 0.45) *
-      Math.max(0, 1 - Math.max(0, drop.age - slideStart * 0.7) / 5) *
-      (1 - evaporation),
-    trailLength: drop.stationary
-      ? 0
-      : Math.min(105, Math.max(0, drop.y - drop.originY)),
+    scaleY: drop.aspect * (1 - squash + sliding * 0.55 - wobble),
+    rotation:
+      drop.tilt * (1 - sliding * 0.7) + windAngle * sliding + wobble * 0.7,
+    trailLength: drop.stationary ? 0 : (drop.motion?.trailDistance ?? 0),
+    trailAngle: windAngle,
     trailWidth: drop.stationary ? 0 : drop.radius * 1.6 * scaleX,
+  };
+}
+
+/** Splash beads scatter from an impact and evaporate without shrinking. */
+export function splashDropletAppearance(
+  drop: GlassDroplet,
+  splash: GlassSplashDroplet,
+) {
+  const storm = drop.impactDistance > 0;
+  const age = drop.age - (storm ? drop.impactDuration : 0) - splash.delay;
+  if (age < 0 || age >= splash.duration) return null;
+  const progress = age / splash.duration;
+  const travel = (1 - Math.exp(-age * (storm ? 22 : 6))) * splash.distance;
+  const ringX = Math.cos(splash.angle) * splash.offset;
+  const ringY = Math.sin(splash.angle) * splash.offset * drop.aspect;
+  return {
+    x:
+      drop.originX +
+      ringX * Math.cos(drop.tilt) -
+      ringY * Math.sin(drop.tilt) +
+      Math.cos(splash.angle) * travel -
+      Math.sin(drop.tilt) * travel * (storm ? 0.25 : 0.06),
+    y:
+      drop.originY +
+      ringX * Math.sin(drop.tilt) +
+      ringY * Math.cos(drop.tilt) +
+      Math.sin(splash.angle) * travel * 0.75 +
+      age * age * (storm ? 12 : 1.3),
+    opacity: Math.min(1, age / (storm ? 0.018 : 0.12)) * (1 - progress) ** 1.4,
+    radius: splash.radius,
+    rotation: storm ? splash.angle - Math.PI / 2 : drop.tilt * 0.2,
   };
 }
 
@@ -195,11 +332,13 @@ export function createGlassWeather(
     droplets: [],
     flakes: [],
     frost: kind === "snow" ? 0.16 : 0,
+    rainHaze: 0,
     time: 0,
     nextLightning: 5 + random() * 5,
     lightningAge: -1,
     lightningX: width * 0.75,
     lightningY: height * 0.22,
+    stormSurge: kind === "storm" ? createStormSurge(random) : null,
   };
   const budget = glassWeatherBudget(kind, compact, festive);
   if (kind === "snow") {
@@ -211,12 +350,81 @@ export function createGlassWeather(
   } else {
     scene.droplets = Array.from({ length: budget }, (_, index) => {
       const drop = createDroplet(scene, random, index % 2 === 0);
-      drop.age = random() * (drop.impactDuration + drop.holdDuration);
+      drop.age =
+        random() *
+        (kind === "storm"
+          ? dropletLifetime(drop)
+          : drop.impactDuration + drop.holdDuration);
+      if (
+        kind === "storm" &&
+        index >= stormActiveSlots(budget, scene.stormSurge)
+      )
+        drop.age = -0.01 - random() * 0.12;
       return drop;
     });
   }
   advanceGlassWeather(scene, 0, random);
   return scene;
+}
+
+function stormActiveSlots(budget: number, surge: StormSurge | null) {
+  return Math.ceil(budget * (0.12 + (surge?.intensity ?? 1) * 0.88));
+}
+
+function mergeRainDroplets(scene: GlassWeatherScene, random: () => number) {
+  for (let i = 0; i < scene.droplets.length; i += 1) {
+    const a = scene.droplets[i];
+    if (
+      !a.motion ||
+      a.motion.cooldown > 0 ||
+      a.age < a.impactDuration ||
+      dropletAppearance(a).opacity < 0.15
+    )
+      continue;
+    for (let j = i + 1; j < scene.droplets.length; j += 1) {
+      const b = scene.droplets[j];
+      if (
+        !b.motion ||
+        b.motion.cooldown > 0 ||
+        b.age < b.impactDuration ||
+        dropletAppearance(b).opacity < 0.15
+      )
+        continue;
+      const aMoving = !a.stationary && a.motion.speed > 3;
+      const bMoving = !b.stationary && b.motion.speed > 3;
+      if ((!aMoving && !bMoving) || !rainBeadsTouch(a, b)) continue;
+      const absorber = !aMoving
+        ? b
+        : !bMoving
+          ? a
+          : a.motion.mass >= b.motion.mass
+            ? a
+            : b;
+      const donor = absorber === a ? b : a;
+      const motion = absorber.motion,
+        donorMotion = donor.motion;
+      if (!motion || !donorMotion) continue;
+      const totalMass = motion.mass + donorMotion.mass;
+      absorber.x =
+        (absorber.x * motion.mass + donor.x * donorMotion.mass) / totalMass;
+      absorber.y =
+        (absorber.y * motion.mass + donor.y * donorMotion.mass) / totalMass;
+      motion.mass = Math.min(22 * 22, totalMass);
+      motion.speed = Math.max(motion.speed, donorMotion.speed) * 1.12;
+      motion.fast = true;
+      motion.remaining = 0.18 + random() * 0.22;
+      motion.targetSpeed = Math.max(140, motion.targetSpeed);
+      motion.cooldown = 0.7;
+      absorber.slideDuration = Math.min(40, absorber.slideDuration + 2);
+      recordRainTrail(motion, absorber.x, absorber.y);
+      scene.droplets[donor === a ? i : j] = createDroplet(
+        scene,
+        random,
+        donor.stationary,
+      );
+      break;
+    }
+  }
 }
 
 export function advanceGlassWeather(
@@ -226,20 +434,77 @@ export function advanceGlassWeather(
 ): void {
   const delta = Math.max(0, Math.min(elapsed, 0.08));
   scene.time += delta;
+  if (scene.kind === "rain" && delta > 0) {
+    // Humidity builds across the whole glass, independently of individual impacts.
+    const humidity = 0.62 + Math.sin(scene.time / 18) * 0.1;
+    scene.rainHaze += (humidity - scene.rainHaze) * (1 - Math.exp(-delta / 10));
+  }
+  if (scene.stormSurge) advanceStormSurge(scene.stormSurge, delta, random);
+  const activeSlots =
+    scene.kind === "storm"
+      ? stormActiveSlots(scene.droplets.length, scene.stormSurge)
+      : scene.droplets.length;
   for (let index = 0; index < scene.droplets.length; index += 1) {
-    const drop = scene.droplets[index];
-    drop.age += delta;
+    let drop = scene.droplets[index];
+    if (scene.kind === "storm" && drop.age < 0) {
+      if (delta <= 0 || index >= activeSlots) continue;
+      const age = drop.age + delta;
+      if (age < 0) {
+        drop.age = age;
+        continue;
+      }
+      // Birth uses the current gust strength; parked slots never retain a stale force.
+      drop = createDroplet(scene, random, drop.stationary);
+      drop.age = age;
+      scene.droplets[index] = drop;
+    } else drop.age += delta;
     const slideAge = Math.max(
       0,
       drop.age - drop.impactDuration - drop.holdDuration,
     );
-    // Keep moving through evaporation. Recycled slots retain their behavior,
-    // keeping exactly half of the droplets stationary.
-    drop.y = drop.originY + (drop.stationary ? 0 : slideAge * drop.slideSpeed);
-    drop.x = drop.originX + (drop.stationary ? 0 : slideAge * drop.drift);
-    if (drop.age > dropletLifetime(drop) || drop.y > scene.height + 25)
-      scene.droplets[index] = createDroplet(scene, random, drop.stationary);
+    if (drop.motion && delta > 0) {
+      const motion = drop.motion;
+      motion.previousX = drop.x;
+      motion.previousY = drop.y;
+      motion.cooldown = Math.max(0, motion.cooldown - delta);
+      drop.radius +=
+        (Math.sqrt(motion.mass) - drop.radius) * (1 - Math.exp(-delta * 10));
+      if (!drop.stationary && slideAge > 0) {
+        const movement = advanceRainMotion(
+          motion,
+          drop.radius,
+          Math.min(delta, slideAge),
+          random,
+        );
+        drop.x += movement.dx;
+        drop.y += movement.dy;
+        recordRainTrail(motion, drop.x, drop.y);
+      }
+    }
+    // All storm arrivals share the wind direction. After impact they stay put.
+    if (drop.impactDistance > 0) {
+      drop.x = drop.originX;
+      drop.y = drop.originY;
+    }
+    if (drop.age < drop.impactDuration && drop.impactDistance > 0) {
+      const distance =
+        drop.impactDistance * (1 - drop.age / drop.impactDuration) ** 2;
+      drop.x = drop.originX + Math.sin(drop.tilt) * distance;
+      drop.y = drop.originY - Math.cos(drop.tilt) * distance;
+    }
+    const offscreenMargin = drop.motion ? 320 : drop.impactDistance + 40;
+    if (
+      drop.age > dropletLifetime(drop) ||
+      drop.y > scene.height + offscreenMargin ||
+      drop.x < -offscreenMargin ||
+      drop.x > scene.width + offscreenMargin
+    ) {
+      if (scene.kind === "storm") drop.age = -0.01 - random() * 0.12;
+      else
+        scene.droplets[index] = createDroplet(scene, random, drop.stationary);
+    }
   }
+  if (scene.kind === "rain" && delta > 0) mergeRainDroplets(scene, random);
   for (let index = 0; index < scene.flakes.length; index += 1) {
     const flake = scene.flakes[index];
     const previousAge = flake.age;
@@ -273,17 +538,17 @@ const smoothStep = (value: number) => {
   return clamped * clamped * (3 - 2 * clamped);
 };
 
-/** One slow diffuse illumination, separated by at least seven seconds. */
+/** An isolated, stronger flash with one bright crest and a smooth afterglow. */
 export function lightningOpacity(scene: GlassWeatherScene): number {
   if (
     scene.kind !== "storm" ||
     scene.lightningAge < 0 ||
-    scene.lightningAge > 1.5
+    scene.lightningAge > 1.1
   )
     return 0;
   return (
-    smoothStep(scene.lightningAge / 0.35) *
-    (1 - smoothStep((scene.lightningAge - 0.45) / 1.05)) *
-    0.22
+    smoothStep(scene.lightningAge / 0.08) *
+    (1 - smoothStep((scene.lightningAge - 0.16) / 0.94)) *
+    0.72
   );
 }
