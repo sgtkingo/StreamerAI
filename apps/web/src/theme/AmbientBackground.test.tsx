@@ -89,6 +89,98 @@ beforeEach(() => {
 });
 
 describe("glass weather accessibility and pause", () => {
+  it.each(["none", "cloudy", "snow", "rain", "storm", "fog"] as const)(
+    "uses winter sun only for a clear day, with frost in %s",
+    (weatherEffect) => {
+      const theme = {
+        ...weatherTheme("snow"),
+        id: "winter" as const,
+        period: "day" as const,
+        weatherEffect,
+      };
+      const { container } = render(
+        <AmbientBackground theme={theme} enabled={false} />,
+      );
+      expect(Boolean(container.querySelector(".summer-sun"))).toBe(
+        weatherEffect === "none",
+      );
+      expect(Boolean(container.querySelector(".winter-clouds"))).toBe(
+        weatherEffect !== "none",
+      );
+      expect(
+        container.querySelector(".theme-ambient__frost-rim"),
+      ).not.toBeNull();
+      expect(
+        document.documentElement.style.getPropertyValue("--winter-icicles"),
+      ).toBe("0.55");
+      expect(
+        Number(
+          document.documentElement.style.getPropertyValue("--winter-snow"),
+        ),
+      ).toBe(weatherEffect === "snow" ? 0.4 : 0);
+      expect(requestFrame).not.toHaveBeenCalled();
+    },
+  );
+
+  it("keeps winter moon phases and brighter stars without restarting the sky", () => {
+    const theme = {
+      ...weatherTheme("snow"),
+      id: "winter" as const,
+      period: "night" as const,
+      weatherEffect: "none" as const,
+      moonPhase: 0.25,
+    };
+    const { container, rerender } = render(<AmbientBackground theme={theme} />);
+    expect(container.querySelectorAll(".summer-star")).toHaveLength(64);
+    expect(container.querySelector(".summer-moon")).toHaveAttribute(
+      "data-phase",
+      "0.2500",
+    );
+    const contexts = vi.mocked(HTMLCanvasElement.prototype.getContext).mock
+      .calls.length;
+    rerender(<AmbientBackground theme={{ ...theme, moonPhase: 0.75 }} />);
+    expect(container.querySelector(".summer-moon")).toHaveAttribute(
+      "data-phase",
+      "0.7500",
+    );
+    expect(
+      vi.mocked(HTMLCanvasElement.prototype.getContext).mock.calls,
+    ).toHaveLength(contexts);
+  });
+
+  it("preserves winter accumulation on pause, weather and viewport changes and removes global styles on exit", () => {
+    const theme = { ...weatherTheme("snow"), id: "winter" as const };
+    const { rerender, unmount } = render(<AmbientBackground theme={theme} />);
+    const tick = (time: number) =>
+      act(() => requestFrame.mock.calls.at(-1)?.[0](time));
+    for (let frame = 0; frame < 20; frame++) tick(1000 + frame * 50);
+    const snow = () =>
+      Number(document.documentElement.style.getPropertyValue("--winter-snow"));
+    const accumulated = snow();
+    expect(accumulated).toBeGreaterThan(0);
+    rerender(<AmbientBackground theme={theme} paused />);
+    const frozen = snow();
+    tick(5000);
+    expect(snow()).toBe(frozen);
+    act(() => window.dispatchEvent(new Event("resize")));
+    rerender(<AmbientBackground theme={{ ...theme, weatherEffect: "none" }} />);
+    expect(snow()).toBeGreaterThanOrEqual(accumulated);
+    reducedMotion = true;
+    act(() => motionChange?.());
+    expect(
+      Number(
+        document.documentElement.style.getPropertyValue("--winter-icicles"),
+      ),
+    ).toBeGreaterThanOrEqual(0.55);
+    unmount();
+    expect(
+      document.documentElement.style.getPropertyValue("--winter-snow"),
+    ).toBe("");
+    expect(
+      document.documentElement.style.getPropertyValue("--winter-icicles"),
+    ).toBe("");
+  });
+
   it.each(["day", "night"] as const)(
     "keeps summer %s sky static with motion disabled",
     (period) => {

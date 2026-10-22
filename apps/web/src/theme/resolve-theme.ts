@@ -293,7 +293,14 @@ export function resolveTheme({
           surface: "#1c2938",
           glow: "#36496a",
         }
-      : palettes[season];
+      : season === "winter" && daylight.period === "night"
+        ? {
+            ...palettes.winter,
+            background: "#040b18",
+            surface: "#142234",
+            glow: "#203752",
+          }
+        : palettes[season];
   const age = weather
     ? realNow.getTime() - Date.parse(weather.observedAt)
     : Infinity;
@@ -350,7 +357,8 @@ export function resolveTheme({
     palette,
     motif: base.motif,
     ambientOpacity,
-    moonPhase: season === "summer" ? lunarPhase(instant) : null,
+    moonPhase:
+      season === "summer" || season === "winter" ? lunarPhase(instant) : null,
     cssVariables: cssVariables(palette, ambientOpacity),
   };
 }

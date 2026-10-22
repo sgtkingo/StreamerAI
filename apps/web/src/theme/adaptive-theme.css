@@ -44,6 +44,104 @@ html[data-theme] body {
   position: relative;
 }
 
+.winter-search-ice {
+  display: none;
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  pointer-events: none;
+}
+
+html[data-theme="winter"] .winter-search-ice {
+  display: block;
+}
+
+html[data-theme="winter"] .composer-form {
+  isolation: isolate;
+}
+
+.winter-search-ice__snow {
+  position: absolute;
+  bottom: calc(100% - 1px);
+  left: 0;
+  width: 100%;
+  height: 24px;
+  overflow: visible;
+  transform-origin: bottom;
+  transform: scaleY(var(--winter-snow, 0));
+  opacity: clamp(0, calc(var(--winter-snow, 0) * 5), 0.95);
+  filter: drop-shadow(0 -1px 1px #f5fbff55);
+}
+
+.winter-search-ice__rim {
+  position: absolute;
+  left: 3px;
+  right: 3px;
+  top: calc(100% - 2px);
+  height: 4px;
+  background: linear-gradient(#dcf1ff59, #a5d0ed1a, transparent);
+  opacity: var(--winter-icicles, 0.55);
+}
+
+.winter-search-ice__icicles {
+  position: absolute;
+  top: calc(100% - 1px);
+  left: 0;
+  width: 100%;
+  height: 94px;
+}
+
+.winter-search-ice__icicles > span {
+  --ice-grown: clamp(
+    0,
+    calc((var(--winter-ice-age, 70) - var(--ice-delay)) / var(--ice-duration)),
+    1
+  );
+  position: absolute;
+  top: 0;
+  height: min(
+    var(--ice-length),
+    var(--ice-limit, 94px),
+    var(--ice-device-limit, 94px)
+  );
+  background: linear-gradient(
+    90deg,
+    #e7f5ff70,
+    #accfe314 12%,
+    #f0fcff47 23%,
+    #cce9ff04 48%,
+    #79afcf14 82%,
+    #d5eefc59
+  );
+  transform-origin: top;
+  transform: translateX(-50%) scaleY(var(--ice-grown));
+  opacity: clamp(0, calc(var(--ice-grown) * 3), 0.65);
+}
+
+.winter-search-ice__icicles > span[data-tip="round"] {
+  border-radius: 2px 3px 48% 52% / 2px 2px 85% 90%;
+}
+
+.winter-search-ice__icicles > span::after {
+  content: "";
+  position: absolute;
+  top: 3%;
+  bottom: 22%;
+  left: 29%;
+  width: 1px;
+  background: linear-gradient(#f1fbff70, #f1fbff0d);
+}
+
+@media (max-width: 767px) {
+  .winter-search-ice__icicles {
+    height: 45px;
+  }
+  .winter-search-ice__icicles > span {
+    --ice-device-limit: 50px;
+    max-width: 10px;
+  }
+}
+
 .theme-search-splash {
   position: absolute;
   max-width: 100vw;
@@ -204,6 +302,149 @@ html[data-theme] body {
   width: 150px;
   height: 150px;
   opacity: 0.85;
+}
+
+.theme-ambient__summer--night {
+  opacity: 1;
+}
+
+.theme-ambient__summer--night .summer-stars {
+  opacity: var(--sky-visibility);
+  transition: opacity 1s ease;
+}
+
+.theme-ambient__summer--night .summer-moon {
+  opacity: calc(var(--sky-visibility) * 0.85);
+  transition: opacity 1s ease;
+}
+
+.theme-ambient__summer.theme-ambient__winter-sky {
+  --sky-visibility: 1;
+  --winter-sky-clarity: 1;
+}
+
+.theme-ambient__winter-sky[data-weather="cloudy"] {
+  --winter-sky-clarity: 0.22;
+}
+.theme-ambient__winter-sky[data-weather="rain"],
+.theme-ambient__winter-sky[data-weather="snow"] {
+  --winter-sky-clarity: 0.08;
+}
+.theme-ambient__winter-sky[data-weather="storm"],
+.theme-ambient__winter-sky[data-weather="fog"] {
+  --winter-sky-clarity: 0.015;
+}
+
+.theme-ambient__winter-sky .summer-stars,
+.theme-ambient__winter-sky .summer-moon {
+  opacity: var(--winter-sky-clarity);
+  transition: opacity 1s ease;
+}
+
+.theme-ambient__winter-sky .summer-star {
+  background: #ffffff;
+  box-shadow: 0 0 4px 1px #c8e8ff80;
+}
+
+.theme-ambient__winter-sky .summer-star--bright {
+  box-shadow: 0 0 7px 2px #d6efff80;
+}
+
+.theme-ambient__winter-sky .summer-sun__disc {
+  background: radial-gradient(
+    circle at 44% 42%,
+    #ffffff 35%,
+    #f4fbff 76%,
+    #d9f1ff
+  );
+  opacity: 1;
+  filter: none;
+  box-shadow:
+    0 0 12px 2px #effaff80,
+    0 0 55px 15px #b8dcff33;
+}
+
+.theme-ambient__winter-sky .summer-sun::before {
+  background: radial-gradient(
+    circle,
+    #f3fbff40 5%,
+    #c8e7ff17 32%,
+    transparent 67%
+  );
+}
+
+.theme-ambient__winter-sky .summer-sun__rays {
+  inset: -100px;
+  background: repeating-conic-gradient(
+    from 4deg,
+    transparent 0deg 19deg,
+    #f3fbff99 20deg 21deg,
+    transparent 23deg 30deg
+  );
+  mask-image: radial-gradient(
+    circle,
+    transparent 14%,
+    #000 22%,
+    #0009 39%,
+    transparent 65%
+  );
+  filter: blur(0.4px);
+  opacity: 0.8;
+}
+
+.winter-clouds,
+.summer-night-clouds {
+  position: absolute;
+  inset: -30px;
+  background: linear-gradient(#7c95ad59, #516a7f38 32%, transparent 80%);
+  transform: translateX(var(--winter-cloud-drift, 0px));
+  opacity: 0.62;
+}
+
+.winter-clouds > span,
+.summer-night-clouds > span {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse at 5% 10%, #a6b8c970, transparent 40%),
+    radial-gradient(ellipse at 45% -8%, #adc0d185, transparent 38%),
+    radial-gradient(ellipse at 95% 25%, #91a7ba75, transparent 42%);
+  filter: blur(14px);
+}
+
+.winter-clouds > span:nth-child(2),
+.summer-night-clouds > span:nth-child(2) {
+  transform: translate(8%, 9%) scale(1.1);
+  opacity: 0.5;
+}
+
+.winter-clouds > span:nth-child(3),
+.summer-night-clouds > span:nth-child(3) {
+  transform: translate(-12%, 35%) scale(1.25);
+  opacity: 0.3;
+}
+
+.summer-night-clouds {
+  opacity: 0.45;
+}
+
+.theme-ambient__summer[data-weather="rain"] .summer-night-clouds,
+.theme-ambient__summer[data-weather="snow"] .summer-night-clouds {
+  opacity: 0.58;
+}
+
+.theme-ambient__summer[data-weather="storm"] .summer-night-clouds {
+  opacity: 0.72;
+}
+
+.theme-ambient--winter .theme-ambient__frost-rim {
+  opacity: var(--winter-frost, 0.38);
+  box-shadow: inset 0 0 28px #d3e7f845;
+}
+
+.theme-ambient--winter .theme-ambient__frost-rim::before,
+.theme-ambient--winter .theme-ambient__frost-rim::after {
+  background-size: clamp(180px, 34vmin, 390px);
 }
 
 @media (max-width: 767px) {

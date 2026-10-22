@@ -88,6 +88,27 @@ describe("seasonal calendar", () => {
 });
 
 describe("theme composition", () => {
+  it("uses the effective date for the winter moon independently of snow and forecast access", () => {
+    const winter = resolveTheme({
+      ...params,
+      appearance: {
+        ...appearance,
+        mode: "winter",
+        daylightOverride: "night",
+        weatherOverride: "snow",
+      },
+      instant: new Date("2026-06-29T23:57:00Z"),
+      weather: null,
+      location: null,
+    });
+    expect(winter).toMatchObject({
+      id: "winter",
+      period: "night",
+      weatherEffect: "snow",
+    });
+    expect(winter.moonPhase).toBeCloseTo(0.5, 1);
+  });
+
   it("composes honey summer days and dark starry nights with a date-driven moon", () => {
     const summer = {
       ...params,

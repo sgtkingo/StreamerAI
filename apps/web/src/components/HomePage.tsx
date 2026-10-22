@@ -15,6 +15,7 @@ import {
 import { useToasts } from "./ToastProvider";
 import { TitleCard } from "./TitleCard";
 import { usePlaybackChecks } from "./usePlaybackChecks";
+import { WinterSearchIce } from "../theme/WinterSearchIce";
 
 interface HomePageProps {
   api: StreamerApi;
@@ -837,6 +838,7 @@ export function HomePage({
           Describe a feeling, actor, era or the people you are watching with.
         </p>
         <form className="composer-form" onSubmit={submit}>
+          <WinterSearchIce />
           <canvas className="theme-search-splash" aria-hidden="true" />
           <label className="sr-only" htmlFor="discovery-query">
             Ask StreamerAI for a movie or series

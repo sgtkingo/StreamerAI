@@ -91,8 +91,30 @@ This decorative phase does not imply astronomical moonrise/altitude accuracy.
 Keep star positions stable across clock renders, with at most one short meteor
 every 14–35 seconds (after an initial 5–10 second wait). Use the ambient clock
 and all existing motion/playback guards; static mode retains sun, stars and moon
-without meteors. Dim the sky under clouds, rain, storm, snow and especially fog.
+without meteors. Hide the summer sun under clouds, rain, storm and snow; fog
+retains the softly dimmed sun. Summer nights show clouds over stars and moon in
+cloudy, rain, snow and storm conditions, with denser cover during storms. Keep
+clouds visible independently of dimming the stars/moon. Fog retains its existing
+haze treatment; clear nights have no cloud layer.
 Compact screens show fewer stars and smaller sun/moon elements.
+Winter uses a sharp white sun with crisp rays in the upper-right only on clear
+days. Other conditions create an overcast sky. Clear winter nights have a deep
+blue base, brighter white stars and a cooler, higher-contrast phase-shaped moon;
+cloud cover obscures stars/moon according to the weather. Decorative cloud drift
+uses the same ambient clock. Edge frost grows in every winter condition.
+On the main Home composer, translucent icicles grow slowly below its bottom rim;
+snowfall gradually builds a scalloped snow cap above its top edge. Snow melts
+slowly when snowfall stops. Preserve accumulation through clock, weather,
+day/night and viewport changes; pause it during playback and while hidden.
+Disabled/reduced motion uses moderate static ice and, during snow, a static cap.
+Keep all ice outside the input/button, pointer-transparent and below nearby
+controls. Use a sparse, irregular layout concentrated near the left and right
+edges, with transparent glass-like highlights, varied growth delays/speeds and
+a mix of long sharp tips and tiny rounded nubs. The few center icicles stay short;
+measure nearby example buttons and cap overlapping tips at their midline, also
+after resizing or horizontal scrolling. Compact screens cap lengths further.
+Clear ice styles on leaving
+winter; decorative snow/ice never alters the real weather observation.
 Autumn occasionally sends an individual leaf in from either side: fast
 wind sweeps alternate with gliding, one or two smooth loops and an off-screen exit.
 Apparent depth smoothly changes its size, opacity, plane tilt and focus: distant

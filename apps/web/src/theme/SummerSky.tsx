@@ -2,28 +2,41 @@ import { useId, type CSSProperties } from "react";
 import { SUMMER_STARS, moonIlluminationPath } from "./summer-sky";
 import type { WeatherEffect } from "./resolve-theme";
 
-export function SummerSky({
-  period,
-  phase,
-  weather,
-}: {
+interface SkyProps {
   period: "day" | "night";
   phase: number;
   weather: WeatherEffect;
-}) {
+}
+
+export function SummerSky(props: SkyProps) {
+  return <SeasonalSky {...props} />;
+}
+
+export function WinterSky(props: SkyProps) {
+  return <SeasonalSky {...props} winter />;
+}
+
+function SeasonalSky({
+  period,
+  phase,
+  weather,
+  winter = false,
+}: SkyProps & { winter?: boolean }) {
   const id = useId().replace(/:/g, "");
   const illuminated = (1 - Math.cos(phase * Math.PI * 2)) / 2;
   const path = moonIlluminationPath(phase);
   return (
     <div
-      className={`theme-ambient__summer theme-ambient__summer--${period}`}
+      className={`theme-ambient__summer theme-ambient__summer--${period}${winter ? " theme-ambient__winter-sky" : ""}`}
       data-weather={weather}
     >
       {period === "day" ? (
-        <div className="summer-sun">
-          <div className="summer-sun__rays" />
-          <div className="summer-sun__disc" />
-        </div>
+        (weather === "none" || (!winter && weather === "fog")) && (
+          <div className="summer-sun">
+            <div className="summer-sun__rays" />
+            <div className="summer-sun__disc" />
+          </div>
+        )
       ) : (
         <>
           <div className="summer-stars">
@@ -35,9 +48,9 @@ export function SummerSky({
                   {
                     left: `${star.x}%`,
                     top: `${star.y}%`,
-                    width: star.size,
-                    height: star.size,
-                    opacity: star.opacity,
+                    width: star.size * (winter ? 1.15 : 1),
+                    height: star.size * (winter ? 1.15 : 1),
+                    opacity: Math.min(1, star.opacity + (winter ? 0.25 : 0)),
                   } as CSSProperties
                 }
               />
@@ -52,13 +65,16 @@ export function SummerSky({
           >
             <defs>
               <radialGradient id={`${id}-halo`}>
-                <stop stopColor="#f6e9c5" stopOpacity={0.12 * illuminated} />
+                <stop
+                  stopColor={winter ? "#e5f5ff" : "#f6e9c5"}
+                  stopOpacity={(winter ? 0.22 : 0.12) * illuminated}
+                />
                 <stop offset="1" stopColor="#f6e9c5" stopOpacity="0" />
               </radialGradient>
               <radialGradient id={`${id}-light`} cx="33%" cy="25%" r="85%">
-                <stop stopColor="#fff8dc" />
-                <stop offset="0.6" stopColor="#e8dfbd" />
-                <stop offset="1" stopColor="#b9bec0" />
+                <stop stopColor={winter ? "#ffffff" : "#fff8dc"} />
+                <stop offset="0.6" stopColor={winter ? "#e9f3ff" : "#e8dfbd"} />
+                <stop offset="1" stopColor={winter ? "#b9d1e5" : "#b9bec0"} />
               </radialGradient>
               <clipPath id={`${id}-lit`}>
                 <path d={path} />
@@ -78,7 +94,7 @@ export function SummerSky({
                 rx="12"
                 ry="16"
                 fill="#778591"
-                opacity="0.18"
+                opacity={winter ? 0.3 : 0.18}
                 transform="rotate(-24)"
               />
               <ellipse
@@ -87,7 +103,7 @@ export function SummerSky({
                 rx="9"
                 ry="13"
                 fill="#859095"
-                opacity="0.13"
+                opacity={winter ? 0.23 : 0.13}
                 transform="rotate(20)"
               />
               <circle
@@ -105,6 +121,14 @@ export function SummerSky({
           </svg>
         </>
       )}
+      {weather !== "none" &&
+        (winter || (period === "night" && weather !== "fog")) && (
+          <div className={winter ? "winter-clouds" : "summer-night-clouds"}>
+            <span />
+            <span />
+            <span />
+          </div>
+        )}
     </div>
   );
 }

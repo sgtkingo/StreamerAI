@@ -3,7 +3,8 @@ import type { CSSProperties } from "react";
 import type { ResolvedTheme, ThemeMotif } from "./resolve-theme";
 import { createRainSprite } from "./rain-sprites";
 import { SpringBranches } from "./SpringBranches";
-import { SummerSky } from "./SummerSky";
+import { SummerSky, WinterSky } from "./SummerSky";
+import { advanceWinterIce, createWinterIce } from "./winter-ice";
 import {
   advanceSummerNight,
   createSummerNight,
@@ -143,6 +144,7 @@ export function AmbientBackground({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const layerRef = useRef<HTMLDivElement>(null);
   const springAgeRef = useRef(0);
+  const winterIceRef = useRef(createWinterIce());
   const motionPreferenceRef = useRef<MediaQueryList>();
   const pausedRef = useRef(paused);
   const synchronizedPauseRef = useRef(paused);
@@ -176,6 +178,38 @@ export function AmbientBackground({
   useEffect(() => {
     const theme = sceneTheme;
     if (theme.id !== "spring") springAgeRef.current = 0;
+    if (theme.id !== "winter") winterIceRef.current = createWinterIce();
+    const paintWinter = (staticMode: boolean) => {
+      if (theme.id !== "winter") return;
+      const ice = winterIceRef.current;
+      document.documentElement.style.setProperty(
+        "--winter-ice-age",
+        String(staticMode ? Math.max(70, ice.age) : ice.age),
+      );
+      document.documentElement.style.setProperty(
+        "--winter-icicles",
+        String(staticMode ? Math.max(0.55, ice.icicles) : ice.icicles),
+      );
+      document.documentElement.style.setProperty(
+        "--winter-snow",
+        String(
+          staticMode && theme.weatherEffect === "snow"
+            ? Math.max(0.4, ice.snow)
+            : ice.snow,
+        ),
+      );
+      layerRef.current?.style.setProperty(
+        "--winter-frost",
+        String(staticMode ? Math.max(0.38, ice.frost) : ice.frost),
+      );
+    };
+    const clearWinter = () => {
+      if (theme.id !== "winter") return;
+      document.documentElement.style.removeProperty("--winter-icicles");
+      document.documentElement.style.removeProperty("--winter-snow");
+      document.documentElement.style.removeProperty("--winter-ice-age");
+    };
+    paintWinter(true);
     const canvas = canvasRef.current;
     if (layerRef.current) layerRef.current.dataset.static = "true";
     if (
@@ -185,14 +219,14 @@ export function AmbientBackground({
       typeof window.requestAnimationFrame !== "function" ||
       typeof CanvasRenderingContext2D === "undefined"
     )
-      return;
+      return clearWinter;
     // Retain the media query across weather changes so preference events keep
     // reaching the active scene after the previous scene removes its listener.
     const reducedMotion = (motionPreferenceRef.current ??= window.matchMedia?.(
       "(prefers-reduced-motion: reduce)",
     ));
     const context = canvas.getContext("2d", { alpha: true });
-    if (!context) return;
+    if (!context) return clearWinter;
 
     const glassWeather = ["rain", "storm", "snow"].includes(theme.weatherEffect)
       ? (theme.weatherEffect as GlassWeatherKind)
@@ -241,6 +275,7 @@ export function AmbientBackground({
     let slowFrames = 0;
     let performancePaused = false;
     let disposed = false;
+    let lastWinterPaint = -1;
 
     const resize = () => {
       width = window.innerWidth;
@@ -265,7 +300,7 @@ export function AmbientBackground({
       // Holiday snow is decoration. It never changes the real weather state,
       // and rain can still form a separate small foreground weather layer.
       const count =
-        decorativeSnow || summerNight
+        decorativeSnow || summerNight || theme.id === "winter"
           ? 0
           : glassWeather
             ? width < 768
@@ -322,6 +357,24 @@ export function AmbientBackground({
     };
 
     const draw = (time: number, elapsed: number) => {
+      if (theme.id === "winter") {
+        advanceWinterIce(
+          winterIceRef.current,
+          elapsed,
+          theme.weatherEffect === "snow",
+        );
+        if (
+          elapsed === 0 ||
+          winterIceRef.current.age - lastWinterPaint >= 0.125
+        ) {
+          lastWinterPaint = winterIceRef.current.age;
+          paintWinter(Boolean(reducedMotion?.matches || performancePaused));
+          layerRef.current?.style.setProperty(
+            "--winter-cloud-drift",
+            `${(Math.sin(winterIceRef.current.age / 30) * 14).toFixed(2)}px`,
+          );
+        }
+      }
       if (theme.id === "spring" && layerRef.current) {
         springAgeRef.current += elapsed;
         layerRef.current.style.setProperty(
@@ -632,6 +685,7 @@ export function AmbientBackground({
           if (layerRef.current) layerRef.current.dataset.static = "true";
           canvas.style.visibility = "hidden";
           searchSplash?.hide();
+          paintWinter(true);
         }
       }
       if (canAnimate()) frame = requestAnimationFrame(animate);
@@ -645,6 +699,7 @@ export function AmbientBackground({
       canvas.style.visibility =
         reducedMotion?.matches || performancePaused ? "hidden" : "visible";
       if (reducedMotion?.matches || performancePaused) searchSplash?.hide();
+      paintWinter(Boolean(reducedMotion?.matches || performancePaused));
       if (layerRef.current)
         layerRef.current.dataset.static = String(
           Boolean(reducedMotion?.matches || performancePaused),
@@ -665,6 +720,7 @@ export function AmbientBackground({
     return () => {
       disposed = true;
       searchSplash?.hide();
+      clearWinter();
       synchronizeRef.current = () => undefined;
       if (frame) cancelAnimationFrame(frame);
       window.removeEventListener("resize", handleResize);
@@ -688,7 +744,7 @@ export function AmbientBackground({
   return (
     <div
       ref={layerRef}
-      className={`theme-ambient theme-ambient--${theme.weatherEffect}${festive ? ` theme-ambient--${theme.id}` : ""}`}
+      className={`theme-ambient theme-ambient--${theme.weatherEffect}${festive || theme.id === "winter" ? ` theme-ambient--${theme.id}` : ""}`}
       style={style}
       aria-hidden="true"
       data-paused={paused || !enabled}
@@ -698,6 +754,13 @@ export function AmbientBackground({
       {theme.id === "spring" && <SpringBranches />}
       {theme.id === "summer" && (
         <SummerSky
+          period={theme.period}
+          phase={theme.moonPhase ?? 0}
+          weather={theme.weatherEffect}
+        />
+      )}
+      {theme.id === "winter" && (
+        <WinterSky
           period={theme.period}
           phase={theme.moonPhase ?? 0}
           weather={theme.weatherEffect}
@@ -728,7 +791,7 @@ export function AmbientBackground({
           ))}
         </div>
       )}
-      {theme.weatherEffect === "snow" && (
+      {(theme.weatherEffect === "snow" || theme.id === "winter") && (
         <div className="theme-ambient__frost-rim" />
       )}
       {festive && <div className="theme-ambient__festive-snow" />}
