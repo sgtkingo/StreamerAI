@@ -6,8 +6,11 @@ import {
   recommendedModel,
   type AgentModel,
   type AgentModelCatalog,
-  type ReasoningEffort,
 } from "./agent-model-catalog.js";
+import {
+  ollamaReasoningEfforts,
+  ollamaThinkingValues,
+} from "./ollama-thinking.js";
 
 /** Share Ollama model discovery across the picker, selection validation and status. */
 export async function discoverOllamaModels(
@@ -44,7 +47,8 @@ export async function discoverOllamaModels(
           !/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$/.test(id)
         )
           return null;
-        let efforts: ReasoningEffort[] = ["none"];
+        let efforts = ollamaReasoningEfforts([]);
+        let maxContextTokens: number | undefined;
         try {
           const detail = await fetcher(`${config.baseUrl}/api/show`, {
             method: "POST",
@@ -57,34 +61,29 @@ export async function discoverOllamaModels(
             redirect: "manual",
           });
           if (detail.ok) {
-            const info = (await detail.json()) as {
-              thinking?: { values?: unknown };
-              capabilities?: unknown;
-            };
-            const values = Array.isArray(info.thinking?.values)
-              ? info.thinking.values
-              : [];
-            if (values.length) {
-              efforts = [
-                ...(values.includes(false) ? (["none"] as const) : []),
-                ...(["low", "medium", "high"] as const).filter((effort) =>
-                  values.includes(effort),
-                ),
-                ...(values.includes(true) && !values.includes("high")
-                  ? (["high"] as const)
-                  : []),
-              ];
-            } else if (
-              Array.isArray(info.capabilities) &&
-              info.capabilities.includes("thinking")
-            ) {
-              efforts = ["none", "high"];
-            }
+            const metadata = await detail.json();
+            efforts = ollamaReasoningEfforts(ollamaThinkingValues(metadata));
+            const info = (metadata as { model_info?: Record<string, unknown> })
+              .model_info;
+            const architecture = info?.["general.architecture"];
+            const length =
+              typeof architecture === "string"
+                ? info?.[`${architecture}.context_length`]
+                : undefined;
+            if (
+              typeof length === "number" &&
+              Number.isSafeInteger(length) &&
+              length > 0
+            )
+              maxContextTokens = length;
           }
         } catch {
-          // The model remains selectable without thinking.
+          // Keep the model selectable; reasoning controls remain unverified.
         }
-        return modelOption("ollama", id, id, efforts);
+        return {
+          ...modelOption("ollama", id, id, efforts),
+          ...(maxContextTokens ? { maxContextTokens } : {}),
+        };
       }),
     );
     const models = entries.filter((item): item is AgentModel => item !== null);
@@ -96,7 +95,7 @@ export async function discoverOllamaModels(
       source: "local",
       status: "available",
       message:
-        "Installed Ollama models. Reasoning modes are read from each model when reported by Ollama.",
+        "Installed Ollama models. Only model-reported reasoning controls are offered. Without thinking metadata, the runtime default may still reason.",
     };
   } catch {
     return fallback;

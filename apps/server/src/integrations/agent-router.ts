@@ -11,6 +11,7 @@ import type { StreamerDatabase } from "@streamer-ai/database";
 import type { RuntimeConfig } from "../runtime-config.js";
 import { LocalAgentHost, type LocalAgentName } from "./local-agent-host.js";
 import type { OllamaAgentProvider } from "./ollama-agent-provider.js";
+import { effectiveOllamaEffort } from "./ollama-thinking.js";
 import {
   CustomLocalAgent,
   parseCustomLocalAgentConfig,
@@ -48,6 +49,17 @@ export function parseAgentSelection(value: unknown): AgentSelection {
   if (!value || typeof value !== "object")
     throw new Error("Invalid agent selection.");
   const input = value as Record<string, unknown>;
+  const contextTokens = input.contextTokens;
+  if (
+    contextTokens !== undefined &&
+    (typeof contextTokens !== "number" ||
+      !Number.isInteger(contextTokens) ||
+      contextTokens < 2048 ||
+      contextTokens > 131072)
+  )
+    throw new Error(
+      "Context size must be an integer between 2048 and 131072 tokens.",
+    );
   const reasoningEffort =
     input.reasoningEffort === undefined ? "low" : input.reasoningEffort;
   if (!REASONING_EFFORTS.includes(reasoningEffort as ReasoningEffort))
@@ -60,6 +72,7 @@ export function parseAgentSelection(value: unknown): AgentSelection {
   )
     throw new Error("Invalid model ID.");
   const options = {
+    ...(contextTokens !== undefined ? { contextTokens } : {}),
     ...(model ? { model } : {}),
     reasoningEffort: reasoningEffort as ReasoningEffort,
   };
@@ -177,8 +190,43 @@ export class AgentRouter implements AgentProvider {
       return this.defaults;
     }
   }
+  contextTokens(profileId: string, fallback: number): number {
+    const selection = this.selection(profileId);
+    const requested = selection.contextTokens ?? fallback;
+    if (selection.mode !== "api" || selection.provider !== "ollama")
+      return requested;
+    const models = this.ollamaCatalogCache.get(profileId)?.catalog.models ?? [];
+    const id =
+      selection.model ??
+      recommendedModel("ollama", models, selection.reasoningEffort ?? "low");
+    return Math.min(
+      requested,
+      models.find((item) => item.id === id)?.maxContextTokens ?? requested,
+    );
+  }
   async select(profileId: string, selection: AgentSelection): Promise<void> {
     const parsed = parseAgentSelection(selection);
+    if (
+      parsed.mode === "api" &&
+      parsed.provider === "ollama" &&
+      parsed.contextTokens !== undefined
+    ) {
+      const catalog = await this.models("ollama", profileId);
+      const id =
+        parsed.model ??
+        recommendedModel(
+          "ollama",
+          catalog.models,
+          parsed.reasoningEffort ?? "low",
+        );
+      const maximum = catalog.models.find(
+        (item) => item.id === id,
+      )?.maxContextTokens;
+      if (maximum && parsed.contextTokens > maximum)
+        throw new Error(
+          `The selected model supports at most ${maximum} context tokens.`,
+        );
+    }
     if (parsed.mode !== "disabled" && parsed.mode !== "mcp" && parsed.model) {
       const catalog = await this.models(parsed.provider, profileId);
       if (catalog.status === "available") {
@@ -305,6 +353,7 @@ export class AgentRouter implements AgentProvider {
     this.database.settings.delete(agentSelectionKey(profileId));
     for (const schema of [
       "streamer_ai_discovery_candidates",
+      "streamer_ai_discovery_expansion",
       "streamer_ai_grounded_rank",
     ]) {
       for (const provider of ["codex", "claude"]) {
@@ -364,7 +413,7 @@ export class AgentRouter implements AgentProvider {
           : catalog.message,
         effectiveModel,
         effectiveReasoningEffort: option
-          ? effectiveEffort(selection.reasoningEffort ?? "low", option)
+          ? effectiveOllamaEffort(selection.reasoningEffort ?? "low", option)
           : (selection.reasoningEffort ?? "low"),
       };
     }
@@ -567,7 +616,7 @@ export class AgentRouter implements AgentProvider {
         return (this.ollama as OllamaAgentProvider).generateStructured<TOutput>(
           { ...request, model: id },
           context,
-          effectiveEffort(effort, option),
+          effectiveOllamaEffort(effort, option),
         );
       }
       if (selection.provider === "custom") {

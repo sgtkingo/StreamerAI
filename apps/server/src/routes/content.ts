@@ -253,10 +253,18 @@ export function registerContentRoutes(
       };
       reply.raw.once("close", onClose);
       try {
-        return await dependencies.core.discover(
-          DiscoveryRequestSchema.parse(request.body),
-          controller.signal,
+        const input = DiscoveryRequestSchema.parse(request.body);
+        request.log.info(
+          {
+            code: "DISCOVERY_HTTP_REQUEST",
+            discoveryRequestId: input.idempotencyKey,
+            sessionId: input.sessionId,
+            profileId: input.profileId,
+            phase: "deep",
+          },
+          "Discovery request received",
         );
+        return await dependencies.core.discover(input, controller.signal);
       } catch (error) {
         return sendDomainError(reply, error);
       } finally {
@@ -289,10 +297,18 @@ export function registerContentRoutes(
       };
       reply.raw.once("close", onClose);
       try {
-        return await dependencies.core.discoverFast(
-          DiscoveryRequestSchema.parse(request.body),
-          controller.signal,
+        const input = DiscoveryRequestSchema.parse(request.body);
+        request.log.info(
+          {
+            code: "DISCOVERY_HTTP_REQUEST",
+            discoveryRequestId: input.idempotencyKey,
+            sessionId: input.sessionId,
+            profileId: input.profileId,
+            phase: "fast",
+          },
+          "Discovery request received",
         );
+        return await dependencies.core.discoverFast(input, controller.signal);
       } catch (error) {
         return sendDomainError(reply, error);
       } finally {

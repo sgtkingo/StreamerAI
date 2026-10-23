@@ -33,13 +33,60 @@ const remoteProviders: { id: RemoteProvider; name: string }[] = [
   { id: "kimi", name: "Kimi" },
   { id: "deepseek", name: "DeepSeek" },
 ];
-const levels: AgentReasoningEffort[] = ["none", "low", "medium", "high"];
 const effortLabels: Record<AgentReasoningEffort, string> = {
   none: "No reasoning",
   low: "Light",
   medium: "Balanced",
   high: "High reasoning",
 };
+function resolveModel(catalog: AgentModelCatalog | null, model: string) {
+  const id = model || catalog?.recommendedModel;
+  return catalog?.models.find((item) => item.id === id);
+}
+function selectionEffort(selection: AgentSelection) {
+  const effective = selection.effectiveReasoningEffort;
+  return effective && effective !== "minimal"
+    ? effective
+    : selection.reasoningEffort;
+}
+
+function ContextSettings({
+  value,
+  onChange,
+  maximum,
+  effective,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  maximum?: number;
+  effective?: number;
+}) {
+  return (
+    <label className="field">
+      <span>Context window (tokens)</span>
+      <input
+        aria-label="Context window (tokens)"
+        type="number"
+        min={2048}
+        max={Math.min(maximum ?? 131072, 131072)}
+        step={1}
+        placeholder="Automatic"
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+      />
+      <small>
+        Allowed: 2048–{Math.min(maximum ?? 131072, 131072)} tokens. Leave empty
+        for Automatic
+        {effective ? ` (${effective} tokens currently)` : ""}.
+        {maximum
+          ? ` Model maximum: ${maximum} tokens.`
+          : " Model maximum is not reported."}{" "}
+        Larger windows use more memory. Includes instructions, history,
+        reasoning and the answer.
+      </small>
+    </label>
+  );
+}
 function localMode(_provider: LocalProvider): AgentSelection["mode"] {
   return "api";
 }
@@ -125,7 +172,7 @@ function ModelSettings({
   onRefresh: () => void;
 }) {
   const models = catalog?.models ?? [];
-  const selected = models.find((item) => item.id === model);
+  const selected = resolveModel(catalog, model);
   return (
     <div className="agent-backend__model-settings">
       <label className="field">
@@ -192,6 +239,7 @@ export function AgentBackendSettings({
     useState<RemoteProvider>("openai");
   const [transport, setTransport] = useState<Transport>("api");
   const [effort, setEffort] = useState<AgentReasoningEffort>("low");
+  const [contextTokens, setContextTokens] = useState("");
   const [localModel, setLocalModel] = useState("");
   const [externalModel, setExternalModel] = useState("");
   const [localSettingsOpen, setLocalSettingsOpen] = useState(false);
@@ -266,17 +314,27 @@ export function AgentBackendSettings({
       ? transport === "mcp"
       : transport === "api" && current.provider === remoteProvider);
   const model = side === "local" ? localModel : externalModel;
-  const models = catalog?.models ?? [];
-  const chosenModel = models.find((item) => item.id === model);
+  const activeCatalog = catalog?.provider === provider ? catalog : null;
+  const models = activeCatalog?.models ?? [];
+  const chosenModel = resolveModel(activeCatalog, model);
   const allowedLevels =
     provider === "custom"
       ? (["none"] as AgentReasoningEffort[])
       : chosenModel
         ? chosenModel.reasoningEfforts
-        : levels;
-  const selectedEffort = allowedLevels.includes(effort)
+        : [];
+  const selectedEffort =
+    mcp || allowedLevels.includes(effort)
+      ? effort
+      : (allowedLevels[0] ?? effort);
+  const guideAllowedLevels: AgentReasoningEffort[] =
+    guideReadyProvider === "custom"
+      ? ["none"]
+      : (discoveredModels?.ollama.find((item) => item.id === guideModelName)
+          ?.reasoningEfforts ?? []);
+  const guideSelectedEffort = guideAllowedLevels.includes(effort)
     ? effort
-    : (allowedLevels[0] ?? "low");
+    : (guideAllowedLevels[0] ?? "none");
 
   useEffect(() => {
     let mounted = true;
@@ -286,6 +344,7 @@ export function AgentBackendSettings({
       .then((status) => {
         if (!mounted) return;
         setCurrent(status);
+        setContextTokens(status.contextTokens?.toString() ?? "");
         setLoaded(true);
         if (isLocal(status)) {
           setSide("local");
@@ -300,7 +359,7 @@ export function AgentBackendSettings({
           setTransport("api");
           setRemoteProvider(status.provider as RemoteProvider);
         }
-        setEffort(status.reasoningEffort ?? "low");
+        setEffort(selectionEffort(status) ?? "low");
         setLocalModel(isLocal(status) ? (status.model ?? "") : "");
         setExternalModel(
           !isLocal(status) && status.mode === "api" ? (status.model ?? "") : "",
@@ -320,7 +379,9 @@ export function AgentBackendSettings({
   useEffect(() => {
     if (!loaded || mcp) return;
     let mounted = true;
-    setCatalog(null);
+    setCatalog((previous) =>
+      previous?.provider === provider ? previous : null,
+    );
     setModelError("");
     setLoadingModels(true);
     void api
@@ -538,6 +599,18 @@ export function AgentBackendSettings({
     onMissingKey = requestApiKey,
   ) => {
     if (
+      choice.transport !== "mcp" &&
+      contextTokens !== "" &&
+      (!Number.isInteger(Number(contextTokens)) ||
+        Number(contextTokens) < 2048 ||
+        Number(contextTokens) > 131072)
+    ) {
+      setError(
+        "Context size must be an integer between 2048 and 131072 tokens.",
+      );
+      return false;
+    }
+    if (
       choice.side === "external" &&
       choice.transport === "api" &&
       !key.trim()
@@ -589,6 +662,9 @@ export function AgentBackendSettings({
         mode,
         provider: selectedProvider,
         reasoningEffort: choice.effort,
+        ...(mode !== "mcp" && contextTokens !== ""
+          ? { contextTokens: Number(contextTokens) }
+          : {}),
         ...(choice.model && mode !== "mcp" ? { model: choice.model } : {}),
       });
       if (result.code === "CREDENTIAL_REQUIRED") {
@@ -597,12 +673,13 @@ export function AgentBackendSettings({
         return false;
       }
       setCurrent(result);
+      setContextTokens(result.contextTokens?.toString() ?? "");
       setTurnOffComplete(false);
       setSide(choice.side);
       setLocalProvider(choice.local);
       setRemoteProvider(choice.remote);
       setTransport(choice.transport);
-      setEffort(choice.effort);
+      setEffort(selectionEffort(result) ?? choice.effort);
       if (choice.side === "local") setLocalModel(choice.model ?? "");
       else if (choice.transport === "api") setExternalModel(choice.model ?? "");
       setApiKey("");
@@ -739,7 +816,12 @@ export function AgentBackendSettings({
       local: best.provider as LocalProvider,
       remote: remoteProvider,
       transport: "api",
-      effort: best.provider === "custom" ? "none" : "low",
+      effort:
+        side === "local" &&
+        best.provider === localProvider &&
+        allowedLevels.includes(selectedEffort)
+          ? selectedEffort
+          : "none",
       ...(best.provider === "custom" && customModel
         ? { model: customModel }
         : {}),
@@ -1015,7 +1097,7 @@ export function AgentBackendSettings({
           local: guideReadyProvider,
           remote: remoteProvider,
           transport: "api",
-          effort: "none",
+          effort: guideSelectedEffort,
           ...(guideModelName ? { model: guideModelName } : {}),
         })
       )
@@ -1057,7 +1139,7 @@ export function AgentBackendSettings({
           message: "No models found. Check the connection and refresh.",
         }
       : side === "local"
-        ? catalog
+        ? activeCatalog
         : null;
     const saveConnection = async () => {
       const saved =
@@ -1552,7 +1634,7 @@ export function AgentBackendSettings({
                   <ModelSettings
                     label="External"
                     model={externalModel}
-                    catalog={side === "external" ? catalog : null}
+                    catalog={side === "external" ? activeCatalog : null}
                     loading={side === "external" && loadingModels}
                     error={side === "external" ? modelError : ""}
                     onChange={(value) => {
@@ -1594,11 +1676,25 @@ export function AgentBackendSettings({
         </article>
       </div>
       <div className="agent-backend__shared">
+        {!mcp && (
+          <ContextSettings
+            value={contextTokens}
+            onChange={setContextTokens}
+            maximum={chosenModel?.maxContextTokens}
+            effective={current?.effectiveContextTokens}
+          />
+        )}
         <div className="agent-backend__effort">
           <label htmlFor="agent-effort">
             Thinking level{" "}
             <strong>
-              {mcp ? "Set in your MCP host" : effortLabels[selectedEffort]}
+              {mcp
+                ? "Set in your MCP host"
+                : allowedLevels.length
+                  ? effortLabels[selectedEffort]
+                  : loadingModels
+                    ? "Checking model…"
+                    : "Model capabilities unavailable"}
             </strong>
           </label>
           <input
@@ -1621,9 +1717,13 @@ export function AgentBackendSettings({
           <p>
             {mcp
               ? "The external MCP host chooses its own model and thinking level."
-              : allowedLevels.length <= 1
-                ? "This model does not offer a thinking setting."
-                : "Speed uses less reasoning. Quality can take longer and cost more."}
+              : !allowedLevels.length
+                ? loadingModels
+                  ? "Checking the selected model's supported thinking levels."
+                  : "Refresh models to check the selected model's supported thinking levels."
+                : allowedLevels.length <= 1
+                  ? "This model does not offer a thinking setting."
+                  : "Speed uses less reasoning. Quality can take longer and cost more."}
           </p>
         </div>
         <div className="agent-backend__shared-actions">
@@ -2101,6 +2201,21 @@ export function AgentBackendSettings({
                 )}
                 {guideStep === 2 && (
                   <>
+                    {(guideSide === "local" || guideTransport === "api") && (
+                      <ContextSettings
+                        value={contextTokens}
+                        onChange={setContextTokens}
+                        maximum={
+                          guideSide === "local" &&
+                          guideReadyProvider === "ollama"
+                            ? discoveredModels?.ollama.find(
+                                (item) => item.id === guideModelName,
+                              )?.maxContextTokens
+                            : undefined
+                        }
+                        effective={current?.effectiveContextTokens}
+                      />
+                    )}
                     <h4>
                       {guideSide === "external" && guideTransport === "api"
                         ? "What matters most?"
@@ -2164,9 +2279,37 @@ export function AgentBackendSettings({
                           </strong>
                           <p>
                             {guideSide === "local"
-                              ? "This local model chooses its own thinking behavior. No reasoning setting is available."
+                              ? guideAllowedLevels.length > 1
+                                ? "Choose from the thinking levels supported by this local model."
+                                : "This local model does not offer a thinking setting."
                               : "Your external host chooses its model and thinking level. Connect it using the MCP instructions in External Agent."}
                           </p>
+                          {guideSide === "local" &&
+                            guideAllowedLevels.length > 1 && (
+                              <label className="field">
+                                <span>
+                                  Thinking level:{" "}
+                                  {effortLabels[guideSelectedEffort]}
+                                </span>
+                                <input
+                                  aria-label="Local model thinking level"
+                                  type="range"
+                                  min="0"
+                                  max={guideAllowedLevels.length - 1}
+                                  step="1"
+                                  value={guideAllowedLevels.indexOf(
+                                    guideSelectedEffort,
+                                  )}
+                                  onChange={(event) =>
+                                    setEffort(
+                                      guideAllowedLevels[
+                                        Number(event.target.value)
+                                      ] ?? guideSelectedEffort,
+                                    )
+                                  }
+                                />
+                              </label>
+                            )}
                         </div>
                       </div>
                     )}

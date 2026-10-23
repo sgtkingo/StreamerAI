@@ -124,6 +124,115 @@ reads installed models from `/api/tags` and thinking values from `/api/show`.
 The Speed–Quality control changes model reasoning only; the established
 compact/balanced/extended discovery rulesets remain independent.
 
+Settings and the final Onboarding step expose **Context window (tokens)**.
+`PUT /api/v1/inference/selection` accepts optional integer `contextTokens`
+(2048–131072), stored with the profile's agent selection. Omitting it resets to
+Automatic: Ollama uses `INFERENCE_CONTEXT_TOKENS` (4096 by default), other
+embedded backends use an 8192-token application budget. GET and PUT responses
+include the saved `contextTokens` when set and `effectiveContextTokens`.
+Ollama model catalog entries expose `maxContextTokens` when `/api/show` reports
+`model_info[general.architecture + ".context_length"]`. The API rejects explicit
+limits above the selected or automatically recommended model's known maximum;
+runtime budgets also clamp older saved limits if that maximum changes. Missing
+metadata leaves the model maximum unknown rather than inventing one.
+The effective budget controls discovery history/candidate packing and output
+reservation, and is sent to Ollama as `options.num_ctx` on generation and
+preflight requests. Changes apply to subsequent requests without restarting.
+For remote APIs and custom endpoints this is an application prompt budget;
+it does not reconfigure the provider's physical context window. MCP hosts manage
+their own context. Larger Ollama windows can increase RAM/VRAM use; Automatic
+does not allocate the model's full advertised maximum.
+
+For Automatic model selection, Settings and Onboarding resolve the same
+recommended model before offering its thinking levels. An on/off model such as
+`qwen3.5:4b` offers only `none` and `high`, mapped to Ollama's `think:false` and
+`think:true`. A saved generic `low` preference enables thinking on an on/off
+model; the UI displays the effective level reported by the backend. Named
+thinking levels are sent only when the selected model reports them. Missing
+thinking metadata leaves the runtime default unchanged and does not prove that
+reasoning is disabled. Capability caches are scoped to the endpoint and model.
+Enabled thinking receives a separate bounded allowance of up to 3072 generated
+tokens, within the configured context and request deadline, so it does not
+consume the entire final JSON allowance.
+If a model supporting `think:false` exhausts that allowance before producing
+valid JSON, the adapter allows one direct schema repair with thinking disabled,
+using the same input and schema within the remaining deadline. It never replays
+or logs hidden thinking, never retries recursively, and does not change the saved
+effort. `DISCOVERY_AGENT_REPAIR_STARTED` and the per-call `phase`/`think` fields
+make this fallback explicit in the logs.
+
+## Grounded discovery for small models
+
+Recognizing a genre is a retrieval step, not a completed interpretation of the
+request. For a thematic request, the coordinator resolves a bounded shortlist
+of canonical titles and descriptions, then asks every model tier to select
+only IDs that fit the complete request and earlier preferences. This happens
+before media searches. The model can return an empty selection; the application
+then requests fresh title proposals instead of restoring popularity order.
+Rejected titles cannot reappear through that fallback. Unknown or duplicate
+IDs are rejected. Movies, series, and metadata providers share the retrieval
+budget, and input text is bounded to the configured context. Requests with
+genre exclusions use the proposal path to avoid treating a negative genre as a
+positive catalog filter.
+
+If the selected shortlist has no confirmed playable match, discovery makes one
+additional title-proposal pass within the original deadline. Unknown,
+unavailable, and incomplete series candidates are retained while alternatives
+are checked. Already checked canonical IDs and title aliases are excluded from
+the extra pass. Its compact schema requests only title and media kind for up
+to three candidates; it does not ask a small model to also generate years,
+acknowledgements, scores and explanations. An expansion failure preserves the
+initial results; explicit cancellation still cancels the whole request. Complete-series requests continue
+until complete playback is verified or the bounded expansion is exhausted.
+The complete deep request has a fixed budget set when it starts: 55 seconds
+with reasoning disabled, or at most 110 seconds with reasoning enabled to allow
+both model steps. Individual inference calls retain their configured timeout;
+the extra pass never resets or extends the request's deadline.
+The web proxy allows 120 seconds for API responses so it does not cancel a
+Quality request at Nginx's shorter default timeout.
+
+Server logging is controlled by `STREAMERAI_LOG_LEVEL` at startup, both locally
+and in Docker Compose. Supported levels are `trace`, `debug`, `info` (default),
+`warn`, `error`, `fatal`, and `silent` (disables server logging). Each level
+includes more severe events. `info` retains HTTP request logs and discovery
+completion summaries; `warn` retains discovery failures and other warnings/errors.
+Detailed structured `DISCOVERY_*` diagnostics require `debug` (or `trace`).
+This setting controls the server logger; Nginx access logs are separate.
+For detailed diagnosis, set `STREAMERAI_LOG_LEVEL=debug` in `.env` and run
+`docker compose up -d server` to recreate the container with the new setting.
+For a quiet release, use `STREAMERAI_LOG_LEVEL=warn` or `silent`.
+
+`discoveryRequestId` links the user's idempotency key to HTTP `reqId`, and
+`sessionId` links all events to the conversation stored in SQLite. Events record
+the catalog queries and bounded result lists, exact facts passed to grounded
+selection, selected IDs, fresh title proposals, actual Ollama model/`think`
+settings and token usage, exact Webshare search terms, file filtering and
+inspection outcomes, expansion decisions, and final availability reasons.
+Exception messages, credentials, direct playback URLs, raw user prompts, model
+responses and hidden thinking are excluded. The original request can be looked
+up in the local conversation using the correlation IDs.
+
+For a particular discovery request, PowerShell can filter the Docker logs:
+
+```powershell
+docker compose logs --no-color --since 15m server | Select-String '1792789319006-1'
+```
+
+The opt-in local quality evaluation uses the actual coordinator and installed
+`qwen3.5:4b`, with in-memory catalog and playback fixtures. It covers both
+reported English space queries, Czech/German equivalents, and expansion beyond
+an unverified Hail Mary without using app credentials or contacting
+metadata/media services. On PowerShell:
+
+```powershell
+$env:STREAMERAI_RUN_OLLAMA_EVAL = '1'
+pnpm --filter @streamer-ai/server test -- tests/ollama-discovery.integration.test.ts
+```
+
+Set `STREAMERAI_OLLAMA_EVAL_REASONING=high` to evaluate the same path with
+thinking enabled. The default is `none`; ordinary test runs skip these live
+model evaluations.
+
 Optional `STREAMERAI_CODEX_COMMAND` and `STREAMERAI_CLAUDE_COMMAND` select
 executable paths. They are passed directly to `spawn()` with an argument array
 and `shell: false`. On Windows, use a native `.exe` executable: a `.cmd` shim

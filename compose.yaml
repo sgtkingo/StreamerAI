@@ -8,6 +8,7 @@ services:
     restart: unless-stopped
     environment:
       NODE_ENV: production
+      STREAMERAI_LOG_LEVEL: ${STREAMERAI_LOG_LEVEL:-info}
       STREAMERAI_HOST: 0.0.0.0
       STREAMERAI_PORT: 4400
       STREAMERAI_DATA_DIR: /app/data

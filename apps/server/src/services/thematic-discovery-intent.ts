@@ -71,6 +71,18 @@ export function parseThematicDiscoveryIntent(
   const text = normalize(message);
   if (TITLE_SIGNALS.test(text)) return null;
 
+  // Coordinated exclusions ("no horror or romance") are not positive genre
+  // filters. Leave their full interpretation to the proposal harness.
+  const exclusion =
+    /\b(?:no|not|without|except|excluding|avoid|bez|zadn\w*|nechci|nikoli|krome|ohne|kein\w*|nicht)\b/.exec(
+      text,
+    );
+  if (
+    exclusion &&
+    GENRES.some(([, pattern]) => pattern.test(text.slice(exclusion.index)))
+  )
+    return null;
+
   const genres = GENRES.filter(([, pattern]) => pattern.test(text))
     .map(([genre]) => genre)
     .slice(0, 3);

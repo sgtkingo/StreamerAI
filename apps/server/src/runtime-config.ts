@@ -1,4 +1,5 @@
 import { loadEnvFile } from "node:process";
+import { LOG_LEVELS, type LogLevel } from "./logging.js";
 
 const DEFAULT_SERVER_PORT = 4400;
 const DEFAULT_OLLAMA_BASE_URL = "http://127.0.0.1:11434";
@@ -10,6 +11,7 @@ export interface RuntimeConfig {
     readonly host: string;
     readonly port: number;
     readonly dataDir: string;
+    readonly logLevel?: LogLevel;
   };
   readonly secrets: {
     readonly backend: "memory" | "encrypted-file";
@@ -28,6 +30,8 @@ export interface RuntimeConfig {
     readonly reasoningEffort?: "none" | "low" | "medium" | "high";
   };
   readonly agent: {
+    /** Application context budget; Ollama also receives this as num_ctx. */
+    readonly contextTokens?: number;
     readonly mode: "api" | "local" | "mcp" | "disabled";
     readonly provider:
       | "ollama"
@@ -117,6 +121,10 @@ function ollamaBaseUrl(value: string | undefined): string {
 export function readRuntimeConfig(
   env: Environment = process.env,
 ): RuntimeConfig {
+  const logLevel = env.STREAMERAI_LOG_LEVEL?.trim() || "info";
+  if (!LOG_LEVELS.includes(logLevel as LogLevel)) {
+    throw new Error(`STREAMERAI_LOG_LEVEL must be ${LOG_LEVELS.join(", ")}.`);
+  }
   const provider = nonEmptySetting(
     env.INFERENCE_PROVIDER,
     "ollama",
@@ -206,6 +214,7 @@ export function readRuntimeConfig(
         65_535,
       ),
       dataDir,
+      logLevel: logLevel as LogLevel,
     },
     secrets: {
       backend: secretBackend,

@@ -12,6 +12,16 @@ import {
 import type { RuntimeConfig } from "../runtime-config.js";
 import type { ReasoningEffort } from "./agent-model-catalog.js";
 import {
+  discoveryFailure,
+  traceDiscovery,
+  type DiscoveryDiagnosticSink,
+} from "../services/discovery-diagnostics.js";
+import {
+  ollamaThinkingValue,
+  ollamaThinkingValues,
+  type OllamaThinkingValue,
+} from "./ollama-thinking.js";
+import {
   isAbortFailure,
   ProviderRequestError,
   providerFailureForStatus,
@@ -19,6 +29,26 @@ import {
 
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 const CONNECTOR_VERSION = "0.1.0";
+const MAX_REASONING_TOKENS = 3_072;
+
+function predictionBudget(
+  request: AgentGenerationRequest,
+  config: RuntimeConfig["inference"],
+  think: OllamaThinkingValue | null,
+): number {
+  const finalTokens = Math.min(request.maxOutputTokens, config.maxOutputTokens);
+  if (think === false) return finalTokens;
+  // Ollama counts hidden thinking and final JSON against the same num_predict.
+  // Keep the configured answer allowance, reserving room for thinking separately.
+  // The estimate deliberately leaves headroom for chat-template and schema tokens.
+  const inputBytes = Buffer.byteLength(
+    JSON.stringify(request.messages) + JSON.stringify(request.outputJsonSchema),
+    "utf8",
+  );
+  const estimatedInputTokens = Math.ceil(inputBytes / 3) + 128;
+  const contextRoom = Math.max(1, config.contextTokens - estimatedInputTokens);
+  return Math.min(finalTokens + MAX_REASONING_TOKENS, contextRoom);
+}
 
 export interface OllamaFetchResponse {
   readonly ok: boolean;
@@ -42,6 +72,7 @@ export interface OllamaAgentProviderOptions {
   configForProfile?: (profileId: string) => RuntimeConfig["inference"];
   fetch?: OllamaFetch;
   now?: () => Date;
+  diagnostic?: DiscoveryDiagnosticSink;
 }
 
 function defaultFetch(
@@ -63,9 +94,10 @@ export class OllamaAgentProvider implements AgentProvider {
   readonly #configForProfile: (profileId: string) => RuntimeConfig["inference"];
   readonly #fetch: OllamaFetch;
   readonly #now: () => Date;
+  readonly #diagnostic: DiscoveryDiagnosticSink | undefined;
   readonly #thinkingValues = new Map<
     string,
-    { expires: number; values: unknown[] }
+    { expires: number; values: OllamaThinkingValue[] }
   >();
 
   constructor(options: OllamaAgentProviderOptions) {
@@ -73,6 +105,7 @@ export class OllamaAgentProvider implements AgentProvider {
     this.#configForProfile = options.configForProfile ?? (() => this.#config);
     this.#fetch = options.fetch ?? defaultFetch;
     this.#now = options.now ?? (() => new Date());
+    this.#diagnostic = options.diagnostic;
   }
 
   descriptor(): ProviderDescriptor & { family: "agent" } {
@@ -156,102 +189,190 @@ export class OllamaAgentProvider implements AgentProvider {
   ): Promise<AgentGenerationResult<TOutput>> {
     const request = AgentGenerationRequestSchema.parse(rawRequest);
     const config = this.#configForProfile(context.profileId ?? "default");
-    const think = await this.thinkingValue(
-      request.model,
+    const started = this.#now().getTime();
+    traceDiscovery(this.#diagnostic, context, "DISCOVERY_AGENT_STARTED", {
+      providerId: "ollama",
+      model: request.model,
+      schema: request.outputSchemaName,
       reasoningEffort,
-      context,
-    );
-    const body = record(
-      await this.request(
-        "/api/chat",
-        {
-          model: request.model,
-          messages: request.messages,
-          stream: false,
-          think,
-          format: request.outputJsonSchema,
-          keep_alive: "5m",
-          options: {
-            num_ctx: config.contextTokens,
-            num_predict: Math.min(
-              request.maxOutputTokens,
-              config.maxOutputTokens,
-            ),
-            temperature: request.temperature,
-          },
-        },
-        context,
-      ),
-    );
-    const message = record(body?.message);
-    if (typeof message?.content !== "string") {
-      throw new ProviderRequestError("ollama", "invalid-response", true);
-    }
-    let output: TOutput;
+    });
     try {
-      output = JSON.parse(message.content) as TOutput;
-    } catch {
-      throw new ProviderRequestError("ollama", "invalid-response", true);
-    }
-    return {
-      output,
-      model: typeof body?.model === "string" ? body.model : request.model,
-      finishReason:
-        body?.done === false
-          ? "length"
-          : body?.done_reason === "load"
-            ? "failed"
-            : "completed",
-      inputTokens:
+      const think = await this.thinkingValue(
+        request.model,
+        reasoningEffort,
+        context,
+      );
+      const finalTokens = Math.min(
+        request.maxOutputTokens,
+        config.maxOutputTokens,
+      );
+      const call = async (
+        wireThink: OllamaThinkingValue | null,
+        phase: "initial" | "schema-repair",
+        numPredict: number,
+      ) => {
+        const callStarted = this.#now().getTime();
+        traceDiscovery(this.#diagnostic, context, "DISCOVERY_AGENT_OPTIONS", {
+          providerId: "ollama",
+          model: request.model,
+          schema: request.outputSchemaName,
+          phase,
+          reasoningEffort,
+          think: wireThink,
+          contextTokens: config.contextTokens,
+          answerTokens: finalTokens,
+          numPredict,
+        });
+        const body = record(
+          await this.request(
+            "/api/chat",
+            {
+              model: request.model,
+              messages: request.messages,
+              stream: false,
+              think: wireThink,
+              format: request.outputJsonSchema,
+              keep_alive: "5m",
+              options: {
+                num_ctx: config.contextTokens,
+                num_predict: numPredict,
+                temperature: request.temperature,
+              },
+            },
+            context,
+          ),
+        );
+        traceDiscovery(this.#diagnostic, context, "DISCOVERY_AGENT_RESPONSE", {
+          providerId: "ollama",
+          model: typeof body?.model === "string" ? body.model : request.model,
+          schema: request.outputSchemaName,
+          phase,
+          durationMs: Math.max(0, this.#now().getTime() - callStarted),
+          done: body?.done === true,
+          doneReason:
+            typeof body?.done_reason === "string" ? body.done_reason : null,
+          inputTokens:
+            typeof body?.prompt_eval_count === "number"
+              ? body.prompt_eval_count
+              : null,
+          outputTokens:
+            typeof body?.eval_count === "number" ? body.eval_count : null,
+        });
+        return body;
+      };
+      const parse = (body: Record<string, unknown> | null): TOutput => {
+        const message = record(body?.message);
+        if (typeof message?.content !== "string")
+          throw new Error("Invalid structured response.");
+        return JSON.parse(message.content) as TOutput;
+      };
+      let body = await call(
+        think,
+        "initial",
+        predictionBudget(request, config, think),
+      );
+      let inputTokens =
         typeof body?.prompt_eval_count === "number"
           ? body.prompt_eval_count
-          : null,
-      outputTokens:
-        typeof body?.eval_count === "number" ? body.eval_count : null,
-      provenance: {
+          : null;
+      let outputTokens =
+        typeof body?.eval_count === "number" ? body.eval_count : null;
+      let output: TOutput;
+      try {
+        output = parse(body);
+      } catch {
+        // A truncated hidden-thinking stream contains no usable final JSON.
+        // One format repair can still answer from the original request, without
+        // exposing or replaying hidden thinking or changing the saved effort.
+        const remainingMs =
+          Date.parse(context.deadlineAt) - this.#now().getTime();
+        if (
+          body?.done_reason !== "length" ||
+          think === false ||
+          remainingMs < 1_000 ||
+          (await this.thinkingValue(request.model, "none", context)) !== false
+        )
+          throw new ProviderRequestError("ollama", "invalid-response", true);
+        traceDiscovery(
+          this.#diagnostic,
+          context,
+          "DISCOVERY_AGENT_REPAIR_STARTED",
+          {
+            providerId: "ollama",
+            model: request.model,
+            schema: request.outputSchemaName,
+            reason: "thinking-exhausted-before-json",
+            think: false,
+            remainingMs,
+          },
+        );
+        body = await call(false, "schema-repair", finalTokens);
+        inputTokens =
+          inputTokens === null || typeof body?.prompt_eval_count !== "number"
+            ? null
+            : inputTokens + body.prompt_eval_count;
+        outputTokens =
+          outputTokens === null || typeof body?.eval_count !== "number"
+            ? null
+            : outputTokens + body.eval_count;
+        try {
+          output = parse(body);
+        } catch {
+          throw new ProviderRequestError("ollama", "invalid-response", true);
+        }
+      }
+      return {
+        output,
+        model: typeof body?.model === "string" ? body.model : request.model,
+        finishReason:
+          body?.done === false || body?.done_reason === "length"
+            ? "length"
+            : body?.done_reason === "load"
+              ? "failed"
+              : "completed",
+        inputTokens,
+        outputTokens,
+        provenance: {
+          providerId: "ollama",
+          retrievedAt: this.#now().toISOString(),
+          connectorVersion: CONNECTOR_VERSION,
+          confidence: 1,
+          validationState: "unverified",
+          expiresAt: null,
+        },
+      };
+    } catch (error) {
+      traceDiscovery(this.#diagnostic, context, "DISCOVERY_AGENT_FAILED", {
         providerId: "ollama",
-        retrievedAt: this.#now().toISOString(),
-        connectorVersion: CONNECTOR_VERSION,
-        confidence: 1,
-        validationState: "unverified",
-        expiresAt: null,
-      },
-    };
+        model: request.model,
+        schema: request.outputSchemaName,
+        durationMs: Math.max(0, this.#now().getTime() - started),
+        failure: discoveryFailure(error),
+      });
+      throw error;
+    }
   }
 
   private async thinkingValue(
     model: string,
     effort: ReasoningEffort,
     context: ProviderContext,
-  ): Promise<boolean | string> {
-    if (effort === "none") return false;
-    const cached = this.#thinkingValues.get(model);
+  ): Promise<OllamaThinkingValue | null> {
+    const config = this.#configForProfile(context.profileId ?? "default");
+    const cacheKey = JSON.stringify([config.baseUrl, model]);
+    const cached = this.#thinkingValues.get(cacheKey);
     let values =
       cached && cached.expires > this.#now().getTime() ? cached.values : null;
     if (!values) {
-      try {
-        const details = record(
-          await this.request("/api/show", { model }, context),
-        );
-        const thinking = record(details?.thinking);
-        values = Array.isArray(thinking?.values) ? thinking.values : [];
-        if (
-          !values.length &&
-          Array.isArray(details?.capabilities) &&
-          details.capabilities.includes("thinking")
-        )
-          values = [false, true];
-      } catch {
-        values = [];
-      }
-      this.#thinkingValues.set(model, {
+      values = ollamaThinkingValues(
+        await this.request("/api/show", { model }, context),
+      );
+      this.#thinkingValues.set(cacheKey, {
         expires: this.#now().getTime() + 300_000,
         values,
       });
     }
-    if (values.includes(effort)) return effort;
-    if (effort !== "low" && values.includes(true)) return true;
-    return false;
+    return ollamaThinkingValue(values, effort);
   }
 
   private async request(

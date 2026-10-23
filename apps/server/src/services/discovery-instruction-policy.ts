@@ -94,13 +94,14 @@ export function discoveryInstructionPolicy(
     tier === "compact" ? 0.3 : tier === "balanced" ? 0.4 : 0.5;
   const shared = [
     `Suggest ${candidateCount} distinct real films or series for this ${options.locale} user.`,
-    "Use exact, correctly spelled title names. If unsure of the year, use null.",
-    "If the user asks for a complete series, suggest concluded series; the application checks episode coverage.",
-    "Keep people empty unless the user explicitly names an actor, director or creator. If named, every suggestion must feature that person.",
-    "If a quick-search title exactly matches a title named by the user, include it.",
-    "Avoid titles the user rejected or already watched.",
-    "Do not claim a title is available or that every episode is present.",
-    "Use the user's language for the acknowledgement and short reasons. Return only JSON matching the schema.",
+    "Match the WHOLE request: setting, themes, mood and exclusions, not only genre. Apply the latest correction first.",
+    "Use exact title names; use null for uncertain years.",
+    "For complete series, suggest concluded series; episode coverage is checked separately.",
+    "Keep people empty unless the user explicitly names an actor, director or creator. If named, every suggestion must feature them.",
+    "Include an exact quick-search hit for a named title.",
+    "Avoid rejected or watched titles.",
+    "Never claim availability or full episode coverage.",
+    "Write acknowledgement and reasons in the user's language; return schema JSON.",
   ];
   const instruction =
     tier === "compact"

@@ -59,6 +59,31 @@ export interface CreateAppLoggerOptions {
   destination?: DestinationStream;
 }
 
+export const LOG_LEVELS = [
+  "trace",
+  "debug",
+  "info",
+  "warn",
+  "error",
+  "fatal",
+  "silent",
+] as const;
+export type LogLevel = (typeof LOG_LEVELS)[number];
+
+/** Keep detailed searches out of normal release logs. */
+export function logDiscoveryEvent(
+  logger: Pick<Logger, "debug" | "info" | "warn">,
+  event: { code: string } & Record<string, unknown>,
+): void {
+  if (event.code === "DISCOVERY_FAILED") {
+    logger.warn(event, "Discovery failed");
+  } else if (event.code === "DISCOVERY_COMPLETED") {
+    logger.info(event, "Discovery completed");
+  } else {
+    logger.debug(event, "Discovery trace");
+  }
+}
+
 export function createAppLogger({
   level = "info",
   destination,

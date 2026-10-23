@@ -23,6 +23,10 @@ import { randomUUID } from "node:crypto";
 import { ProviderRequestError } from "./provider-http.js";
 import { WebshareClient, type WebshareFileInfo } from "./webshare-client.js";
 import type { PlaybackTicketInput } from "../services/playback-ticket-store.js";
+import {
+  traceDiscovery,
+  type DiscoveryDiagnosticSink,
+} from "../services/discovery-diagnostics.js";
 
 const CONNECTOR_VERSION = "0.1.0";
 
@@ -33,6 +37,7 @@ export interface WebshareMediaProviderOptions {
   /** Reads verified audio and playable subtitle tracks after the source check. */
   probeMedia?: (directUrl: string) => Promise<PlaybackMediaInfo>;
   now?: () => Date;
+  diagnostic?: DiscoveryDiagnosticSink;
 }
 
 function provenance(retrievedAt: string) {
@@ -95,6 +100,7 @@ function isVideoType(type: string | null): boolean {
 
 /** Deterministic media adapter; it never exposes WST or a Webshare direct URL. */
 export class WebshareMediaProvider implements MediaProvider {
+  readonly #diagnostic: DiscoveryDiagnosticSink | undefined;
   readonly #client: WebshareClient;
   readonly #issuePlaybackTicket: WebshareMediaProviderOptions["issuePlaybackTicket"];
   readonly #probeMedia: WebshareMediaProviderOptions["probeMedia"];
@@ -112,6 +118,7 @@ export class WebshareMediaProvider implements MediaProvider {
   >();
 
   constructor(options: WebshareMediaProviderOptions) {
+    this.#diagnostic = options.diagnostic;
     this.#client = options.client;
     this.#issuePlaybackTicket = options.issuePlaybackTicket;
     this.#probeMedia = options.probeMedia;
@@ -179,6 +186,12 @@ export class WebshareMediaProvider implements MediaProvider {
     const query = `${request.originalTitle ?? request.title}${
       episode || request.year === null ? "" : ` ${request.year}`
     }${episode}`;
+    traceDiscovery(this.#diagnostic, context, "DISCOVERY_PROVIDER_SEARCH", {
+      providerId: "webshare",
+      titleId: request.titleId,
+      query,
+      limit: request.limit,
+    });
     const result = await this.#client
       .forProfile(context.profileId ?? "default")
       .search({ query, limit: request.limit }, context.signal);

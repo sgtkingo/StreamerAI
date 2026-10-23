@@ -29,11 +29,7 @@ import { LocalMediaProvider } from "./integrations/local-media-provider.js";
 import { OllamaAgentProvider } from "./integrations/ollama-agent-provider.js";
 import { discoverOllamaModels } from "./integrations/ollama-model-catalog.js";
 import { discoveryTierForAgent } from "./integrations/agent-model-catalog.js";
-import {
-  AgentRouter,
-  agentSelectionKey,
-  parseAgentSelection,
-} from "./integrations/agent-router.js";
+import { AgentRouter } from "./integrations/agent-router.js";
 import { StreamerToolService } from "./mcp/streamer-tools.js";
 import { LocalAgentHost } from "./integrations/local-agent-host.js";
 import { CustomLocalAgent } from "./integrations/custom-local-agent.js";
@@ -48,7 +44,7 @@ import {
   type ManualAgentConfig,
 } from "./integrations/manual-agent-config.js";
 import { AdapterRegistry } from "./integrations/provider-registry.js";
-import { createAppLogger } from "./logging.js";
+import { createAppLogger, logDiscoveryEvent } from "./logging.js";
 import { registerSystemRoutes } from "./routes/system.js";
 import { registerContentRoutes } from "./routes/content.js";
 import { registerInferenceRoutes } from "./routes/inference.js";
@@ -195,11 +191,10 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
     database = openStreamerDatabase({ filename, clock: now });
   }
   const activeInferenceConfig = { ...runtimeConfig.inference };
-  const agentSelectionDatabase = database;
   const profileInferenceConfigs = new Map<string, RuntimeConfig["inference"]>();
   const configForProfile = (profileId: string) => {
     const cached = profileInferenceConfigs.get(profileId);
-    if (cached) return selectedOllamaModel(profileId, cached);
+    if (cached) return selectedOllamaConfig(profileId, cached);
     const config = { ...runtimeConfig.inference };
     const stored = database.settings.get<unknown>(
       manualAgentSettingKey(profileId),
@@ -212,26 +207,20 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
       }
     }
     profileInferenceConfigs.set(profileId, config);
-    return selectedOllamaModel(profileId, config);
+    return selectedOllamaConfig(profileId, config);
   };
-  function selectedOllamaModel(
+  function selectedOllamaConfig(
     profileId: string,
     config: RuntimeConfig["inference"],
   ): RuntimeConfig["inference"] {
-    try {
-      const saved = agentSelectionDatabase.settings.get<unknown>(
-        agentSelectionKey(profileId),
-      );
-      if (saved === null) return config;
-      const selection = parseAgentSelection(saved);
-      return selection.mode === "api" &&
-        selection.provider === "ollama" &&
-        selection.model
-        ? { ...config, model: selection.model }
-        : config;
-    } catch {
-      return config;
-    }
+    const selection = agent.selection(profileId);
+    return selection.mode === "api" && selection.provider === "ollama"
+      ? {
+          ...config,
+          ...(selection.model ? { model: selection.model } : {}),
+          contextTokens: agent.contextTokens(profileId, config.contextTokens),
+        }
+      : config;
   }
   const isManualAgent = (profileId: string) =>
     database.settings.get<unknown>(manualAgentSettingKey(profileId)) !== null;
@@ -270,6 +259,7 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
       issuePlaybackTicket: (input) => playbackTicketStore.issue(input),
       probeMedia: (directUrl) => playbackMediaEngine.probe(directUrl),
       now,
+      diagnostic: (event) => logDiscoveryEvent(app.log, event),
     }),
     new LocalMediaProvider(
       localMediaLibrary,
@@ -286,6 +276,7 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
     config: activeInferenceConfig,
     configForProfile,
     now,
+    diagnostic: (event) => logDiscoveryEvent(app.log, event),
   });
   const remoteApi = new RemoteApiAgent(
     stores.secretStore,
@@ -324,7 +315,7 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
               selection.reasoningEffort,
             ) ??
             selection.provider,
-          contextTokens: 8192,
+          contextTokens: selection.contextTokens ?? 8192,
           maxOutputTokens: 1024,
           discoveryTier: discoveryTierForAgent(
             selection.provider,
@@ -417,6 +408,11 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
           loadEpisodeCandidates,
           saveEpisodeCandidate,
           now,
+          diagnostic: (event) => logDiscoveryEvent(app.log, event),
+          discoveryBudgetMsForProfile: (profileId) =>
+            (agent.selection(profileId).reasoningEffort ?? "low") === "none"
+              ? 55_000
+              : 110_000,
         })
       : undefined);
   const core = new StreamerCore(database, now, contentProvider);
@@ -431,7 +427,9 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
     options.logger === false
       ? Fastify({ logger: false, bodyLimit: 64 * 1024 })
       : Fastify({
-          loggerInstance: options.logger ?? createAppLogger(),
+          loggerInstance:
+            options.logger ??
+            createAppLogger({ level: runtimeConfig.server.logLevel }),
           bodyLimit: 64 * 1024,
         });
 

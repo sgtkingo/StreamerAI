@@ -80,6 +80,11 @@ describe("thematic discovery intent", () => {
       "A horror series",
       "A romantic series",
       "A thriller series",
+      "A sci-fi movie without horror",
+      "Some sci-fi with no horror or romance",
+      "Sci-fi without any boring horror",
+      "Sci-fi bez hororu",
+      "Ein Sci-Fi-Film ohne Horror",
     ]) {
       expect(parseThematicDiscoveryIntent(message)).toBeNull();
     }

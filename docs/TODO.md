@@ -167,11 +167,12 @@ Proved analýzu nasazení a proveditelnost.
 
 Zkontroluj integraci a napoj ji na Settings a Onboarding. U MCP i API je důležitá jednoduchost a přehlednost pro uživatele. Výběr modelů by měl být automatický (voleny by měli být lehké/rychlé levné modely, jako třeba Terra - Light nebo Medium). Uživatel by měl míát možnost kontroly nad úrovni přemýšlení modelu i nad jeho výběrem: v základu jen posuvník mezi "Speed" (no reasoning) a "Quality" (High Reasoning), expert režim otevře konkterétní výběr konkterétního dostupného modelu a modu.
 
-- Databáze se ted staví per-user: co kdyby si uživatelé uměli sdílet DB?  Tzn, když už uživatel ověří že je to správný zdroj, měla by se tato informace nasdílet i zbytku. Taková komuniktní DB
+- Databáze se ted staví per-user: co kdyby si uživatelé uměli sdílet DB?  Tzn, když už uživatel ověří že je to správný zdroj, měla by se tato informace nasdílet i zbytku. Taková komuniktní DB.
 
 - Hellspy adapter jako stream source
 
 - DONE: "Local folder or drive" nenamountuje lokální složku, třeba "D:\Download" - hlásí "Open StreamerAI on the home server to use Select folder, or enter the server path manually." - při lokálním nasazení to bude OK
 
-- Musíme zjistit proč "some scify from space with spaceships" a "some scify from space" vyhazuje hned instatně (bez uvažování, zdá se) pokaždé to samé - Spider-Man: Brand New Day - což ení správné chování. Až na opravný dotaz to agent opraví. Také zda je posuvník intenzity přemýšlení opavdu napojený na vybraný model a zda něco ovlivuje - také máme nekonzistenci, v Onboardingu když vyberu lokální Ollamu, tak mi posvník umožní vybrat jen "
+- Musíme zjistit proč "some scify from space with spaceships" a "some scify from space" vyhazuje hned instatně (bez uvažování, zdá se) pokaždé to samé - Spider-Man: Brand New Day - což ení správné chování. Až na opravný dotaz to agent opraví. Používáme opravdu malý lokální model, měli bychom mu vytvořit aspon vhodný harness aby byl dobrý asistent výběru filmů.
+Také zda je posuvník intenzity přemýšlení opavdu napojený na vybraný model a zda něco ovlivuje - také máme nekonzistenci, v Onboardingu když vyberu lokální Ollamu, tak mi posvník umožní vybrat jen "
 No reasoning" a "High reasoning", v Setting ale posuvník umožnuje u téhož modelu vbírat i Light a Balanced. 

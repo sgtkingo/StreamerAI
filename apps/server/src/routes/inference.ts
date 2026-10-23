@@ -269,14 +269,22 @@ export function registerInferenceRoutes(
           message: "This profile is not available.",
         },
       });
-    return (
-      dependencies.agentRouter?.status(profileId) ?? {
-        mode: "api",
-        provider: "ollama",
-        available: true,
-        code: "CONFIGURED",
-      }
-    );
+    const status = await (dependencies.agentRouter?.status(profileId) ?? {
+      mode: "api",
+      provider: "ollama",
+      available: true,
+      code: "CONFIGURED",
+    });
+    return {
+      ...status,
+      effectiveContextTokens: dependencies.agentRouter?.contextTokens(
+        profileId,
+        status.provider === "ollama"
+          ? (dependencies.configForProfile?.(profileId) ?? dependencies.config)
+              .contextTokens
+          : 8192,
+      ),
+    };
   });
 
   app.put("/api/v1/inference/selection", async (request, reply) => {
@@ -287,6 +295,7 @@ export function registerInferenceRoutes(
           provider?: unknown;
           model?: unknown;
           reasoningEffort?: unknown;
+          contextTokens?: unknown;
         }
       | undefined;
     const profileId = requestProfileId(input?.profileId);
@@ -325,10 +334,21 @@ export function registerInferenceRoutes(
         profileId,
         mode: selection.mode,
         provider: selection.provider,
+        contextTokens: selection.contextTokens ?? null,
       },
       "Selected agent backend changed",
     );
-    return dependencies.agentRouter.status(profileId);
+    const status = await dependencies.agentRouter.status(profileId);
+    return {
+      ...status,
+      effectiveContextTokens: dependencies.agentRouter.contextTokens(
+        profileId,
+        status.provider === "ollama"
+          ? (dependencies.configForProfile?.(profileId) ?? dependencies.config)
+              .contextTokens
+          : 8192,
+      ),
+    };
   });
 
   app.put("/api/v1/inference/api-credential", async (request, reply) => {

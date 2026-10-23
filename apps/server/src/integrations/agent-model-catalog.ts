@@ -10,6 +10,7 @@ export const REASONING_EFFORTS: readonly ReasoningEffort[] = [
 ];
 
 export interface AgentModel {
+  maxContextTokens?: number;
   id: string;
   label: string;
   reasoningEfforts: ReasoningEffort[];

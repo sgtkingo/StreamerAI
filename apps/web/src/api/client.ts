@@ -77,6 +77,7 @@ export type AgentBackend =
   | "deepseek";
 export type AgentReasoningEffort = "none" | "low" | "medium" | "high";
 export interface AgentModelOption {
+  maxContextTokens?: number;
   id: string;
   label: string;
   reasoningEfforts: AgentReasoningEffort[];
@@ -90,6 +91,8 @@ export interface AgentModelCatalog {
   message: string;
 }
 export interface AgentSelection {
+  contextTokens?: number;
+  effectiveContextTokens?: number;
   mode: "api" | "local" | "mcp" | "disabled";
   provider: AgentBackend;
   model?: string;
@@ -244,6 +247,7 @@ export interface StreamerApi {
     reasoningEffort?: AgentReasoningEffort,
   ): Promise<AgentModelCatalog>;
   setAgentSelection(input: {
+    contextTokens?: number;
     profileId?: string;
     mode: AgentSelection["mode"];
     provider: AgentBackend;

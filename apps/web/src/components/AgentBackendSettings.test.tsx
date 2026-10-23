@@ -109,7 +109,62 @@ function createApi(mode: "api" | "mcp" | "disabled" = "api") {
   } as unknown as StreamerApi;
 }
 
+function useBinaryLocalModels(api: StreamerApi) {
+  vi.mocked(api.getAgentModels).mockImplementation(async (provider) => ({
+    provider,
+    models: [
+      {
+        id: "qwen3.5:4b",
+        label: "Qwen",
+        reasoningEfforts: ["none", "high"],
+      },
+      { id: "fixed-model", label: "Fixed model", reasoningEfforts: ["none"] },
+    ],
+    recommendedModel: "qwen3.5:4b",
+    source: "local",
+    status: "available",
+    message: "Available",
+  }));
+}
+
 describe("AgentBackendSettings", () => {
+  it("loads, saves and resets the context limit in Settings", async () => {
+    const api = createApi();
+    vi.mocked(api.getAgentSelection).mockResolvedValue({
+      mode: "api",
+      provider: "ollama",
+      reasoningEffort: "low",
+      available: true,
+      code: "CONFIGURED",
+      message: "Ready",
+      contextTokens: 8192,
+      effectiveContextTokens: 8192,
+    });
+    const user = userEvent.setup();
+    render(<AgentBackendSettings api={api} profileId="viewer-2" />);
+    const context = await screen.findByRole("spinbutton", {
+      name: "Context window (tokens)",
+    });
+    await waitFor(() => expect(context).toHaveValue(8192));
+    await user.clear(context);
+    await user.type(context, "16384");
+    const local = screen
+      .getByRole("heading", { name: "Local Agent" })
+      .closest("article")!;
+    await user.click(within(local).getByRole("button", { name: "Active" }));
+    await waitFor(() =>
+      expect(api.setAgentSelection).toHaveBeenLastCalledWith(
+        expect.objectContaining({ contextTokens: 16384 }),
+      ),
+    );
+    await user.clear(context);
+    await user.click(within(local).getByRole("button", { name: "Active" }));
+    await waitFor(() => expect(api.setAgentSelection).toHaveBeenCalledTimes(2));
+    expect(
+      vi.mocked(api.setAgentSelection).mock.lastCall?.[0],
+    ).not.toHaveProperty("contextTokens");
+  });
+
   it("shows two cards, persists a single API agent and its key", async () => {
     const api = createApi();
     const changed = vi.fn();
@@ -227,6 +282,144 @@ describe("AgentBackendSettings", () => {
     );
   });
 
+  it.each([false, true])(
+    "uses the automatic model's actual thinking levels (onboarding: %s)",
+    async (guideAtTop) => {
+      const api = createApi();
+      useBinaryLocalModels(api);
+      const user = userEvent.setup();
+      render(
+        <AgentBackendSettings
+          api={api}
+          profileId="default"
+          guideAtTop={guideAtTop}
+        />,
+      );
+      const slider = screen.getByRole("slider", { name: "Thinking level" });
+      await waitFor(() => expect(slider).toHaveAttribute("max", "1"));
+      expect(slider).toHaveValue("0");
+      const local = screen
+        .getByRole("heading", { name: "Local Agent" })
+        .closest("article")!;
+      await user.click(within(local).getByRole("button", { name: "Settings" }));
+      expect(
+        within(local).getByText("Supported thinking: none, high."),
+      ).toBeInTheDocument();
+      await user.selectOptions(
+        within(local).getByLabelText("Local model"),
+        "fixed-model",
+      );
+      expect(slider).toHaveAttribute("max", "0");
+      expect(slider).toBeDisabled();
+      await user.selectOptions(within(local).getByLabelText("Local model"), "");
+      expect(slider).toHaveAttribute("max", "1");
+      fireEvent.change(slider, { target: { value: "1" } });
+      expect(screen.getByText("High reasoning")).toBeInTheDocument();
+      await user.click(
+        screen.getByRole("button", { name: "Save agent preference" }),
+      );
+      await waitFor(() =>
+        expect(api.setAgentSelection).toHaveBeenCalledWith({
+          profileId: "default",
+          mode: "api",
+          provider: "ollama",
+          reasoningEffort: "high",
+        }),
+      );
+      expect(slider).toHaveAttribute("max", "1");
+      expect(slider).toHaveValue("1");
+    },
+  );
+
+  it("displays and saves effective high reasoning for a legacy low setting", async () => {
+    const api = createApi();
+    useBinaryLocalModels(api);
+    vi.mocked(api.getAgentSelection).mockResolvedValue({
+      mode: "api",
+      provider: "ollama",
+      reasoningEffort: "low",
+      effectiveReasoningEffort: "high",
+      available: true,
+      code: "CONFIGURED",
+      message: "Ready",
+    });
+    vi.mocked(api.setAgentSelection).mockImplementation(async (input) => ({
+      ...input,
+      reasoningEffort: "low",
+      effectiveReasoningEffort: "high",
+      available: true,
+      code: "CONFIGURED",
+      message: "Saved",
+    }));
+    const user = userEvent.setup();
+    render(<AgentBackendSettings api={api} profileId="default" />);
+    const slider = screen.getByRole("slider", { name: "Thinking level" });
+    await waitFor(() => expect(slider).toHaveAttribute("max", "1"));
+    expect(slider).toHaveValue("1");
+    expect(screen.getByText("High reasoning")).toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: "Save agent preference" }),
+    );
+    expect(
+      await screen.findByText("Agent preference saved."),
+    ).toBeInTheDocument();
+    expect(api.setAgentSelection).toHaveBeenCalledWith({
+      profileId: "default",
+      mode: "api",
+      provider: "ollama",
+      reasoningEffort: "high",
+    });
+    expect(slider).toHaveValue("1");
+    expect(screen.getByText("High reasoning")).toBeInTheDocument();
+  });
+
+  it.each(["none", "high"] as const)(
+    "preserves the displayed %s thinking level during automatic local activation",
+    async (reasoningEffort) => {
+      const api = createApi();
+      useBinaryLocalModels(api);
+      vi.mocked(api.getAgentSelection).mockResolvedValue({
+        mode: "api",
+        provider: "ollama",
+        reasoningEffort,
+        effectiveReasoningEffort: reasoningEffort,
+        available: true,
+        code: "CONFIGURED",
+        message: "Ready",
+      });
+      const user = userEvent.setup();
+      render(<AgentBackendSettings api={api} profileId="default" />);
+      await waitFor(() =>
+        expect(
+          screen.getByRole("slider", { name: "Thinking level" }),
+        ).toHaveAttribute("max", "1"),
+      );
+      await user.click(screen.getByRole("button", { name: "Auto" }));
+      await waitFor(() =>
+        expect(api.setAgentSelection).toHaveBeenCalledWith({
+          profileId: "default",
+          mode: "api",
+          provider: "ollama",
+          reasoningEffort,
+        }),
+      );
+    },
+  );
+
+  it("does not advertise unsupported thinking levels when model discovery fails", async () => {
+    const api = createApi();
+    vi.mocked(api.getAgentModels).mockRejectedValue(
+      new Error("Ollama unavailable"),
+    );
+    render(<AgentBackendSettings api={api} profileId="default" />);
+    expect(
+      await screen.findByText("Model capabilities unavailable"),
+    ).toBeInTheDocument();
+    const slider = screen.getByRole("slider", { name: "Thinking level" });
+    expect(slider).toBeDisabled();
+    expect(slider).toHaveAttribute("max", "0");
+  });
+
   it("keeps separate model choices in Local and External Settings", async () => {
     const api = createApi();
     const user = userEvent.setup();
@@ -304,8 +497,23 @@ describe("AgentBackendSettings", () => {
     expect(api.discoverLocalAgents).toHaveBeenCalledWith("viewer-2");
     await user.click(screen.getByRole("button", { name: /Next/ }));
     expect(
-      screen.getByText(/This local model chooses its own thinking behavior/),
+      screen.getByText(
+        /Choose from the thinking levels supported by this local model/,
+      ),
     ).toBeInTheDocument();
+    fireEvent.change(
+      screen.getByRole("slider", { name: "Local model thinking level" }),
+      {
+        target: { value: "3" },
+      },
+    );
+    const guide = screen.getByRole("dialog", { name: "Agent choice guide" });
+    await user.type(
+      within(guide).getByRole("spinbutton", {
+        name: "Context window (tokens)",
+      }),
+      "8192",
+    );
     await user.click(
       screen.getByRole("button", { name: "Apply recommendation" }),
     );
@@ -315,7 +523,8 @@ describe("AgentBackendSettings", () => {
           profileId: "viewer-2",
           mode: "api",
           provider: "ollama",
-          reasoningEffort: "none",
+          reasoningEffort: "high",
+          contextTokens: 8192,
         }),
       ),
     );

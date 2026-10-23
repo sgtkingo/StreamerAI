@@ -7,6 +7,8 @@ import type {
   ProviderContext,
 } from "@streamer-ai/contracts";
 import { AgentRouter } from "../src/integrations/agent-router.js";
+import { OllamaAgentProvider } from "../src/integrations/ollama-agent-provider.js";
+import { discoverOllamaModels } from "../src/integrations/ollama-model-catalog.js";
 import {
   RemoteApiAgent,
   remoteApiSecretKey,
@@ -296,6 +298,143 @@ describe("agent model discovery and preferences", () => {
     expect(unavailable.statusCode).toBe(400);
   });
 
+  it("offers only the thinking modes reported by each local model", async () => {
+    const details: Record<string, unknown> = {
+      binary: { thinking: { values: [false, true] } },
+      levels: { thinking: { values: ["low", "medium", "high"] } },
+      always: { thinking: { values: [true] } },
+      never: { thinking: { values: [false] } },
+      legacy: { capabilities: ["completion", "thinking"] },
+      unknown: {},
+    };
+    const config = {
+      provider: "ollama" as const,
+      baseUrl: "http://127.0.0.1:11434",
+      model: "binary",
+      minimumVersion: "0.5.0",
+      contextTokens: 4096,
+      maxOutputTokens: 128,
+      timeoutMs: 1000,
+    };
+    const catalog = await discoverOllamaModels(async (url, init) => {
+      const payload = url.endsWith("/api/tags")
+        ? { models: Object.keys(details).map((name) => ({ name })) }
+        : details[JSON.parse(String(init.body)).model];
+      return new Response(JSON.stringify(payload), { status: 200 });
+    }, config);
+    expect(
+      Object.fromEntries(
+        catalog.models.map((item) => [item.id, item.reasoningEfforts]),
+      ),
+    ).toEqual({
+      binary: ["none", "high"],
+      levels: ["low", "medium", "high"],
+      always: ["high"],
+      never: ["none"],
+      legacy: ["none", "high"],
+      unknown: ["none"],
+    });
+  });
+
+  it.each([
+    { effort: "none", effective: "none", think: false },
+    { effort: "low", effective: "high", think: true },
+    { effort: "high", effective: "high", think: true },
+  ] as const)(
+    "uses the same automatic Ollama model and effective $effort control in status and chat",
+    async ({ effort, effective, think }) => {
+      const database = openStreamerDatabase({ filename: ":memory:" });
+      const config = {
+        provider: "ollama" as const,
+        baseUrl: "http://127.0.0.1:11434",
+        model: "configured-default:4b",
+        minimumVersion: "0.5.0",
+        contextTokens: 4096,
+        maxOutputTokens: 128,
+        timeoutMs: 1000,
+      };
+      let posted: Record<string, unknown> | undefined;
+      let inspectedModel: string | undefined;
+      const provider = new OllamaAgentProvider({
+        config,
+        fetch: async (url, init) => {
+          if (url.endsWith("/api/show")) {
+            inspectedModel = JSON.parse(String(init.body)).model;
+            return {
+              ok: true,
+              status: 200,
+              text: async () =>
+                JSON.stringify({ thinking: { values: [false, true] } }),
+            };
+          }
+          posted = JSON.parse(String(init.body));
+          return {
+            ok: true,
+            status: 200,
+            text: async () =>
+              JSON.stringify({
+                done: true,
+                message: { content: '{"ok":true}' },
+              }),
+          };
+        },
+      });
+      const router = new AgentRouter(
+        database,
+        { mode: "api", provider: "ollama", reasoningEffort: effort },
+        provider,
+        {} as RemoteApiAgent,
+        {} as StreamerToolService,
+        () => new Date(),
+        undefined,
+        async () => true,
+        async () => ({
+          provider: "ollama",
+          models: [
+            modelOption("ollama", "installed:4b", undefined, ["none", "high"]),
+          ],
+          recommendedModel: "installed:4b",
+          source: "local",
+          status: "available",
+          message: "Installed local model.",
+        }),
+      );
+      try {
+        expect(await router.status("default")).toMatchObject({
+          available: true,
+          effectiveModel: "installed:4b",
+          effectiveReasoningEffort: effective,
+        });
+        await router.generateStructured(
+          {
+            model: "placeholder",
+            messages: [{ role: "user", content: "Return JSON." }],
+            outputSchemaName: "result",
+            outputJsonSchema: {
+              type: "object",
+              properties: { ok: { type: "boolean" } },
+            },
+            allowedToolNames: [],
+            temperature: 0,
+            maxOutputTokens: 64,
+          },
+          {
+            requestId: "ollama-wire-test",
+            profileId: "default",
+            locale: "en",
+            deadlineAt: "2099-01-01T00:00:00.000Z",
+            secretRef: null,
+          },
+        );
+        expect(inspectedModel).toBe("installed:4b");
+        expect(posted).toMatchObject({ model: "installed:4b", think });
+      } finally {
+        await router.close();
+        database.close();
+      }
+    },
+  );
+
   it("discovers Ollama models beyond the former 30-model limit", async () => {
     const names = Array.from(
       { length: 35 },
@@ -392,7 +531,7 @@ describe("agent model discovery and preferences", () => {
     expect(response.json()).toMatchObject({
       available: true,
       effectiveModel: "qwen3.5:4b",
-      effectiveReasoningEffort: "none",
+      effectiveReasoningEffort: "high",
     });
   });
 });
