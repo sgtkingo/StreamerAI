@@ -6,6 +6,7 @@ import {
   type CatalogTitle,
   type DiscoveryResponse,
   type EpisodeSelection,
+  type MediaProvider,
 } from "@streamer-ai/contracts";
 import {
   createApp,
@@ -14,6 +15,7 @@ import {
   type StreamerContentProvider,
 } from "../src/index.js";
 import { openStreamerDatabase } from "@streamer-ai/database";
+import { NonPersistentMemoryIntegrationStateStore } from "../src/stores/integration-state-store.js";
 
 const unusedFetch: FetchLike = async () => {
   throw new Error("External providers must not run in content route tests");
@@ -646,11 +648,39 @@ describe("provider-neutral content API", () => {
       preparePlayback,
       checkPlayback,
     };
+    const integrationStateStore =
+      new NonPersistentMemoryIntegrationStateStore();
+    await integrationStateStore.set({
+      integrationId: "test-media",
+      configured: true,
+      status: "connected",
+      updatedAt: "2026-09-27T12:00:00.000Z",
+    });
     const instance = createApp({
       environment: "test",
       logger: false,
       fetch: unusedFetch,
       contentProvider,
+      integrationStateStore,
+      mediaProviders: [
+        {
+          descriptor: () => ({
+            id: "test-media",
+            family: "media",
+            displayName: "Test media",
+            connectorVersion: "1.0.0",
+            capabilities: ["movie-search"],
+            supportedLocales: ["en"],
+            setupMode: "none",
+            credentialFields: [],
+            canAutoDetect: false,
+            supportsRecheck: false,
+            supportsDisconnect: true,
+            documentationUrl: null,
+            privacySummary: "Test media.",
+          }),
+        } as MediaProvider,
+      ],
       now: () => new Date("2026-09-27T12:00:00.000Z"),
     });
     apps.push(instance);

@@ -20,7 +20,7 @@ deployment and agent decisions live in [`instructions/`](instructions/).
   editable History.
 - TMDB connection verification designed around an in-app guided setup flow.
 - Provider-neutral contracts and registries, TMDB metadata, guided Webshare
-  authentication, an FFmpeg-backed in-app player and Ollama structured-agent
+  authentication, an optional authenticated Hellspy stream adapter, an FFmpeg-backed in-app player and Ollama structured-agent
   adapters.
 
 The development feed is explicitly labeled as preview data and cannot create

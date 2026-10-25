@@ -18,8 +18,12 @@ import type {
   EpisodeSelection,
   EnvironmentLocationsResponse,
   EnvironmentWeatherResponse,
+  MediaSourcePreferences,
 } from "@streamer-ai/contracts";
-import { AppearancePreferencesSchema } from "@streamer-ai/contracts";
+import {
+  AppearancePreferencesSchema,
+  MediaSourcePreferencesSchema,
+} from "@streamer-ai/contracts";
 import { DEFAULT_PLAYBACK_PREFERENCES } from "../playback-preferences";
 
 export type ConnectionState = "connected" | "not-configured" | "unavailable";
@@ -179,6 +183,13 @@ export interface PlaybackCheckResult {
 }
 
 export interface StreamerApi {
+  getMediaSourcePreferences(
+    profileId?: string,
+  ): Promise<MediaSourcePreferences>;
+  saveMediaSourcePreferences(
+    providerOrder: string[],
+    profileId?: string,
+  ): Promise<MediaSourcePreferences>;
   getIntegrations(
     profileId?: string,
   ): Promise<{ items: IntegrationCatalogItem[] }>;
@@ -212,6 +223,11 @@ export interface StreamerApi {
   getSetupStatus(profileId?: string): Promise<SetupStatus>;
   connectTmdb(token: string, profileId?: string): Promise<ConnectionResult>;
   connectWebshare(
+    username: string,
+    password: string,
+    profileId?: string,
+  ): Promise<ConnectionResult>;
+  connectHellspy(
     username: string,
     password: string,
     profileId?: string,
@@ -600,6 +616,37 @@ async function connectWebshare(
   );
 }
 
+async function connectHellspy(
+  username: string,
+  password: string,
+  profileId = "default",
+): Promise<IntegrationConnectionResult> {
+  let response: Response;
+  try {
+    response = await fetch("/api/v1/integrations/hellspy/connect", {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ username, password, profileId }),
+    });
+  } catch {
+    throw new ApiError(
+      "The home server is unreachable. Check that StreamerAI is running.",
+    );
+  }
+  const result = readIntegrationResult(
+    await response.json().catch(() => undefined),
+    "hellspy",
+  );
+  if (result) return result;
+  throw new ApiError(
+    "The Hellspy connection could not be completed. Please try again.",
+    response.status,
+  );
+}
+
 interface SetupStatusResponse {
   complete: boolean;
   requiredSteps: string[];
@@ -637,6 +684,15 @@ function readProfile(value: unknown): ProfileDraft | undefined {
 }
 
 export const apiClient: StreamerApi = {
+  getMediaSourcePreferences: (profileId = "default") =>
+    request<unknown>(
+      `/profiles/${encodeURIComponent(profileId)}/media-source-preferences`,
+    ).then((value) => MediaSourcePreferencesSchema.parse(value)),
+  saveMediaSourcePreferences: (providerOrder, profileId = "default") =>
+    request<unknown>(
+      `/profiles/${encodeURIComponent(profileId)}/media-source-preferences`,
+      { method: "PUT", body: JSON.stringify({ providerOrder }) },
+    ).then((value) => MediaSourcePreferencesSchema.parse(value)),
   searchEnvironmentLocations: (query, language = "en", signal) =>
     request<EnvironmentLocationsResponse>(
       `/environment/locations?${new URLSearchParams({ q: query, language })}`,
@@ -760,6 +816,7 @@ export const apiClient: StreamerApi = {
   },
   connectTmdb,
   connectWebshare,
+  connectHellspy,
   detectLocalAi: (profileId = "default") =>
     request<LocalAiResult>("/inference/detect", {
       method: "POST",

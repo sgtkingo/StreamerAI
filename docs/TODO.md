@@ -167,12 +167,18 @@ Proved analýzu nasazení a proveditelnost.
 
 Zkontroluj integraci a napoj ji na Settings a Onboarding. U MCP i API je důležitá jednoduchost a přehlednost pro uživatele. Výběr modelů by měl být automatický (voleny by měli být lehké/rychlé levné modely, jako třeba Terra - Light nebo Medium). Uživatel by měl míát možnost kontroly nad úrovni přemýšlení modelu i nad jeho výběrem: v základu jen posuvník mezi "Speed" (no reasoning) a "Quality" (High Reasoning), expert režim otevře konkterétní výběr konkterétního dostupného modelu a modu.
 
-- Databáze se ted staví per-user: co kdyby si uživatelé uměli sdílet DB?  Tzn, když už uživatel ověří že je to správný zdroj, měla by se tato informace nasdílet i zbytku. Taková komuniktní DB.
+- Databáze se ted staví per-user: co kdyby si uživatelé uměli sdílet DB?  Tzn, když už uživatel ověří že je to správný zdroj, měla by se tato informace nasdílet i zbytku. Taková komuniktní DB, distribuovaná. Třeba přes BC nebo jako torrent.Museli bychom jen zařídit aby se Streamery na síti našli, bud centrální bod nebo jinak. Databáze by mohla sdílet jaké je ID titulu pro konkterétní zdroj, ovšem neěla by asi přenášet direct linky. Byl by to stínový informační systém, kdy by se Streamer prvně zeptal komunity, zda zdroj vůbec existuje a jaké je ID, a až poté by se ho pokusil dohledat a spáárovat na konterétním zdroji. To by explicitně měl zkusit i když mu stínová DB řekne že titul na zdroji není - může to  být první objev. Také bych přidal hodnocení správnosti zdrojů pomocí palce nahoru (zelená) a dolů (červená), kde nejlépe hodnocené zdroje dostanou prefernci správnosti. Správný zdroj (název a hodnocení) musí mít vyšší prioritu než třeba zdroj které lépe odpovídá rozlišení obrazovky. Ovšem požadovaný jazyk by měl zase preferenci nad hodnocením...  Výběr by měl záležet automatizovaně na, sestupně dle priority: správnost (shodá názvu), přehratelnost, důvěryhodnosti, jazyk, hodnocení, preference zdroje, rozlišení apod
 
 - Hellspy adapter jako stream source
 
 - DONE: "Local folder or drive" nenamountuje lokální složku, třeba "D:\Download" - hlásí "Open StreamerAI on the home server to use Select folder, or enter the server path manually." - při lokálním nasazení to bude OK
 
-- Musíme zjistit proč "some scify from space with spaceships" a "some scify from space" vyhazuje hned instatně (bez uvažování, zdá se) pokaždé to samé - Spider-Man: Brand New Day - což ení správné chování. Až na opravný dotaz to agent opraví. Používáme opravdu malý lokální model, měli bychom mu vytvořit aspon vhodný harness aby byl dobrý asistent výběru filmů.
+- DONE: Musíme zjistit proč "some scify from space with spaceships" a "some scify from space" vyhazuje hned instatně (bez uvažování, zdá se) pokaždé to samé - Spider-Man: Brand New Day - což ení správné chování. Až na opravný dotaz to agent opraví. Používáme opravdu malý lokální model, měli bychom mu vytvořit aspon vhodný harness aby byl dobrý asistent výběru filmů.
 Také zda je posuvník intenzity přemýšlení opavdu napojený na vybraný model a zda něco ovlivuje - také máme nekonzistenci, v Onboardingu když vyberu lokální Ollamu, tak mi posvník umožní vybrat jen "
 No reasoning" a "High reasoning", v Setting ale posuvník umožnuje u téhož modelu vbírat i Light a Balanced. 
+
+- Bude třeba dodělat přihlášení a synchronozaci mezi účty. Také nastavení volitelnéh pinu k profilů. Co se týče účtů, tak přihlašování k nim by mohlo probíhat způsoby:
+- Google account
+- Apple account
+- Streamio AI login
+- Jednorázový sync kod (např. pro TV variantu)

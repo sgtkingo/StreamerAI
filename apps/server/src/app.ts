@@ -25,7 +25,15 @@ import {
   WebshareClient,
 } from "./integrations/webshare-client.js";
 import { WebshareMediaProvider } from "./integrations/webshare-media-provider.js";
+import {
+  HellspyClient,
+  HELLSPY_SESSION_SECRET_KEY,
+} from "./integrations/hellspy-client.js";
+import { HellspyMediaProvider } from "./integrations/hellspy-media-provider.js";
+import { registerHellspyRoutes } from "./routes/hellspy.js";
 import { LocalMediaProvider } from "./integrations/local-media-provider.js";
+import { MediaSourcePreferenceStore } from "./services/media-source-preferences.js";
+import { registerMediaSourcePreferenceRoutes } from "./routes/media-source-preferences.js";
 import { OllamaAgentProvider } from "./integrations/ollama-agent-provider.js";
 import { discoverOllamaModels } from "./integrations/ollama-model-catalog.js";
 import { discoveryTierForAgent } from "./integrations/agent-model-catalog.js";
@@ -242,6 +250,11 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
     localMediaLibrary,
     webshareClient,
   );
+  const hellspyClient = new HellspyClient({
+    secretStore: stores.secretStore,
+    fetch: options.providerFetch ?? defaultProviderFetch(),
+    now,
+  });
   const metadata = new AdapterRegistry("metadata", [
     new TmdbMetadataProvider({
       client: new TmdbApiClient({
@@ -261,6 +274,12 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
       now,
       diagnostic: (event) => logDiscoveryEvent(app.log, event),
     }),
+    new HellspyMediaProvider({
+      client: hellspyClient,
+      issuePlaybackTicket: (input) => playbackTicketStore.issue(input),
+      probeMedia: (url) => playbackMediaEngine.probe(url),
+      now,
+    }),
     new LocalMediaProvider(
       localMediaLibrary,
       (input) => playbackTicketStore.issue(input),
@@ -268,6 +287,12 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
     ),
     ...(options.mediaProviders ?? []),
   ]);
+  const sourcePreferences = new MediaSourcePreferenceStore(database);
+  const mediaProviderOrder = (profileId: string) =>
+    sourcePreferences.order(
+      profileId,
+      media.list().map((provider) => provider.descriptor().id),
+    );
   const subtitleProviders = new AdapterRegistry<SubtitleProvider>(
     "subtitle",
     options.subtitleProviders?.list() ?? [],
@@ -398,6 +423,7 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
           },
           metadata,
           media,
+          mediaProviderOrder,
           integrationStateStore: stores.integrationStateStore,
           secretRefForProvider: (providerId, profileId) =>
             database.integrations.getSecretRef(providerId, profileId),
@@ -415,7 +441,15 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
               : 110_000,
         })
       : undefined);
-  const core = new StreamerCore(database, now, contentProvider);
+  const core = new StreamerCore(
+    database,
+    now,
+    contentProvider,
+    (profileId, providerId) =>
+      media.get(providerId) !== null &&
+      stores.integrationStateStore.isConfigured(providerId, profileId),
+    mediaProviderOrder,
+  );
   const availabilityTimer =
     environment === "test"
       ? null
@@ -530,6 +564,7 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
     ensureLocalLibrary: (profileId) =>
       localMediaLibrary.ensureProfileLibrary(profileId),
     onDeleteProfile: async (profileId) => {
+      sourcePreferences.delete(profileId);
       await agent.deleteProfile(profileId);
       await Promise.all([
         stores.secretStore.delete(
@@ -537,6 +572,9 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
         ),
         stores.secretStore.delete(
           profileSecretKey(profileId, WEBSHARE_WST_SECRET_KEY),
+        ),
+        stores.secretStore.delete(
+          profileSecretKey(profileId, HELLSPY_SESSION_SECRET_KEY),
         ),
         ...REMOTE_API_NAMES.map((provider) =>
           stores.secretStore.delete(remoteApiSecretKey(profileId, provider)),
@@ -644,6 +682,20 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
     profileExists: (profileId) => database.profiles.get(profileId) !== null,
     timeoutMs: 8_000,
     now,
+  });
+
+  registerHellspyRoutes(app, {
+    client: hellspyClient,
+    secretStore: stores.secretStore,
+    integrationStateStore: stores.integrationStateStore,
+    profileExists: (profileId) => database.profiles.get(profileId) !== null,
+    now,
+  });
+
+  registerMediaSourcePreferenceRoutes(app, {
+    database,
+    store: sourcePreferences,
+    providerIds: () => media.list().map((provider) => provider.descriptor().id),
   });
 
   app.addHook("onClose", async () => {

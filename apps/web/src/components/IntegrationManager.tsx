@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { resolveMediaSourceOrder } from "@streamer-ai/contracts";
 import type {
   ConnectionState,
   IntegrationCatalogItem,
@@ -95,11 +96,14 @@ function connectionError(id: string, code: string): string {
       messages[code] ?? "TMDB could not be connected. Your token was not saved."
     );
   }
+  const name = id === "hellspy" ? "Hellspy" : "Webshare";
   return code === "CREDENTIAL_REJECTED"
-    ? "Webshare did not accept these credentials. Check them and try again."
+    ? `${name} did not accept these credentials. Check them and try again.`
     : code === "TIMEOUT"
-      ? "Webshare did not respond in time. Nothing was saved."
-      : "Webshare could not be connected. Nothing was saved.";
+      ? `${name} did not respond in time. Nothing was saved.`
+      : code === "RATE_LIMITED"
+        ? `${name} is receiving too many requests. Try again shortly.`
+        : `${name} could not be connected. Nothing was saved.`;
 }
 
 interface IntegrationManagerProps {
@@ -289,6 +293,13 @@ export function IntegrationManager({
     coreIntegration("webshare", initialWebshareState === "connected"),
   ]);
   const [addedIds, setAddedIds] = useState<string[]>([]);
+  const [sourceOrder, setSourceOrder] = useState<string[]>([]);
+  const [orderReady, setOrderReady] = useState(false);
+  const [savingOrder, setSavingOrder] = useState(false);
+  const [orderMessage, setOrderMessage] = useState("");
+  const [orderError, setOrderError] = useState(false);
+  const [draggedSource, setDraggedSource] = useState<string | null>(null);
+  const [dropTarget, setDropTarget] = useState<string | null>(null);
   const [picker, setPicker] = useState<SourceCategory | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [confirmId, setConfirmId] = useState<string | null>(null);
@@ -309,6 +320,35 @@ export function IntegrationManager({
   const [agentFormBaseUrl, setAgentFormBaseUrl] = useState("");
   const [agentFormModel, setAgentFormModel] = useState("");
   const [agentFormError, setAgentFormError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    setOrderReady(false);
+    setOrderMessage("");
+    if (!api.getMediaSourcePreferences) {
+      setOrderReady(true);
+      return;
+    }
+    void api
+      .getMediaSourcePreferences(profileId)
+      .then((result) => {
+        if (active) {
+          setSourceOrder(result.providerOrder);
+          setOrderReady(true);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setOrderMessage(
+            "Could not load source priority. Reopen Settings to try again.",
+          );
+          setOrderError(true);
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [api, profileId]);
 
   useEffect(() => {
     let active = true;
@@ -335,6 +375,48 @@ export function IntegrationManager({
   const visible = (item: IntegrationCatalogItem) =>
     item.configured || item.selected || addedIds.includes(item.id);
   const visibleIds = new Set(items.filter(visible).map((item) => item.id));
+  const orderedIds = resolveMediaSourceOrder(
+    sourceOrder,
+    items
+      .filter((item) => item.category === "media" && !item.planned)
+      .map((item) => item.id),
+  );
+  const sourceRank = (id: string) => {
+    const index = orderedIds.indexOf(id);
+    return index < 0 ? orderedIds.length : index;
+  };
+  const moveSource = async (id: string, target: string) => {
+    if (
+      id === target ||
+      savingOrder ||
+      !orderReady ||
+      !api.saveMediaSourcePreferences
+    )
+      return;
+    const previous = [...orderedIds];
+    const next = previous.filter((entry) => entry !== id);
+    const targetIndex = previous.indexOf(target);
+    if (!previous.includes(id) || targetIndex < 0) return;
+    next.splice(targetIndex, 0, id);
+    setSourceOrder(next);
+    setSavingOrder(true);
+    setOrderError(false);
+    setOrderMessage("Saving source priority…");
+    try {
+      const result = await api.saveMediaSourcePreferences(next, profileId);
+      setSourceOrder(result.providerOrder);
+      setOrderMessage("Source priority saved.");
+      onConnectionChange?.("source-priority", true);
+    } catch {
+      setSourceOrder(previous);
+      setOrderError(true);
+      setOrderMessage(
+        "Could not save source priority. Your previous order is still active.",
+      );
+    } finally {
+      setSavingOrder(false);
+    }
+  };
   const pickerItems = items.filter(
     (item) =>
       !visibleIds.has(item.id) &&
@@ -436,7 +518,7 @@ export function IntegrationManager({
     openSetup(item.id);
   };
 
-  const connect = async (id: "tmdb" | "webshare") => {
+  const connect = async (id: "tmdb" | "webshare" | "hellspy") => {
     const cleanToken = token.trim().replace(/^Bearer\s+/i, "");
     if (id === "tmdb" && !cleanToken) {
       setMessage({
@@ -446,10 +528,13 @@ export function IntegrationManager({
       });
       return;
     }
-    if (id === "webshare" && (!username.trim() || !password)) {
+    if (id !== "tmdb" && (!username.trim() || !password)) {
       setMessage({
         id,
-        text: "Enter your Webshare username and password first.",
+        text:
+          id === "hellspy"
+            ? "Enter your Hellspy email and password first."
+            : "Enter your Webshare username and password first.",
         error: true,
       });
       return;
@@ -460,7 +545,9 @@ export function IntegrationManager({
       const result =
         id === "tmdb"
           ? await api.connectTmdb(cleanToken, profileId)
-          : await api.connectWebshare(username.trim(), password, profileId);
+          : id === "hellspy"
+            ? await api.connectHellspy(username.trim(), password, profileId)
+            : await api.connectWebshare(username.trim(), password, profileId);
       setPassword("");
       setShowPassword(false);
       if (!result.ok) {
@@ -487,7 +574,7 @@ export function IntegrationManager({
         text:
           result.persistence === "memory"
             ? "Connection verified for this development session."
-            : id === "webshare"
+            : id !== "tmdb"
               ? "Connected. The session token is stored in the encrypted local vault."
               : "Connection verified. Your token is stored securely by the home server.",
         error: false,
@@ -550,9 +637,11 @@ export function IntegrationManager({
             : group.id !== "inference",
         )
         .map((group) => {
-          const groupItems = items.filter(
-            (item) => item.category === group.id && visible(item),
-          );
+          const groupItems = items
+            .filter((item) => item.category === group.id && visible(item))
+            .sort((a, b) =>
+              group.id === "media" ? sourceRank(a.id) - sourceRank(b.id) : 0,
+            );
           if (
             groupItems.length === 0 &&
             !["metadata", "media", "subtitle"].includes(group.id) &&
@@ -569,7 +658,23 @@ export function IntegrationManager({
               {category !== "agents" && (
                 <div className="integration-group__heading">
                   <h3>{group.title}</h3>
-                  <p>{group.description}</p>
+                  <p>
+                    {group.id === "media" && context === "settings"
+                      ? "Drag sources to set your preference. Higher sources lead Recommended; all connected sources search in parallel. Local storage comes first by default."
+                      : group.description}
+                  </p>
+                  {group.id === "media" && orderMessage && (
+                    <p
+                      className={
+                        orderError
+                          ? "source-priority-message is-error"
+                          : "source-priority-message"
+                      }
+                      role={orderError ? "alert" : "status"}
+                    >
+                      {orderMessage}
+                    </p>
+                  )}
                 </div>
               )}
               <div className="integration-group__cards">
@@ -584,16 +689,141 @@ export function IntegrationManager({
                     <small>View available services</small>
                   </button>
                 )}
-                {groupItems.map((item) => {
+                {groupItems.map((item, itemIndex) => {
                   const supported =
                     item.id === "tmdb" ||
                     item.id === "webshare" ||
+                    item.id === "hellspy" ||
                     item.id === "local-files";
                   const busy = workingId === item.id;
                   return (
-                    <article className="integration-block" key={item.id}>
+                    <article
+                      className={`integration-block${dropTarget === item.id ? " integration-block--drop-target" : ""}${draggedSource === item.id ? " integration-block--dragging" : ""}`}
+                      key={item.id}
+                      data-source-id={item.id}
+                      onDragOver={(event) => {
+                        if (
+                          draggedSource &&
+                          item.category === "media" &&
+                          !item.planned
+                        ) {
+                          event.preventDefault();
+                          event.dataTransfer.dropEffect = "move";
+                          setDropTarget(item.id);
+                        }
+                      }}
+                      onDrop={(event) => {
+                        if (!draggedSource) return;
+                        event.preventDefault();
+                        const source = draggedSource;
+                        setDraggedSource(null);
+                        setDropTarget(null);
+                        void moveSource(source, item.id);
+                      }}
+                    >
                       <div className="integration-block__top">
                         <div className="integration-block__identity">
+                          {group.id === "media" &&
+                            !item.planned &&
+                            context === "settings" && (
+                              <div className="source-priority-controls">
+                                <button
+                                  type="button"
+                                  className="source-priority-grip"
+                                  aria-label={`Drag ${item.name} to reorder`}
+                                  title="Drag to reorder, or use the arrow keys"
+                                  disabled={!orderReady || savingOrder}
+                                  draggable={orderReady && !savingOrder}
+                                  onDragStart={(event) => {
+                                    setDraggedSource(item.id);
+                                    event.dataTransfer.effectAllowed = "move";
+                                    event.dataTransfer.setData(
+                                      "text/plain",
+                                      item.id,
+                                    );
+                                  }}
+                                  onDragEnd={() => {
+                                    setDraggedSource(null);
+                                    setDropTarget(null);
+                                  }}
+                                  onKeyDown={(event) => {
+                                    if (
+                                      event.key !== "ArrowUp" &&
+                                      event.key !== "ArrowDown"
+                                    )
+                                      return;
+                                    event.preventDefault();
+                                    const target =
+                                      groupItems[
+                                        itemIndex +
+                                          (event.key === "ArrowUp" ? -1 : 1)
+                                      ];
+                                    if (target && !target.planned)
+                                      void moveSource(item.id, target.id);
+                                  }}
+                                >
+                                  <svg
+                                    viewBox="0 0 16 24"
+                                    aria-hidden="true"
+                                    fill="currentColor"
+                                  >
+                                    {[6, 12, 18].flatMap((y) =>
+                                      [5, 11].map((x) => (
+                                        <circle
+                                          key={`${x}:${y}`}
+                                          cx={x}
+                                          cy={y}
+                                          r="1.5"
+                                        />
+                                      )),
+                                    )}
+                                  </svg>
+                                </button>
+                                <span
+                                  className="source-priority-number"
+                                  aria-label={`Priority ${itemIndex + 1}`}
+                                >
+                                  {itemIndex + 1}
+                                </span>
+                                <div className="source-priority-arrows">
+                                  <button
+                                    type="button"
+                                    aria-label={`Move ${item.name} up`}
+                                    disabled={
+                                      !orderReady ||
+                                      savingOrder ||
+                                      itemIndex === 0
+                                    }
+                                    onClick={() =>
+                                      void moveSource(
+                                        item.id,
+                                        groupItems[itemIndex - 1]!.id,
+                                      )
+                                    }
+                                  >
+                                    ↑
+                                  </button>
+                                  <button
+                                    type="button"
+                                    aria-label={`Move ${item.name} down`}
+                                    disabled={
+                                      !orderReady ||
+                                      savingOrder ||
+                                      !groupItems[itemIndex + 1] ||
+                                      groupItems[itemIndex + 1]!.planned
+                                    }
+                                    onClick={() =>
+                                      void moveSource(
+                                        item.id,
+                                        groupItems[itemIndex + 1]!.id,
+                                      )
+                                    }
+                                  >
+                                    ↓
+                                  </button>
+                                </div>
+                              </div>
+                            )}
                           <SourceIcon providerId={item.id} />
                           <div>
                             <h4>
@@ -809,9 +1039,15 @@ export function IntegrationManager({
                                   token.
                                 </p>
                                 <label className="field">
-                                  <span>Username or email</span>
+                                  <span>
+                                    {item.id === "hellspy"
+                                      ? "Email"
+                                      : "Username or email"}
+                                  </span>
                                   <input
-                                    type="text"
+                                    type={
+                                      item.id === "hellspy" ? "email" : "text"
+                                    }
                                     autoComplete="username"
                                     value={username}
                                     onChange={(event) =>
@@ -834,8 +1070,8 @@ export function IntegrationManager({
                                       type="button"
                                       aria-label={
                                         showPassword
-                                          ? "Hide Webshare password"
-                                          : "Show Webshare password"
+                                          ? `Hide ${item.name} password`
+                                          : `Show ${item.name} password`
                                       }
                                       onClick={() =>
                                         setShowPassword((value) => !value)
@@ -849,10 +1085,18 @@ export function IntegrationManager({
                                   className="button button--secondary"
                                   type="button"
                                   disabled={busy}
-                                  onClick={() => void connect("webshare")}
+                                  onClick={() =>
+                                    void connect(
+                                      item.id === "hellspy"
+                                        ? "hellspy"
+                                        : "webshare",
+                                    )
+                                  }
                                 >
                                   <ActionIcon kind="connect" />
-                                  {busy ? "Connecting…" : "Connect Webshare"}
+                                  {busy
+                                    ? "Connecting…"
+                                    : `Connect ${item.name}`}
                                 </button>
                               </>
                             )}

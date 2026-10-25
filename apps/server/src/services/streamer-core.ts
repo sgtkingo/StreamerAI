@@ -10,6 +10,8 @@ import {
   mergeAppearancePreferences,
   ViewerProfileSchema,
   TitleDetailSchema,
+  orderMediaSources,
+  resolveMediaSourceOrder,
   type PlaybackPreferences,
   type AppearancePreferences,
   type UpdateViewerProfile,
@@ -38,6 +40,7 @@ import {
 } from "./content-provider.js";
 import { PreferredSourceStore } from "./preferred-source-store.js";
 import { TitlePriorityStore } from "./title-priority-store.js";
+import { connectedTitleSources } from "./connected-title-sources.js";
 import {
   excludeWatchedTitles,
   normalizeWatchedTitle,
@@ -103,6 +106,13 @@ export class StreamerCore {
     private readonly database: StreamerDatabase,
     private readonly now: () => Date,
     private readonly contentProvider: StreamerContentProvider = new PreviewContentProvider(),
+    private readonly sourceEnabled?: (
+      profileId: string,
+      providerId: string,
+    ) => boolean,
+    private readonly mediaProviderOrder?: (
+      profileId: string,
+    ) => readonly string[],
   ) {
     this.preferredSources = new PreferredSourceStore(database);
     this.priorities = new TitlePriorityStore(database, now);
@@ -316,11 +326,14 @@ export class StreamerCore {
           progressPercent: null,
         }),
       );
-      return CatalogTitleSchema.parse({
-        ...title,
-        seriesSearchActive:
-          this.contentProvider.isSeriesSearchActive?.(title.id) ?? false,
-      });
+      return this.connectedSources(
+        profileId,
+        CatalogTitleSchema.parse({
+          ...title,
+          seriesSearchActive:
+            this.contentProvider.isSeriesSearchActive?.(title.id) ?? false,
+        }),
+      );
     });
     const feed = this.contentProvider.buildHome({
       profileId,
@@ -862,11 +875,14 @@ export class StreamerCore {
           progressPercent: entry.progressPercent,
         }),
       );
-      const title = CatalogTitleSchema.parse({
-        ...decorated,
-        seriesSearchActive:
-          this.contentProvider.isSeriesSearchActive?.(decorated.id) ?? false,
-      });
+      const title = this.connectedSources(
+        profileId,
+        CatalogTitleSchema.parse({
+          ...decorated,
+          seriesSearchActive:
+            this.contentProvider.isSeriesSearchActive?.(decorated.id) ?? false,
+        }),
+      );
       return [
         {
           title,
@@ -995,7 +1011,11 @@ export class StreamerCore {
       ...title,
       seriesSearchActive: series?.status === "searching",
     });
-    return TitleDetailSchema.parse({ title, series, related });
+    return TitleDetailSchema.parse({
+      title: this.connectedSources(profileId, title),
+      series,
+      related: related.map((item) => this.connectedSources(profileId, item)),
+    });
   }
 
   async forceTitleSearch(
@@ -1069,7 +1089,7 @@ export class StreamerCore {
     );
     let detail = await this.titleDetail(profileId, titleId);
     if (sources.length > 0) {
-      const mergedSources = [...sources, ...(detail.title.sources ?? [])]
+      const mergedSources = [...sources, ...(title.sources ?? [])]
         .filter(
           (source, index, items) =>
             items.findIndex((other) => other.id === source.id) === index,
@@ -1119,7 +1139,14 @@ export class StreamerCore {
         );
       detail = await this.titleDetail(profileId, titleId);
     }
-    return { detail, sources };
+    return {
+      detail,
+      sources: sources.filter(
+        (source) =>
+          !this.sourceEnabled ||
+          this.sourceEnabled(profileId, source.providerId),
+      ),
+    };
   }
 
   addToLibrary(profileId: string, titleId: string): LibraryResponse {
@@ -1397,7 +1424,7 @@ export class StreamerCore {
       return [
         {
           id: event.id,
-          title,
+          title: this.connectedSources(profileId, title),
           episodeLabel: event.episodeLabel,
           occurredAt: event.occurredAt,
           progressPercent: event.progressPercent,
@@ -1416,6 +1443,32 @@ export class StreamerCore {
   clearHistory(profileId: string): number {
     this.requireProfile(profileId);
     return this.database.history.clear(profileId);
+  }
+
+  private connectedSources(
+    profileId: string,
+    title: CatalogTitle,
+  ): CatalogTitle {
+    const projected =
+      this.contentProvider.mode === "live" && this.sourceEnabled
+        ? connectedTitleSources(
+            title,
+            (id) => this.sourceEnabled!(profileId, id),
+            this.now().toISOString(),
+          )
+        : title;
+    if (!projected.sources) return projected;
+    return {
+      ...projected,
+      sources: orderMediaSources(
+        projected.sources,
+        this.mediaProviderOrder?.(profileId) ??
+          resolveMediaSourceOrder(
+            [],
+            projected.sources.map((source) => source.providerId),
+          ),
+      ),
+    };
   }
 
   private decorateTitle(profileId: string, item: CatalogTitle): CatalogTitle {

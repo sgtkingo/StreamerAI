@@ -3,6 +3,7 @@ import type { CatalogTitle } from "@streamer-ai/contracts";
 const sourceMarks: Record<string, { label: string; asset: string }> = {
   tmdb: { label: "TMDB", asset: "tmdb" },
   webshare: { label: "Webshare", asset: "webshare" },
+  hellspy: { label: "Hellspy", asset: "hellspy" },
   csfd: { label: "ČSFD", asset: "csfd" },
   "local-files": { label: "Local files", asset: "local-files" },
   ftp: { label: "FTP", asset: "ftp" },

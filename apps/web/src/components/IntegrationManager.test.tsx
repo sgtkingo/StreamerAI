@@ -1,4 +1,10 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { IntegrationCatalogItem, StreamerApi } from "../api/client";
@@ -50,6 +56,12 @@ const items: IntegrationCatalogItem[] = [
 function apiWith(integrations: IntegrationCatalogItem[]) {
   return {
     getIntegrations: vi.fn().mockResolvedValue({ items: integrations }),
+    getMediaSourcePreferences: vi
+      .fn()
+      .mockResolvedValue({ providerOrder: ["local-files", "webshare"] }),
+    saveMediaSourcePreferences: vi
+      .fn()
+      .mockImplementation(async (providerOrder) => ({ providerOrder })),
     setIntegrationSelected: vi
       .fn()
       .mockImplementation(async (id: string, selected: boolean) => ({
@@ -76,10 +88,148 @@ function apiWith(integrations: IntegrationCatalogItem[]) {
       persistence: "secure-local",
     }),
     connectWebshare: vi.fn(),
+    connectHellspy: vi.fn().mockResolvedValue({
+      ok: true,
+      integrationId: "hellspy",
+      status: "connected",
+      messageCode: "CONNECTED",
+      persistence: "secure-local",
+    }),
   } as unknown as StreamerApi;
 }
 
 describe("integration manager", () => {
+  it("defaults local storage first and saves a drag-and-drop source order for this profile", async () => {
+    const configured = items.map((item) =>
+      item.id === "local-files" ? { ...item, configured: true } : item,
+    );
+    const api = apiWith(configured);
+    render(
+      <IntegrationManager api={api} context="settings" profileId="viewer" />,
+    );
+    const region = await screen.findByRole("region", {
+      name: "Stream sources",
+    });
+    const local = await screen.findByRole("heading", {
+      name: "Local folder or drive",
+    });
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Drag Webshare to reorder" }),
+      ).toBeEnabled(),
+    );
+    expect(
+      within(region)
+        .getAllByRole("heading", { level: 4 })
+        .map((heading) => heading.textContent),
+    ).toEqual(["Local folder or drive", "Webshare"]);
+    const transfer = { setData: vi.fn(), effectAllowed: "", dropEffect: "" };
+    fireEvent.dragStart(
+      screen.getByRole("button", { name: "Drag Webshare to reorder" }),
+      { dataTransfer: transfer },
+    );
+    fireEvent.dragOver(local.closest("article")!, { dataTransfer: transfer });
+    fireEvent.drop(local.closest("article")!, { dataTransfer: transfer });
+    await waitFor(() =>
+      expect(api.saveMediaSourcePreferences).toHaveBeenCalledWith(
+        ["webshare", "local-files"],
+        "viewer",
+      ),
+    );
+    expect(
+      within(region)
+        .getAllByRole("heading", { level: 4 })
+        .map((heading) => heading.textContent),
+    ).toEqual(["Webshare", "Local folder or drive"]);
+    expect(
+      await screen.findByText("Source priority saved."),
+    ).toBeInTheDocument();
+  });
+
+  it("supports keyboard reordering and restores the previous order when saving fails", async () => {
+    const user = userEvent.setup();
+    const api = apiWith(
+      items.map((item) =>
+        item.id === "local-files" ? { ...item, configured: true } : item,
+      ),
+    );
+    vi.mocked(api.saveMediaSourcePreferences).mockRejectedValueOnce(
+      new Error("offline"),
+    );
+    render(<IntegrationManager api={api} context="settings" />);
+    const grip = await screen.findByRole("button", {
+      name: "Drag Webshare to reorder",
+    });
+    await waitFor(() => expect(grip).toBeEnabled());
+    grip.focus();
+    await user.keyboard("{ArrowUp}");
+    expect(
+      await screen.findByText(/Your previous order is still active/),
+    ).toBeInTheDocument();
+    const region = screen.getByRole("region", { name: "Stream sources" });
+    expect(
+      within(region)
+        .getAllByRole("heading", { level: 4 })
+        .map((heading) => heading.textContent),
+    ).toEqual(["Local folder or drive", "Webshare"]);
+    await user.click(screen.getByRole("button", { name: "Move Webshare up" }));
+    expect(
+      await screen.findByText("Source priority saved."),
+    ).toBeInTheDocument();
+    expect(
+      within(region).getAllByRole("heading", { level: 4 })[0],
+    ).toHaveTextContent("Webshare");
+  });
+  it("connects Hellspy with an email and clears the password after verification", async () => {
+    const user = userEvent.setup();
+    const api = apiWith([
+      ...items,
+      {
+        id: "hellspy",
+        name: "Hellspy",
+        description: "Authenticated video.",
+        category: "media",
+        planned: false,
+        selected: false,
+        configured: false,
+        setup: {
+          documentationUrl: "https://www.hellspy.to/",
+          supportsDisconnect: true,
+        },
+      },
+    ]);
+    render(
+      <IntegrationManager api={api} context="settings" profileId="viewer" />,
+    );
+    await screen.findByRole("heading", { name: "Webshare" });
+    await user.click(
+      within(screen.getByRole("region", { name: "Stream sources" })).getByRole(
+        "button",
+        { name: /add more/i },
+      ),
+    );
+    await user.click(await screen.findByRole("button", { name: /Hellspy/ }));
+    await user.type(screen.getByLabelText("Email"), "viewer@example.test");
+    await user.type(
+      screen.getByLabelText("Password", { exact: true }),
+      "private-password",
+    );
+    await user.click(screen.getByRole("button", { name: "Connect Hellspy" }));
+    await waitFor(() =>
+      expect(api.connectHellspy).toHaveBeenCalledWith(
+        "viewer@example.test",
+        "private-password",
+        "viewer",
+      ),
+    );
+    expect(
+      screen.queryByDisplayValue("private-password"),
+    ).not.toBeInTheDocument();
+    const card = screen
+      .getByRole("heading", { name: "Hellspy" })
+      .closest("article")!;
+    expect(within(card).getByText("Connected")).toBeInTheDocument();
+  });
   it("shows the default local integration and connects a folder through Select folder", async () => {
     const user = userEvent.setup();
     const configured = items.map((item) =>
@@ -156,7 +306,7 @@ describe("integration manager", () => {
     await user.click(
       screen.getByRole("button", { name: "Verify and connect" }),
     );
-    expect(api.connectTmdb).toHaveBeenCalledWith("new-token");
+    expect(api.connectTmdb).toHaveBeenCalledWith("new-token", "default");
     expect(screen.queryByDisplayValue("new-token")).not.toBeInTheDocument();
 
     await user.click(
@@ -167,7 +317,10 @@ describe("integration manager", () => {
       within(webshare).getByRole("button", { name: "Disconnect now" }),
     );
     await waitFor(() =>
-      expect(api.disconnectIntegration).toHaveBeenCalledWith("webshare"),
+      expect(api.disconnectIntegration).toHaveBeenCalledWith(
+        "webshare",
+        "default",
+      ),
     );
     expect(
       screen.queryByRole("heading", { name: "Webshare" }),
@@ -232,6 +385,7 @@ describe("integration manager", () => {
       expect(api.setIntegrationSelected).toHaveBeenCalledWith(
         "opensubtitles",
         true,
+        "default",
       ),
     );
     const card = (
@@ -246,6 +400,7 @@ describe("integration manager", () => {
       expect(api.setIntegrationSelected).toHaveBeenCalledWith(
         "opensubtitles",
         false,
+        "default",
       ),
     );
     expect(

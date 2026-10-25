@@ -8,6 +8,8 @@ import {
   MetadataCandidateSchema,
   ProviderDescriptorSchema,
   TitleSourceSchema,
+  orderMediaSources,
+  resolveMediaSourceOrder,
   type AgentProvider,
   type CatalogTitle,
   type CanonicalTitlePayload,
@@ -158,11 +160,38 @@ function episodeKey(titleId: string, episode: EpisodeSelection): string {
   return `${titleId}:${episode.seasonNumber}:${episode.episodeNumber}`;
 }
 
+function interleaveProviders<T>(
+  items: readonly T[],
+  providerId: (item: T) => string,
+  limit: number,
+): T[] {
+  const groups = new Map<string, T[]>();
+  for (const item of items) {
+    const id = providerId(item);
+    const group = groups.get(id) ?? [];
+    group.push(item);
+    groups.set(id, group);
+  }
+  const result: T[] = [];
+  for (
+    let position = 0;
+    [...groups.values()].some((group) => position < group.length);
+    position++
+  ) {
+    for (const group of groups.values()) {
+      if (result.length >= limit) return result;
+      if (group[position]) result.push(group[position]!);
+    }
+  }
+  return result;
+}
+
 export interface LiveContentCoordinatorOptions {
   agent: AgentProvider;
   agentReady?: (profileId: string) => Promise<boolean>;
   metadata: MetadataProvider | ProviderRegistry<MetadataProvider>;
   media: MediaProvider | ProviderRegistry<MediaProvider>;
+  mediaProviderOrder?: (profileId: string) => readonly string[];
   integrationStateStore: IntegrationStateStore;
   /** Resolve only opaque vault pointers; adapters fetch their own credentials. */
   secretRefForProvider?: (
@@ -782,12 +811,21 @@ function mediaSearchVariants(
 }[] {
   const distinctLocalizedTitle =
     originalTitle !== null && normalize(originalTitle) !== normalize(title);
+  const titles = distinctLocalizedTitle
+    ? [originalTitle, null]
+    : [originalTitle];
+  const canonicalTitles = [...titles];
+  // Some provider search engines mishandle macrons/accents (e.g. Shippūden).
+  // Preserve canonical metadata, but also try the plain Latin release spelling.
+  for (const name of [...titles]) {
+    const value = name ?? title;
+    if (!/\p{Script=Latin}/u.test(value)) continue;
+    const plain = value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "");
+    if (plain !== value && !titles.includes(plain)) titles.push(plain);
+  }
   // Webshare's episode query already omits the premiere year.
   const searchYear = episode ? null : year;
   if (episode) {
-    const titles = distinctLocalizedTitle
-      ? [originalTitle, null]
-      : [originalTitle];
     return episodeSearchTerms(episode, structure).flatMap((episodeSearchTerm) =>
       titles.map((name) => ({
         originalTitle: name,
@@ -796,20 +834,15 @@ function mediaSearchVariants(
       })),
     );
   }
+  const years = searchYear === null ? [null] : [searchYear, null];
   return [
-    { originalTitle, year: searchYear },
-    ...(distinctLocalizedTitle
-      ? [{ originalTitle: null, year: searchYear }]
-      : []),
-    ...(searchYear === null
-      ? []
-      : [
-          { originalTitle, year: null },
-          ...(distinctLocalizedTitle
-            ? [{ originalTitle: null, year: null }]
-            : []),
-        ]),
-  ];
+    canonicalTitles,
+    titles.filter((name) => !canonicalTitles.includes(name)),
+  ].flatMap((names) =>
+    years.flatMap((year) =>
+      names.map((name) => ({ originalTitle: name, year })),
+    ),
+  );
 }
 
 function providerContext(
@@ -842,6 +875,7 @@ export class LiveContentCoordinator implements StreamerContentProvider {
   readonly #agentReady: ((profileId: string) => Promise<boolean>) | undefined;
   readonly #metadataProviders: ReadonlyMap<string, MetadataProvider>;
   readonly #mediaProviders: ReadonlyMap<string, MediaProvider>;
+  readonly #mediaProviderOrder: (profileId: string) => readonly string[];
   readonly #integrationStateStore: IntegrationStateStore;
   readonly #secretRefForProvider: (
     providerId: string,
@@ -871,6 +905,9 @@ export class LiveContentCoordinator implements StreamerContentProvider {
     this.#agentReady = options.agentReady;
     this.#metadataProviders = providerMap(options.metadata, "tmdb");
     this.#mediaProviders = providerMap(options.media, "webshare");
+    this.#mediaProviderOrder =
+      options.mediaProviderOrder ??
+      (() => resolveMediaSourceOrder([], [...this.#mediaProviders.keys()]));
     this.#integrationStateStore = options.integrationStateStore;
     this.#secretRefForProvider = options.secretRefForProvider ?? (() => null);
     this.#inference = options.inference;
@@ -2248,6 +2285,23 @@ export class LiveContentCoordinator implements StreamerContentProvider {
     retry = false,
     allowAutomaticSearch = true,
   ): Promise<SeriesDetail> {
+    const activeMediaIds = new Set(
+      (await this.activeProviders(this.#mediaProviders, profileId)).map(
+        ([id]) => id,
+      ),
+    );
+    const connectedEpisode = (key: string) =>
+      job?.candidates
+        .get(key)
+        ?.some((ref) =>
+          this.#integrationStateStore.isConfigured(ref.providerId, profileId),
+        ) === true;
+    title = {
+      ...title,
+      sources: title.sources?.filter((source) =>
+        activeMediaIds.has(source.providerId),
+      ),
+    };
     if (title.metadataProvider === "local-files") {
       const seasons = new Map<number, Map<number, string>>();
       for (const source of title.sources ?? []) {
@@ -2369,7 +2423,7 @@ export class LiveContentCoordinator implements StreamerContentProvider {
         .filter((season) => season.seasonNumber > 0)
         .every((season) =>
           season.episodes.every((episode) =>
-            job.candidates.has(
+            connectedEpisode(
               episodeKey(title.id, {
                 seasonNumber: season.seasonNumber,
                 episodeNumber: episode.episodeNumber,
@@ -2427,7 +2481,7 @@ export class LiveContentCoordinator implements StreamerContentProvider {
           title: episode.title,
           synopsis: episode.synopsis ?? "",
           airDate: episode.airDate,
-          availability: job.candidates.has(
+          availability: connectedEpisode(
             episodeKey(title.id, {
               seasonNumber: season.seasonNumber,
               episodeNumber: episode.episodeNumber,
@@ -2542,6 +2596,11 @@ export class LiveContentCoordinator implements StreamerContentProvider {
     if (title.kind !== "series")
       throw new Error("Episode search requires a series.");
     const context = this.playbackContext(profileId, title);
+    const activeMediaIds = new Set(
+      (await this.activeProviders(this.#mediaProviders, profileId)).map(
+        ([id]) => id,
+      ),
+    );
     let structure = this.#seriesJobs.get(title.id)?.structure;
     if (!structure) {
       const ref = titleMetadataRef(title);
@@ -2560,99 +2619,118 @@ export class LiveContentCoordinator implements StreamerContentProvider {
     }
     const storedSources = (title.sources ?? []).filter(
       (source) =>
+        activeMediaIds.has(source.providerId) &&
         source.seasonNumber === episode.seasonNumber &&
         source.episodeNumber === episode.episodeNumber,
     );
     const sources: TitleSource[] = [];
     const seen = new Set<string>();
     const seenFiles = new Set<string>();
-    let inspected = 0;
     let searchSucceeded = false;
     let lastError: unknown;
-    for (const variant of mediaSearchVariants(
-      title.title,
-      title.originalTitle,
-      title.year,
-      episode,
-      structure,
-    )) {
-      if (sources.length >= 8 || inspected >= 20) break;
-      let candidates: MediaCandidate[];
-      try {
-        candidates = (
-          await this.searchMedia(
-            {
-              titleId: title.id,
-              kind: "series",
-              title: title.title,
-              originalTitle: variant.originalTitle,
-              year: variant.year,
-              seasonNumber: episode.seasonNumber,
-              episodeNumber: episode.episodeNumber,
-              episodeSearchTerm: variant.episodeSearchTerm,
-              externalRefs: [],
-              limit: 50,
-            },
-            context,
-          )
-        ).candidates;
-        searchSucceeded = true;
-      } catch (error) {
-        lastError = error;
-        continue;
-      }
-      for (const candidate of candidates) {
-        if (sources.length >= 8 || inspected >= 20) break;
-        const parsed = episodeNumber(
-          candidate.releaseName,
+    const providerJobs = await Promise.allSettled(
+      [...activeMediaIds].map(async (providerId) => {
+        let inspected = 0;
+        for (const variant of mediaSearchVariants(
           title.title,
           title.originalTitle,
+          title.year,
+          episode,
           structure,
-        );
-        if (
-          parsed?.season !== episode.seasonNumber ||
-          parsed.episode !== episode.episodeNumber ||
-          !titleMatchesRelease(
-            candidate,
-            title.title,
-            title.originalTitle,
-            null,
+        )) {
+          if (
+            inspected >= 20 ||
+            sources.filter((source) => source.providerId === providerId)
+              .length >= 8 ||
+            !this.#integrationStateStore.isConfigured(providerId, profileId)
           )
-        )
-          continue;
-        const refKey = `${candidate.ref.providerId}:${candidate.ref.candidateId}`;
-        const fileKey = `${candidate.ref.providerId}:${normalize(candidate.releaseName)}:${candidate.sizeBytes}`;
-        if (seen.has(refKey) || seenFiles.has(fileKey)) continue;
-        seen.add(refKey);
-        inspected += 1;
-        try {
-          const checked = await this.mediaProvider(
-            candidate.ref.providerId,
-          ).inspect(
-            candidate.ref,
-            this.scopedContext(candidate.ref.providerId, context),
-          );
-          seenFiles.add(fileKey);
-          sources.push({
-            id: sourceId(title.id, candidate.ref),
-            providerId: candidate.ref.providerId,
-            candidateId: candidate.ref.candidateId,
-            releaseName: candidate.releaseName,
-            sizeBytes: candidate.sizeBytes,
-            format: checked.format,
-            seasonNumber: episode.seasonNumber,
-            episodeNumber: episode.episodeNumber,
-            checkedAt: checked.provenance.retrievedAt,
-          });
-        } catch {
-          // Skip files that cannot be inspected as playable media.
+            break;
+          let candidates: MediaCandidate[];
+          try {
+            candidates = (
+              await this.searchMedia(
+                {
+                  titleId: title.id,
+                  kind: "series",
+                  title: title.title,
+                  originalTitle: variant.originalTitle,
+                  year: variant.year,
+                  seasonNumber: episode.seasonNumber,
+                  episodeNumber: episode.episodeNumber,
+                  episodeSearchTerm: variant.episodeSearchTerm,
+                  externalRefs: [],
+                  limit: 50,
+                },
+                context,
+                new Set([providerId]),
+              )
+            ).candidates;
+            searchSucceeded = true;
+          } catch (error) {
+            lastError = error;
+            continue;
+          }
+          for (const candidate of candidates) {
+            if (inspected >= 20) break;
+            if (
+              sources.filter(
+                (source) => source.providerId === candidate.ref.providerId,
+              ).length >= 8
+            )
+              continue;
+            const parsed = episodeNumber(
+              candidate.releaseName,
+              title.title,
+              title.originalTitle,
+              structure,
+            );
+            if (
+              parsed?.season !== episode.seasonNumber ||
+              parsed.episode !== episode.episodeNumber ||
+              !titleMatchesRelease(
+                candidate,
+                title.title,
+                title.originalTitle,
+                null,
+              )
+            )
+              continue;
+            const refKey = `${candidate.ref.providerId}:${candidate.ref.candidateId}`;
+            const fileKey = `${candidate.ref.providerId}:${normalize(candidate.releaseName)}:${candidate.sizeBytes}`;
+            if (seen.has(refKey) || seenFiles.has(fileKey)) continue;
+            seen.add(refKey);
+            inspected += 1;
+            try {
+              const checked = await this.mediaProvider(
+                candidate.ref.providerId,
+              ).inspect(
+                candidate.ref,
+                this.scopedContext(candidate.ref.providerId, context),
+              );
+              seenFiles.add(fileKey);
+              sources.push({
+                id: sourceId(title.id, candidate.ref),
+                providerId: candidate.ref.providerId,
+                candidateId: candidate.ref.candidateId,
+                releaseName: candidate.releaseName,
+                sizeBytes: candidate.sizeBytes,
+                format: checked.format,
+                seasonNumber: episode.seasonNumber,
+                episodeNumber: episode.episodeNumber,
+                checkedAt: checked.provenance.retrievedAt,
+              });
+            } catch {
+              // Skip files that cannot be inspected as playable media.
+            }
+          }
         }
-      }
-    }
+      }),
+    );
+    for (const result of providerJobs)
+      if (result.status === "rejected") lastError = result.reason;
     if (!searchSucceeded && lastError && storedSources.length === 0)
       throw lastError;
     for (const source of storedSources) {
-      if (sources.length >= 8) break;
       const refKey = `${source.providerId}:${source.candidateId}`;
       const fileKey = `${source.providerId}:${normalize(source.releaseName)}:${source.sizeBytes}`;
       if (seen.has(refKey) || seenFiles.has(fileKey)) continue;
@@ -2660,7 +2738,26 @@ export class LiveContentCoordinator implements StreamerContentProvider {
       seenFiles.add(fileKey);
       sources.push(source);
     }
-    const validated = TitleSourceSchema.array().max(8).parse(sources);
+    const validated = TitleSourceSchema.array()
+      .max(8)
+      .parse(
+        this.prioritizeSources(
+          profileId,
+          interleaveProviders(
+            this.prioritizeSources(
+              profileId,
+              sources.filter((source) =>
+                this.#integrationStateStore.isConfigured(
+                  source.providerId,
+                  profileId,
+                ),
+              ),
+            ),
+            (source) => source.providerId,
+            8,
+          ),
+        ),
+      );
     const key = `${profileId}:${episodeKey(title.id, episode)}`;
     this.#forcedEpisodeSources.set(key, validated);
     if (this.#forcedEpisodeSources.size > 100) {
@@ -2683,6 +2780,11 @@ export class LiveContentCoordinator implements StreamerContentProvider {
     signal?: AbortSignal,
   ): Promise<void> {
     const context = { ...this.playbackContext(profileId, title), signal };
+    const activeMediaIds = new Set(
+      (await this.activeProviders(this.#mediaProviders, profileId)).map(
+        ([id]) => id,
+      ),
+    );
     let hadErrors = false;
     if (!job.structure || refreshStructure) {
       const ref = titleMetadataRef(title);
@@ -2693,121 +2795,179 @@ export class LiveContentCoordinator implements StreamerContentProvider {
       signal?.throwIfAborted();
       job.structure = structure;
     }
-    for (const season of [...job.structure.seasons].sort(
-      (a, b) =>
-        (a.seasonNumber === 0 ? 1 : 0) - (b.seasonNumber === 0 ? 1 : 0) ||
-        a.seasonNumber - b.seasonNumber,
-    )) {
-      for (const episode of season.episodes) {
-        signal?.throwIfAborted();
-        const selection = {
-          seasonNumber: season.seasonNumber,
-          episodeNumber: episode.episodeNumber,
-        };
-        const key = episodeKey(title.id, selection);
-        if (
-          (job.candidates.get(key)?.length ?? 0) > 0 ||
-          (episode.airDate &&
-            episode.airDate > this.#now().toISOString().slice(0, 10))
-        )
-          continue;
-        const episodeContext = {
-          ...context,
-          requestId: `${context.requestId}-${selection.seasonNumber}-${selection.episodeNumber}`,
-          deadlineAt: new Date(this.#now().getTime() + 55_000).toISOString(),
-        };
-        let searchFailed = false;
-        const found = [...(job.candidates.get(key) ?? [])];
-        const seen = new Set(
-          found.map(
-            (candidate) => `${candidate.providerId}:${candidate.candidateId}`,
-          ),
-        );
-        // Keep the automatic lookup aligned with the successful manual episode
-        // search: alternate localized names and the same candidate window.
-        for (const variant of mediaSearchVariants(
-          title.title,
-          title.originalTitle,
-          title.year,
-          selection,
-          job.structure,
+    const providerJobs = await Promise.allSettled(
+      [...activeMediaIds].map(async (providerId) => {
+        for (const season of [...job.structure!.seasons].sort(
+          (a, b) =>
+            (a.seasonNumber === 0 ? 1 : 0) - (b.seasonNumber === 0 ? 1 : 0) ||
+            a.seasonNumber - b.seasonNumber,
         )) {
-          signal?.throwIfAborted();
-          let results: MediaCandidate[];
-          try {
-            const searched = await this.searchMedia(
-              {
-                titleId: title.id,
-                kind: "series",
-                title: title.title,
-                originalTitle: variant.originalTitle,
-                year: variant.year,
-                seasonNumber: selection.seasonNumber,
-                episodeNumber: selection.episodeNumber,
-                episodeSearchTerm: variant.episodeSearchTerm,
-                externalRefs: [],
-                limit: 50,
-              },
-              episodeContext,
-            );
+          for (const episode of season.episodes) {
             signal?.throwIfAborted();
-            results = searched.candidates;
-            if (!searched.allSucceeded) searchFailed = true;
-          } catch {
-            signal?.throwIfAborted();
-            searchFailed = true;
-            continue;
-          }
-          for (const candidate of results) {
-            signal?.throwIfAborted();
-            if (found.length >= 8) break;
-            const parsed = episodeNumber(
-              candidate.releaseName,
-              title.title,
-              title.originalTitle,
-              job.structure,
-            );
+            const selection = {
+              seasonNumber: season.seasonNumber,
+              episodeNumber: episode.episodeNumber,
+            };
+            const key = episodeKey(title.id, selection);
             if (
-              parsed?.season !== selection.seasonNumber ||
-              parsed.episode !== selection.episodeNumber ||
-              !titleMatchesRelease(
-                candidate,
-                title.title,
-                title.originalTitle,
-                null,
-              )
+              job.candidates
+                .get(key)
+                ?.some((ref) => ref.providerId === providerId) ||
+              (episode.airDate &&
+                episode.airDate > this.#now().toISOString().slice(0, 10))
             )
               continue;
-            const refKey = `${candidate.ref.providerId}:${candidate.ref.candidateId}`;
-            if (seen.has(refKey)) continue;
-            seen.add(refKey);
-            try {
-              await this.mediaProvider(candidate.ref.providerId).inspect(
-                candidate.ref,
-                this.scopedContext(candidate.ref.providerId, episodeContext),
+            const episodeContext = {
+              ...context,
+              requestId: `${context.requestId}-${selection.seasonNumber}-${selection.episodeNumber}`,
+              deadlineAt: new Date(
+                this.#now().getTime() + 55_000,
+              ).toISOString(),
+            };
+            let searchFailed = false;
+            const found = (job.candidates.get(key) ?? []).filter(
+              (ref) => ref.providerId === providerId,
+            );
+            const publish = () => {
+              const mirrors = (job.candidates.get(key) ?? []).filter(
+                (ref) =>
+                  ref.providerId !== providerId &&
+                  this.#integrationStateStore.isConfigured(
+                    ref.providerId,
+                    profileId,
+                  ),
               );
+              const combined = this.prioritizeSources(profileId, [
+                ...mirrors,
+                ...found,
+              ]);
+              job.candidates.set(
+                key,
+                this.prioritizeSources(
+                  profileId,
+                  interleaveProviders(combined, (ref) => ref.providerId, 8),
+                ),
+              );
+            };
+            const seen = new Set(
+              found.map(
+                (candidate) =>
+                  `${candidate.providerId}:${candidate.candidateId}`,
+              ),
+            );
+            // Keep the automatic lookup aligned with the successful manual episode
+            // search: alternate localized names and the same candidate window.
+            for (const variant of mediaSearchVariants(
+              title.title,
+              title.originalTitle,
+              title.year,
+              selection,
+              job.structure,
+            )) {
               signal?.throwIfAborted();
-              found.push(candidate.ref);
-              job.candidates.set(key, [...found]);
+              if (
+                found.length >= 8 ||
+                !this.#integrationStateStore.isConfigured(providerId, profileId)
+              )
+                break;
+              let results: MediaCandidate[];
               try {
-                this.#saveEpisodeCandidate(title.id, selection, candidate.ref);
+                const searched = await this.searchMedia(
+                  {
+                    titleId: title.id,
+                    kind: "series",
+                    title: title.title,
+                    originalTitle: variant.originalTitle,
+                    year: variant.year,
+                    seasonNumber: selection.seasonNumber,
+                    episodeNumber: selection.episodeNumber,
+                    episodeSearchTerm: variant.episodeSearchTerm,
+                    externalRefs: [],
+                    limit: 50,
+                  },
+                  episodeContext,
+                  new Set([providerId]),
+                );
+                signal?.throwIfAborted();
+                results = searched.candidates;
+                if (!searched.allSucceeded) searchFailed = true;
               } catch {
-                // Search results remain usable if persistence is temporarily busy.
+                signal?.throwIfAborted();
+                searchFailed = true;
+                continue;
               }
-            } catch {
-              signal?.throwIfAborted();
-              // Restricted or non-video files are never displayed as playable.
+              for (const candidate of results) {
+                signal?.throwIfAborted();
+                if (
+                  found.filter(
+                    (ref) => ref.providerId === candidate.ref.providerId,
+                  ).length >= 8
+                )
+                  continue;
+                const parsed = episodeNumber(
+                  candidate.releaseName,
+                  title.title,
+                  title.originalTitle,
+                  job.structure,
+                );
+                if (
+                  parsed?.season !== selection.seasonNumber ||
+                  parsed.episode !== selection.episodeNumber ||
+                  !titleMatchesRelease(
+                    candidate,
+                    title.title,
+                    title.originalTitle,
+                    null,
+                  )
+                )
+                  continue;
+                const refKey = `${candidate.ref.providerId}:${candidate.ref.candidateId}`;
+                if (seen.has(refKey)) continue;
+                seen.add(refKey);
+                try {
+                  await this.mediaProvider(candidate.ref.providerId).inspect(
+                    candidate.ref,
+                    this.scopedContext(
+                      candidate.ref.providerId,
+                      episodeContext,
+                    ),
+                  );
+                  signal?.throwIfAborted();
+                  if (
+                    !this.#integrationStateStore.isConfigured(
+                      candidate.ref.providerId,
+                      profileId,
+                    )
+                  )
+                    continue;
+                  found.push(candidate.ref);
+                  publish();
+                  try {
+                    this.#saveEpisodeCandidate(
+                      title.id,
+                      selection,
+                      candidate.ref,
+                    );
+                  } catch {
+                    // Search results remain usable if persistence is temporarily busy.
+                  }
+                } catch {
+                  signal?.throwIfAborted();
+                  // Restricted or non-video files are never displayed as playable.
+                }
+              }
             }
+            if (found.length > 0) publish();
+            // A failed alternate query may have hidden a playable file, so retry
+            // this episode soon unless another query already found one.
+            if (season.seasonNumber > 0 && found.length === 0 && searchFailed)
+              hadErrors = true;
           }
-          if (found.length >= 8) break;
         }
-        if (found.length > 0) job.candidates.set(key, found);
-        // A failed alternate query may have hidden a playable file, so retry
-        // this episode soon unless another query already found one.
-        if (season.seasonNumber > 0 && found.length === 0 && searchFailed)
-          hadErrors = true;
-      }
-    }
+      }),
+    );
+    if (providerJobs.some((result) => result.status === "rejected"))
+      hadErrors = true;
     signal?.throwIfAborted();
     job.running = false;
     job.finished = !hadErrors;
@@ -2867,15 +3027,16 @@ export class LiveContentCoordinator implements StreamerContentProvider {
     title: CatalogTitle,
     episode?: EpisodeSelection,
     sourceId?: string,
+    onlyProviderId?: string,
   ): AsyncGenerator<{
     candidate: MediaCandidateRef;
     context: ProviderContext;
   }> {
     const context = this.playbackContext(profileId, title);
     const activeMediaIds = new Set(
-      (await this.activeProviders(this.#mediaProviders, profileId)).map(
-        ([id]) => id,
-      ),
+      (await this.activeProviders(this.#mediaProviders, profileId))
+        .map(([id]) => id)
+        .filter((id) => !onlyProviderId || id === onlyProviderId),
     );
     const storedSources = (title.sources ?? []).filter((source) =>
       episode
@@ -2931,12 +3092,47 @@ export class LiveContentCoordinator implements StreamerContentProvider {
     ];
     if (candidates.length > 0) {
       let yielded = false;
-      for (const candidate of candidates) {
+      for (const candidate of this.prioritizeSources(profileId, candidates)) {
         if (!activeMediaIds.has(candidate.providerId)) continue;
         yielded = true;
         yield { candidate, context };
       }
       if (yielded) return;
+    }
+    if (activeMediaIds.size > 1) {
+      const jobs = await Promise.allSettled(
+        [...activeMediaIds].map(async (id) => {
+          const found: Array<{
+            candidate: MediaCandidateRef;
+            context: ProviderContext;
+          }> = [];
+          for await (const result of this.playbackCandidates(
+            profileId,
+            title,
+            episode,
+            undefined,
+            id,
+          )) {
+            found.push(result);
+            if (found.length >= 12) break;
+          }
+          return found;
+        }),
+      );
+      const found = jobs.flatMap((result) =>
+        result.status === "fulfilled" ? result.value : [],
+      );
+      const ordered = orderMediaSources(
+        found.map((item) => ({ providerId: item.candidate.providerId, item })),
+        this.#mediaProviderOrder(profileId),
+      );
+      for (const { item } of ordered) yield item;
+      if (
+        found.length === 0 &&
+        jobs.every((result) => result.status === "rejected")
+      )
+        throw new Error("All media providers failed to search.");
+      return;
     }
     let structure = episode
       ? this.#seriesJobs.get(title.id)?.structure
@@ -2979,6 +3175,7 @@ export class LiveContentCoordinator implements StreamerContentProvider {
             limit: 20,
           },
           context,
+          activeMediaIds,
         )
       ).candidates;
       let yielded = 0;
@@ -3055,7 +3252,14 @@ export class LiveContentCoordinator implements StreamerContentProvider {
     const states = await Promise.all(
       entries.map(([id]) => this.#integrationStateStore.get(id, profileId)),
     );
-    return entries.filter((_, index) => states[index]?.configured === true);
+    const active = entries.filter(
+      (_, index) => states[index]?.configured === true,
+    );
+    if (providers !== this.#mediaProviders) return active;
+    return orderMediaSources(
+      active.map((entry) => ({ providerId: entry[0], entry })),
+      this.#mediaProviderOrder(profileId),
+    ).map((item) => item.entry);
   }
 
   private metadataProvider(id: string): MetadataProvider {
@@ -3063,6 +3267,13 @@ export class LiveContentCoordinator implements StreamerContentProvider {
     if (!provider)
       throw new Error(`Metadata provider '${id}' is not registered.`);
     return provider;
+  }
+
+  private prioritizeSources<T extends { providerId: string }>(
+    profileId: string,
+    sources: readonly T[],
+  ): T[] {
+    return orderMediaSources(sources, this.#mediaProviderOrder(profileId));
   }
 
   private scopedContext(id: string, context: ProviderContext): ProviderContext {
@@ -3319,16 +3530,23 @@ export class LiveContentCoordinator implements StreamerContentProvider {
   private async searchMedia(
     request: MediaSearchRequest,
     context: ProviderContext,
+    providerIds?: ReadonlySet<string>,
   ): Promise<{ candidates: MediaCandidate[]; allSucceeded: boolean }> {
-    const providers = await this.activeProviders(
-      this.#mediaProviders,
-      context.profileId ?? "default",
-    );
+    const providers = (
+      await this.activeProviders(
+        this.#mediaProviders,
+        context.profileId ?? "default",
+      )
+    ).filter(([id]) => !providerIds || providerIds.has(id));
     if (providers.length === 0)
       throw new Error("No media provider is connected.");
     const settled = await Promise.allSettled(
       providers.map(async ([id, provider]) => {
         for (let attempt = 0; ; attempt += 1) {
+          context.signal?.throwIfAborted();
+          // Local adapters can resolve thousands of queries as microtasks. Let
+          // HTTP, cancellation and health requests run between provider calls.
+          await new Promise<void>((resolve) => setImmediate(resolve));
           context.signal?.throwIfAborted();
           const started = this.#now().getTime();
           this.trace("DISCOVERY_MEDIA_QUERY", context, {
@@ -3400,6 +3618,16 @@ export class LiveContentCoordinator implements StreamerContentProvider {
       }
       successful += 1;
       const providerId = providers[index]![0];
+      if (
+        !this.#integrationStateStore.isConfigured(
+          providerId,
+          context.profileId ?? "default",
+        )
+      ) {
+        batches.push([]);
+        allSucceeded = false;
+        continue;
+      }
       const batch = result.value.slice(0, request.limit).flatMap((raw) => {
         const parsed = MediaCandidateSchema.safeParse(raw);
         if (
@@ -3618,127 +3846,163 @@ export class LiveContentCoordinator implements StreamerContentProvider {
         variant: Awaited<ReturnType<MediaProvider["inspect"]>>;
       }[] = [];
       const seenCandidates = new Set<string>();
-      for (const search of searches) {
-        context.signal?.throwIfAborted();
-        const searchLimit = metadata.kind === "series" ? 50 : 20;
-        const searched = await this.searchMedia(
-          {
-            titleId,
-            kind: metadata.kind,
-            title: metadata.title,
-            originalTitle: search.originalTitle,
-            year: search.year,
-            seasonNumber: requestedEpisode?.seasonNumber ?? null,
-            episodeNumber: requestedEpisode?.episodeNumber ?? null,
-            episodeSearchTerm: search.episodeSearchTerm,
-            externalRefs: metadataRefs.slice(0, 20),
-            limit: searchLimit,
-          },
-          context,
-        );
-        const mediaCandidates = searched.candidates;
-        if (!searched.allSucceeded) {
-          searchExhausted = false;
-          availabilityReasons.add("provider-query-failed-or-invalid-results");
-        }
-        if (mediaCandidates.length >= searchLimit) {
-          searchExhausted = false;
-          availabilityReasons.add("provider-result-limit");
-        }
-        const rejectedFiles: Array<{
-          candidateId: string;
-          providerId: string;
-          reason: string;
-        }> = [];
-        const matching = mediaCandidates.filter((candidate) => {
-          if (
-            !titleMatchesRelease(
-              candidate,
-              metadata.title,
-              metadata.originalTitle,
-              metadata.kind === "series" ? null : metadata.year,
-            )
-          ) {
-            rejectedFiles.push({
-              candidateId: candidate.ref.candidateId,
-              providerId: candidate.ref.providerId,
-              reason: "title-or-year-mismatch",
-            });
-            return false;
-          }
-          if (metadata.kind !== "series") return true;
-          const matched = episodeNumber(
-            candidate.releaseName,
-            metadata.title,
-            metadata.originalTitle,
-            seriesStructure,
-          );
-          const matches =
-            matched !== null &&
-            (!requestedEpisode ||
-              (matched.season === requestedEpisode.seasonNumber &&
-                matched.episode === requestedEpisode.episodeNumber));
-          if (!matches)
-            rejectedFiles.push({
-              candidateId: candidate.ref.candidateId,
-              providerId: candidate.ref.providerId,
-              reason: "episode-mismatch",
-            });
-          return matches;
-        });
-        this.trace("DISCOVERY_MEDIA_FILTER", context, {
-          titleId,
-          resultCount: mediaCandidates.length,
-          matchingCount: matching.length,
-          rejected: rejectedFiles.slice(0, 50),
-        });
-        let attempted = 0;
-        for (const candidate of matching) {
-          context.signal?.throwIfAborted();
-          const key = `${candidate.ref.providerId}:${candidate.ref.candidateId}`;
-          if (seenCandidates.has(key)) continue;
-          if (attempted >= maxMediaCandidates) {
-            searchExhausted = false;
-            availabilityReasons.add("inspection-budget");
-            break;
-          }
-          seenCandidates.add(key);
-          attempted += 1;
-          const inspectedAt = this.#now().getTime();
-          try {
-            inspected.push({
-              candidate,
-              variant: await this.mediaProvider(
-                candidate.ref.providerId,
-              ).inspect(
-                candidate.ref,
-                this.scopedContext(candidate.ref.providerId, context),
-              ),
-            });
-            this.trace("DISCOVERY_MEDIA_INSPECTION", context, {
-              titleId,
-              providerId: candidate.ref.providerId,
-              candidateId: candidate.ref.candidateId,
-              outcome: "accepted",
-              durationMs: Math.max(0, this.#now().getTime() - inspectedAt),
-            });
-          } catch (error) {
-            this.trace("DISCOVERY_MEDIA_INSPECTION", context, {
-              titleId,
-              providerId: candidate.ref.providerId,
-              candidateId: candidate.ref.candidateId,
-              outcome: "rejected",
-              durationMs: Math.max(0, this.#now().getTime() - inspectedAt),
-              failure: discoveryFailure(error),
-            });
+      const activeMediaIds = (
+        await this.activeProviders(
+          this.#mediaProviders,
+          context.profileId ?? "default",
+        )
+      ).map(([id]) => id);
+      const providerJobs = await Promise.allSettled(
+        activeMediaIds.map(async (providerId) => {
+          let providerFinds = 0;
+          for (const search of searches) {
             context.signal?.throwIfAborted();
-            availabilityReasons.add("inspection-rejected");
-            // A rejected/restricted file is not playable and is skipped.
+            if (
+              providerFinds >= desiredPlayableSources ||
+              (providerFinds > 0 && !searchAllVariants) ||
+              !this.#integrationStateStore.isConfigured(
+                providerId,
+                context.profileId ?? "default",
+              )
+            )
+              break;
+            const searchLimit = metadata.kind === "series" ? 50 : 20;
+            const searched = await this.searchMedia(
+              {
+                titleId,
+                kind: metadata.kind,
+                title: metadata.title,
+                originalTitle: search.originalTitle,
+                year: search.year,
+                seasonNumber: requestedEpisode?.seasonNumber ?? null,
+                episodeNumber: requestedEpisode?.episodeNumber ?? null,
+                episodeSearchTerm: search.episodeSearchTerm,
+                externalRefs: metadataRefs.slice(0, 20),
+                limit: searchLimit,
+              },
+              context,
+              new Set([providerId]),
+            );
+            const mediaCandidates = searched.candidates;
+            if (!searched.allSucceeded) {
+              searchExhausted = false;
+              availabilityReasons.add(
+                "provider-query-failed-or-invalid-results",
+              );
+            }
+            if (mediaCandidates.length >= searchLimit) {
+              searchExhausted = false;
+              availabilityReasons.add("provider-result-limit");
+            }
+            const rejectedFiles: Array<{
+              candidateId: string;
+              providerId: string;
+              reason: string;
+            }> = [];
+            const matching = mediaCandidates.filter((candidate) => {
+              if (
+                !titleMatchesRelease(
+                  candidate,
+                  metadata.title,
+                  metadata.originalTitle,
+                  metadata.kind === "series" ? null : metadata.year,
+                )
+              ) {
+                rejectedFiles.push({
+                  candidateId: candidate.ref.candidateId,
+                  providerId: candidate.ref.providerId,
+                  reason: "title-or-year-mismatch",
+                });
+                return false;
+              }
+              if (metadata.kind !== "series") return true;
+              const matched = episodeNumber(
+                candidate.releaseName,
+                metadata.title,
+                metadata.originalTitle,
+                seriesStructure,
+              );
+              const matches =
+                matched !== null &&
+                (!requestedEpisode ||
+                  (matched.season === requestedEpisode.seasonNumber &&
+                    matched.episode === requestedEpisode.episodeNumber));
+              if (!matches)
+                rejectedFiles.push({
+                  candidateId: candidate.ref.candidateId,
+                  providerId: candidate.ref.providerId,
+                  reason: "episode-mismatch",
+                });
+              return matches;
+            });
+            this.trace("DISCOVERY_MEDIA_FILTER", context, {
+              titleId,
+              resultCount: mediaCandidates.length,
+              matchingCount: matching.length,
+              rejected: rejectedFiles.slice(0, 50),
+            });
+            let attempted = 0;
+            for (const candidate of matching) {
+              context.signal?.throwIfAborted();
+              const key = `${candidate.ref.providerId}:${candidate.ref.candidateId}`;
+              if (seenCandidates.has(key)) continue;
+              if (attempted >= maxMediaCandidates) {
+                searchExhausted = false;
+                availabilityReasons.add("inspection-budget");
+                break;
+              }
+              seenCandidates.add(key);
+              attempted += 1;
+              const inspectedAt = this.#now().getTime();
+              try {
+                inspected.push({
+                  candidate,
+                  variant: await this.mediaProvider(
+                    candidate.ref.providerId,
+                  ).inspect(
+                    candidate.ref,
+                    this.scopedContext(candidate.ref.providerId, context),
+                  ),
+                });
+                providerFinds++;
+                this.trace("DISCOVERY_MEDIA_INSPECTION", context, {
+                  titleId,
+                  providerId: candidate.ref.providerId,
+                  candidateId: candidate.ref.candidateId,
+                  outcome: "accepted",
+                  durationMs: Math.max(0, this.#now().getTime() - inspectedAt),
+                });
+              } catch (error) {
+                this.trace("DISCOVERY_MEDIA_INSPECTION", context, {
+                  titleId,
+                  providerId: candidate.ref.providerId,
+                  candidateId: candidate.ref.candidateId,
+                  outcome: "rejected",
+                  durationMs: Math.max(0, this.#now().getTime() - inspectedAt),
+                  failure: discoveryFailure(error),
+                });
+                context.signal?.throwIfAborted();
+                availabilityReasons.add("inspection-rejected");
+                // A rejected/restricted file is not playable and is skipped.
+              }
+              if (providerFinds >= desiredPlayableSources) break;
+            }
           }
-          if (inspected.length >= desiredPlayableSources) break;
-        }
-        if (inspected.length >= desiredPlayableSources) break;
-        if (inspected.length > 0 && !searchAllVariants) break;
+        }),
+      );
+      if (providerJobs.some((result) => result.status === "rejected")) {
+        searchExhausted = false;
+        availabilityReasons.add("provider-query-failed-or-invalid-results");
+      }
+      context.signal?.throwIfAborted();
+      for (let index = inspected.length - 1; index >= 0; index--) {
+        if (
+          !this.#integrationStateStore.isConfigured(
+            inspected[index]!.candidate.ref.providerId,
+            context.profileId ?? "default",
+          )
+        )
+          inspected.splice(index, 1);
       }
       if (inspected.length > 0) {
         inspected.sort(
@@ -3748,7 +4012,17 @@ export class LiveContentCoordinator implements StreamerContentProvider {
         );
         const seenRefs = new Set<string>();
         const seenFiles = new Set<string>();
-        sources = inspected.flatMap((item) => {
+        sources = interleaveProviders(
+          orderMediaSources(
+            inspected.map((item) => ({
+              providerId: item.candidate.ref.providerId,
+              item,
+            })),
+            this.#mediaProviderOrder(context.profileId ?? "default"),
+          ).map((entry) => entry.item),
+          (item) => item.candidate.ref.providerId,
+          desiredPlayableSources,
+        ).flatMap((item) => {
           const ref = item.candidate.ref;
           const refKey = `${ref.providerId}:${ref.candidateId}`;
           const duplicateKey =
@@ -3781,6 +4055,10 @@ export class LiveContentCoordinator implements StreamerContentProvider {
             },
           ];
         });
+        sources = this.prioritizeSources(
+          context.profileId ?? "default",
+          sources,
+        );
         formats = uniqueFormats(sources.map((source) => source.format));
         playbackCandidates = sources.map((source) => ({
           providerId: source.providerId,

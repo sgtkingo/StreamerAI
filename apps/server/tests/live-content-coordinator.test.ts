@@ -248,6 +248,380 @@ function numberedSeriesStructure() {
 }
 
 describe("LiveContentCoordinator", () => {
+  function narutoProviders() {
+    const title = {
+      ...new PreviewContentProvider()
+        .bootstrapTitles()
+        .find((item) => item.kind === "series")!,
+      id: "sai:tmdb:series:42",
+      metadataProvider: "tmdb",
+      title: "Naruto Shippūden",
+      originalTitle: "ナルト 疾風伝",
+    };
+    const structure = numberedSeriesStructure();
+    structure.seasons = [structure.seasons[1]!];
+    structure.seasons[0]!.episodes = [structure.seasons[0]!.episodes[0]!];
+    const makeProvider = (
+      id: string,
+      count: number,
+      localizedOnly: boolean,
+    ): MediaProvider =>
+      ({
+        descriptor: () =>
+          ({ id, connectorVersion: "test" }) as ReturnType<
+            MediaProvider["descriptor"]
+          >,
+        search: vi.fn(async (request) =>
+          localizedOnly && request.originalTitle !== "Naruto Shippuden"
+            ? []
+            : Array.from({ length: count }, (_, index) => ({
+                ref: { providerId: id, candidateId: `${id}-${index}` },
+                releaseName: `Naruto.Shippuden.S01E01.release-${index}.mkv`,
+                sizeBytes: index + 100,
+                seasonNumber: 1,
+                episodeNumber: 1,
+                confidence: 0.5,
+                provenance: { ...provenance, providerId: id },
+              })),
+        ),
+        inspect: vi.fn(async (ref) => ({
+          ref,
+          variantId: ref.candidateId,
+          format: title.formats[0]!,
+          directPlay: true,
+          supportsHttpRange: true,
+          embeddedSubtitles: [],
+          provenance: { ...provenance, providerId: id },
+          expiresAt: null,
+        })),
+      }) as MediaProvider;
+    const hellspy = makeProvider("hellspy", 10, false);
+    const webshare = makeProvider("webshare", 2, true);
+    const metadata = {
+      getSeriesStructure: vi.fn().mockResolvedValue(structure),
+    } as unknown as MetadataProvider;
+    return { title, hellspy, webshare, metadata };
+  }
+
+  async function narutoCoordinator() {
+    const dependencies = narutoProviders();
+    const states = await connectedStateStore(["tmdb", "hellspy", "webshare"]);
+    const runtime = new LiveContentCoordinator({
+      ...dependencies,
+      agent: {} as AgentProvider,
+      media: registry([dependencies.hellspy, dependencies.webshare]),
+      integrationStateStore: states,
+      inference: {
+        provider: "ollama",
+        baseUrl: "http://127.0.0.1:11434",
+        model: "test",
+        minimumVersion: "0.5.0",
+        contextTokens: 4096,
+        maxOutputTokens: 512,
+        timeoutMs: 60_000,
+      },
+      localeForProfile: () => "en",
+      now: () => new Date(NOW),
+    });
+    return { ...dependencies, states, coordinator: runtime };
+  }
+
+  it("keeps searching alternate series titles for Webshare after Hellspy fills the episode source limit", async () => {
+    const { title, coordinator, webshare } = await narutoCoordinator();
+    const sources = await coordinator.forceSearchEpisode("default", title, {
+      seasonNumber: 1,
+      episodeNumber: 1,
+    });
+    expect(sources).toHaveLength(8);
+    expect(new Set(sources.map((source) => source.providerId))).toEqual(
+      new Set(["hellspy", "webshare"]),
+    );
+    expect(webshare.search).toHaveBeenCalledWith(
+      expect.objectContaining({ originalTitle: "Naruto Shippuden" }),
+      expect.anything(),
+    );
+  });
+
+  it("lets Webshare finish alternate queries while another provider is still searching", async () => {
+    const { coordinator, title, webshare, hellspy } = await narutoCoordinator();
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const original = vi.mocked(hellspy.search).getMockImplementation()!;
+    vi.mocked(hellspy.search).mockImplementation(async (...args) => {
+      await blocked;
+      return original(...args);
+    });
+    const pending = coordinator.forceSearchEpisode("default", title, {
+      seasonNumber: 1,
+      episodeNumber: 1,
+    });
+    try {
+      await vi.waitFor(() =>
+        expect(webshare.search).toHaveBeenCalledWith(
+          expect.objectContaining({ originalTitle: "Naruto Shippuden" }),
+          expect.anything(),
+        ),
+      );
+      expect(hellspy.inspect).not.toHaveBeenCalled();
+      await vi.waitFor(() => expect(webshare.inspect).toHaveBeenCalled());
+    } finally {
+      release();
+      await pending;
+    }
+  });
+
+  it("publishes background episode finds without waiting for another provider's search chain", async () => {
+    const { coordinator, title, webshare, hellspy } = await narutoCoordinator();
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const original = vi.mocked(hellspy.search).getMockImplementation()!;
+    vi.mocked(hellspy.search).mockImplementation(async (...args) => {
+      await blocked;
+      return original(...args);
+    });
+    await coordinator.getSeriesDetail("default", title, true);
+    try {
+      await vi.waitFor(() => expect(webshare.inspect).toHaveBeenCalled());
+      const detail = await coordinator.getSeriesDetail(
+        "default",
+        title,
+        false,
+        false,
+      );
+      expect(detail.seasons[0]?.episodes[0]?.availability).toBe("available");
+      expect(coordinator.isSeriesSearchActive(title.id)).toBe(true);
+      expect(hellspy.inspect).not.toHaveBeenCalled();
+    } finally {
+      release();
+      await vi.waitFor(() =>
+        expect(coordinator.isSeriesSearchActive(title.id)).toBe(false),
+      );
+    }
+  });
+
+  it("ranks local files first and uses the current profile order for playback fallback", async () => {
+    const dependencies = narutoProviders();
+    const local = {
+      ...dependencies.webshare,
+      descriptor: () => ({ id: "local-files", connectorVersion: "test" }),
+      search: vi.fn().mockResolvedValue([]),
+      createPlayback: vi.fn().mockResolvedValue({ providerId: "local-files" }),
+    } as MediaProvider;
+    dependencies.webshare.createPlayback = vi
+      .fn()
+      .mockResolvedValue({ providerId: "webshare" });
+    dependencies.hellspy.createPlayback = vi
+      .fn()
+      .mockResolvedValue({ providerId: "hellspy" });
+    const states = await connectedStateStore([
+      "tmdb",
+      "local-files",
+      "hellspy",
+      "webshare",
+    ]);
+    let order = ["local-files", "webshare", "hellspy"];
+    const coordinator = new LiveContentCoordinator({
+      ...dependencies,
+      agent: {} as AgentProvider,
+      media: registry([dependencies.hellspy, dependencies.webshare, local]),
+      mediaProviderOrder: () => order,
+      integrationStateStore: states,
+      inference: {
+        provider: "ollama",
+        baseUrl: "http://127.0.0.1:11434",
+        model: "test",
+        minimumVersion: "0.5.0",
+        contextTokens: 4096,
+        maxOutputTokens: 512,
+        timeoutMs: 60_000,
+      },
+      localeForProfile: () => "en",
+      now: () => new Date(NOW),
+    });
+    const title = {
+      ...dependencies.title,
+      sources: ["hellspy", "webshare", "local-files"].map(
+        (providerId, index) => ({
+          id: "abc"[index]!.repeat(32),
+          providerId,
+          candidateId: `${providerId}-file`,
+          releaseName: "Naruto.Shippuden.S01E01.mkv",
+          sizeBytes: 100,
+          format: dependencies.title.formats[0]!,
+          seasonNumber: 1,
+          episodeNumber: 1,
+          checkedAt: NOW,
+        }),
+      ),
+    };
+    expect(
+      (
+        await coordinator.preparePlayback("default", title, {
+          seasonNumber: 1,
+          episodeNumber: 1,
+        })
+      ).providerId,
+    ).toBe("local-files");
+    order = ["webshare", "local-files", "hellspy"];
+    expect(
+      (
+        await coordinator.preparePlayback("default", title, {
+          seasonNumber: 1,
+          episodeNumber: 1,
+        })
+      ).providerId,
+    ).toBe("webshare");
+  });
+
+  it("yields to requests and cancellation while fast adapters scan a large series", async () => {
+    const { coordinator, title, webshare, hellspy, metadata } =
+      await narutoCoordinator();
+    vi.mocked(webshare.search).mockResolvedValue([]);
+    vi.mocked(hellspy.search).mockResolvedValue([]);
+    const structure = numberedSeriesStructure();
+    structure.seasons = [structure.seasons[1]!];
+    const first = structure.seasons[0]!.episodes[0]!;
+    structure.seasons[0]!.episodes = Array.from({ length: 50 }, (_, index) => ({
+      ...first,
+      episodeNumber: index + 1,
+    }));
+    vi.mocked(metadata.getSeriesStructure).mockResolvedValue(
+      structure as never,
+    );
+    await coordinator.getSeriesDetail("default", title, true);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(coordinator.isSeriesSearchActive(title.id)).toBe(true);
+    coordinator.cancelSeriesSearch(title.id);
+    expect(coordinator.isSeriesSearchActive(title.id)).toBe(false);
+  });
+
+  it("also preserves other providers' title variants during discovery", async () => {
+    const dependencies = coordinatorDependencies();
+    const originalTitle = vi
+      .mocked(dependencies.metadata.getTitle)
+      .getMockImplementation()!;
+    vi.mocked(dependencies.metadata.getTitle).mockImplementation(
+      async (...args) => ({
+        ...(await originalTitle(...args)),
+        originalTitle: "正規一",
+      }),
+    );
+    const search = vi
+      .mocked(dependencies.media.search)
+      .getMockImplementation()!;
+    vi.mocked(dependencies.media.search).mockImplementation(async (...args) =>
+      args[0].originalTitle === null ? search(...args) : [],
+    );
+    dependencies.media.descriptor = () =>
+      ({ id: "webshare", connectorVersion: "test" }) as ReturnType<
+        MediaProvider["descriptor"]
+      >;
+    const hellspy = {
+      descriptor: () => ({ id: "hellspy", connectorVersion: "test" }),
+      search: vi.fn(async (request) =>
+        request.title === "Canonical One"
+          ? Array.from({ length: 20 }, (_, index) => ({
+              ref: { providerId: "hellspy", candidateId: `mirror-${index}` },
+              releaseName: `Canonical.One.2001.1080p.${index}.mkv`,
+              sizeBytes: 100 + index,
+              seasonNumber: null,
+              episodeNumber: null,
+              confidence: 0.5,
+              provenance: { ...provenance, providerId: "hellspy" },
+            }))
+          : [],
+      ),
+      inspect: vi.fn(async (ref, context) => ({
+        ...(await dependencies.media.inspect(ref, context)),
+        ref,
+        provenance: { ...provenance, providerId: "hellspy" },
+      })),
+    } as MediaProvider;
+    const states = await connectedStateStore([
+      "tmdb",
+      "hellspy",
+      "webshare",
+      "ollama",
+    ]);
+    const coordinator = new LiveContentCoordinator({
+      ...dependencies,
+      media: registry([hellspy, dependencies.media]),
+      integrationStateStore: states,
+      inference: {
+        provider: "ollama",
+        baseUrl: "http://127.0.0.1:11434",
+        model: "test",
+        minimumVersion: "0.5.0",
+        contextTokens: 4096,
+        maxOutputTokens: 512,
+        timeoutMs: 60_000,
+      },
+      localeForProfile: () => "en",
+      now: () => new Date(NOW),
+    });
+    const result = await coordinator.discover(
+      {
+        profileId: "default",
+        message: "Find a film",
+        sessionId: "provider-variants",
+        idempotencyKey: "provider-variants",
+      },
+      NOW,
+    );
+    expect(
+      new Set(
+        result.bestMatch?.title.sources?.map((source) => source.providerId),
+      ),
+    ).toEqual(new Set(["hellspy", "webshare"]));
+  });
+
+  it("hides disconnected persisted and in-memory episode sources without marking the episode ready", async () => {
+    const { title, coordinator, states, webshare } = await narutoCoordinator();
+    vi.mocked(webshare.search).mockResolvedValue([]);
+    const sources = await coordinator.forceSearchEpisode("default", title, {
+      seasonNumber: 1,
+      episodeNumber: 1,
+    });
+    const cached = { ...title, sources };
+    expect(
+      (await coordinator.getSeriesDetail("default", cached, false, false))
+        .seasons[0]?.episodes[0]?.availability,
+    ).toBe("available");
+    await states.delete("hellspy");
+    expect(
+      (await coordinator.getSeriesDetail("default", cached, false, false))
+        .seasons[0]?.episodes[0]?.availability,
+    ).toBe("unavailable");
+    expect(
+      await coordinator.forceSearchEpisode("default", cached, {
+        seasonNumber: 1,
+        episodeNumber: 1,
+      }),
+    ).toEqual([]);
+  });
+
+  it("discards a provider result when the account disconnects during the search", async () => {
+    const { title, coordinator, states, hellspy, webshare } =
+      await narutoCoordinator();
+    vi.mocked(webshare.search).mockResolvedValue([]);
+    const original = vi.mocked(hellspy.search).getMockImplementation()!;
+    vi.mocked(hellspy.search).mockImplementation(async (...args) => {
+      const results = await original(...args);
+      await states.delete("hellspy");
+      return results;
+    });
+    expect(
+      await coordinator.forceSearchEpisode("default", title, {
+        seasonNumber: 1,
+        episodeNumber: 1,
+      }),
+    ).toEqual([]);
+  });
+
   it("retries a transient media search failure before declaring a miss", async () => {
     const dependencies = coordinatorDependencies();
     vi.mocked(dependencies.media.search).mockRejectedValueOnce(
@@ -1357,13 +1731,23 @@ describe("LiveContentCoordinator", () => {
       }),
     } as unknown as MetadataProvider;
     const media = {
+      descriptor: () => ({ id: "webshare", connectorVersion: "test" }),
+      search: vi.fn().mockResolvedValue([]),
+    } as unknown as MediaProvider;
+    const local = {
+      descriptor: () => ({ id: "local-files", connectorVersion: "test" }),
       search: vi.fn().mockResolvedValue([]),
     } as unknown as MediaProvider;
     const coordinator = new LiveContentCoordinator({
       agent: {} as AgentProvider,
       metadata,
-      media,
-      integrationStateStore: await connectedStateStore(),
+      media: registry([media, local]),
+      integrationStateStore: await connectedStateStore([
+        "tmdb",
+        "webshare",
+        "local-files",
+        "ollama",
+      ]),
       inference: {
         provider: "ollama",
         baseUrl: "http://127.0.0.1:11434",

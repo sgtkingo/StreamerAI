@@ -1,5 +1,28 @@
 # Integration development
 
+The optional authenticated Hellspy media adapter, its upstream protocol and
+validation limits are documented in [HELLSPY.md](HELLSPY.md).
+
+Media search runs an independent bounded query/inspection chain for each connected
+provider. Providers start together; a slow remote source does not hold up another
+provider's alternate title queries or background episode updates. Failure and
+inspection limits apply per provider. Normalized results merge after validation,
+and disconnected providers remain excluded.
+
+Stream source order is a profile preference stored in SQLite. Settings supports
+drag-and-drop, keyboard arrow keys, and move buttons. Local storage comes first
+by default; saved order controls result ordering, Recommended, cached playback
+fallback, and the order in which provider jobs launch. All jobs still run in
+parallel, and explicit selection of a particular playable file remains supported.
+The same priority applies to discovery, manual episode lookup, background series
+lookup and persisted detail/Library/Home results. Each provider keeps its own
+search limits, so a preferred source cannot exhaust another provider's budget.
+
+`GET` and `PUT /api/v1/profiles/:profileId/media-source-preferences` read/save
+`{ providerOrder: string[] }`. IDs must be unique registered media providers;
+metadata and unknown IDs are rejected. Omitted/new sources append predictably,
+disconnect preserves the preference, and deleting a profile removes its order.
+
 Integrations are replaceable adapters. A provider name must not leak into
 Library, History, UI routing or canonical identity. The normative product and
 compliance rules are in [`../instructions/INTEGRATIONS.md`](../instructions/INTEGRATIONS.md).

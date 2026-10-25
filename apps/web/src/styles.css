@@ -1877,6 +1877,89 @@ textarea:not(:disabled):hover {
   margin: 0 0 4px;
   font-size: 14px;
 }
+
+.source-priority-controls {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 0 auto;
+}
+.source-priority-grip {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 44px;
+  padding: 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted, #91949e);
+  cursor: grab;
+  touch-action: pan-y;
+}
+.source-priority-grip:active {
+  cursor: grabbing;
+}
+.source-priority-grip svg {
+  width: 14px;
+  height: 24px;
+}
+.source-priority-number {
+  min-width: 1ch;
+  color: var(--text-muted, #91949e);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.source-priority-arrows {
+  display: flex;
+  flex-direction: column;
+}
+.source-priority-arrows button {
+  width: 28px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+.source-priority-arrows button:hover:not(:disabled),
+.source-priority-grip:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+}
+.source-priority-arrows button:disabled,
+.source-priority-grip:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+.source-priority-grip:focus-visible,
+.source-priority-arrows button:focus-visible {
+  outline: 2px solid var(--accent, #eac2a3);
+  outline-offset: 2px;
+}
+.integration-block--drop-target {
+  outline: 2px solid var(--accent, #eac2a3);
+  outline-offset: 2px;
+}
+.integration-block--dragging {
+  opacity: 0.5;
+}
+.source-priority-message {
+  font-size: 12px;
+}
+.source-priority-message.is-error {
+  color: var(--danger, #f0a0a0);
+}
+@media (pointer: coarse) {
+  .source-priority-arrows button {
+    width: 44px;
+    height: 44px;
+  }
+  .source-priority-grip {
+    height: 44px;
+  }
+}
 .integration-block__status {
   color: #adafba;
   font-size: 11px;

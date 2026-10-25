@@ -48,6 +48,10 @@ function createApi(): StreamerApi {
   ];
   return {
     getIntegrations: vi.fn().mockResolvedValue({ items: integrations }),
+    getMediaSourcePreferences: vi.fn().mockResolvedValue({
+      providerOrder: ["local-files", "webshare", "hellspy"],
+    }),
+    saveMediaSourcePreferences: vi.fn(),
     setIntegrationSelected: vi
       .fn()
       .mockImplementation(async (id, selected) => ({
@@ -83,6 +87,7 @@ function createApi(): StreamerApi {
       messageCode: "CONNECTED",
       persistence: "secure-local",
     }),
+    connectHellspy: vi.fn(),
     connectWebshare: vi.fn().mockResolvedValue({
       ok: true,
       integrationId: "webshare",

@@ -50,6 +50,15 @@ export {
 } from "./integrations/webshare-client.js";
 export { md5Crypt } from "./integrations/md5-crypt.js";
 export {
+  HellspyClient,
+  HELLSPY_SESSION_SECRET_KEY,
+  type HellspyClientOptions,
+} from "./integrations/hellspy-client.js";
+export {
+  HellspyMediaProvider,
+  type HellspyMediaProviderOptions,
+} from "./integrations/hellspy-media-provider.js";
+export {
   WebshareMediaProvider,
   type WebshareMediaProviderOptions,
 } from "./integrations/webshare-media-provider.js";

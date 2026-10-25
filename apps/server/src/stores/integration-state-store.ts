@@ -19,6 +19,8 @@ export interface IntegrationStateStore {
   readonly isPersistent: boolean;
 
   isReady(): Promise<boolean>;
+  /** Local connection snapshot for synchronous catalog projections. */
+  isConfigured(integrationId: string, profileId?: string): boolean;
   get(
     integrationId: string,
     profileId?: string,
@@ -39,6 +41,12 @@ export class NonPersistentMemoryIntegrationStateStore implements IntegrationStat
 
   async isReady(): Promise<boolean> {
     return true;
+  }
+
+  isConfigured(integrationId: string, profileId = "default"): boolean {
+    return (
+      this.#states.get(`${profileId}:${integrationId}`)?.configured === true
+    );
   }
 
   async get(
@@ -70,6 +78,14 @@ export class SqliteIntegrationStateStore implements IntegrationStateStore {
   readonly isPersistent = true;
 
   constructor(private readonly database: StreamerDatabase) {}
+
+  isConfigured(integrationId: string, profileId = "default"): boolean {
+    const state = this.database.integrations.get(integrationId, profileId);
+    return (
+      state?.enabled === true &&
+      (state.setupStatus === "ready" || state.setupStatus === "degraded")
+    );
+  }
 
   async isReady(): Promise<boolean> {
     try {
