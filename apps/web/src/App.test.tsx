@@ -49,6 +49,7 @@ function createApi(): StreamerApi {
   return {
     getIntegrations: vi.fn().mockResolvedValue({ items: integrations }),
     getMediaSourcePreferences: vi.fn().mockResolvedValue({
+      mode: "auto",
       providerOrder: ["local-files", "webshare", "hellspy"],
     }),
     saveMediaSourcePreferences: vi.fn(),

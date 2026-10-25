@@ -9,7 +9,10 @@ import {
   ProviderDescriptorSchema,
   TitleSourceSchema,
   orderMediaSources,
+  rankMediaSources,
+  mediaSourceRankingScore,
   resolveMediaSourceOrder,
+  type MediaSourceRankingMode,
   type AgentProvider,
   type CatalogTitle,
   type CanonicalTitlePayload,
@@ -192,6 +195,7 @@ export interface LiveContentCoordinatorOptions {
   metadata: MetadataProvider | ProviderRegistry<MetadataProvider>;
   media: MediaProvider | ProviderRegistry<MediaProvider>;
   mediaProviderOrder?: (profileId: string) => readonly string[];
+  mediaSourceMode?: (profileId: string) => MediaSourceRankingMode;
   integrationStateStore: IntegrationStateStore;
   /** Resolve only opaque vault pointers; adapters fetch their own credentials. */
   secretRefForProvider?: (
@@ -876,6 +880,8 @@ export class LiveContentCoordinator implements StreamerContentProvider {
   readonly #metadataProviders: ReadonlyMap<string, MetadataProvider>;
   readonly #mediaProviders: ReadonlyMap<string, MediaProvider>;
   readonly #mediaProviderOrder: (profileId: string) => readonly string[];
+  readonly #mediaSourceMode: (profileId: string) => MediaSourceRankingMode;
+  readonly #candidateScores = new Map<string, number>();
   readonly #integrationStateStore: IntegrationStateStore;
   readonly #secretRefForProvider: (
     providerId: string,
@@ -908,6 +914,7 @@ export class LiveContentCoordinator implements StreamerContentProvider {
     this.#mediaProviderOrder =
       options.mediaProviderOrder ??
       (() => resolveMediaSourceOrder([], [...this.#mediaProviders.keys()]));
+    this.#mediaSourceMode = options.mediaSourceMode ?? (() => "auto");
     this.#integrationStateStore = options.integrationStateStore;
     this.#secretRefForProvider = options.secretRefForProvider ?? (() => null);
     this.#inference = options.inference;
@@ -2707,6 +2714,8 @@ export class LiveContentCoordinator implements StreamerContentProvider {
                 candidate.ref,
                 this.scopedContext(candidate.ref.providerId, context),
               );
+              const rankingScore = sourceQuality(candidate, checked);
+              this.rememberCandidateScore(candidate.ref, rankingScore);
               seenFiles.add(fileKey);
               sources.push({
                 id: sourceId(title.id, candidate.ref),
@@ -2718,6 +2727,7 @@ export class LiveContentCoordinator implements StreamerContentProvider {
                 seasonNumber: episode.seasonNumber,
                 episodeNumber: episode.episodeNumber,
                 checkedAt: checked.provenance.retrievedAt,
+                rankingScore,
               });
             } catch {
               // Skip files that cannot be inspected as playable media.
@@ -2738,26 +2748,20 @@ export class LiveContentCoordinator implements StreamerContentProvider {
       seenFiles.add(fileKey);
       sources.push(source);
     }
+    const ranked = this.prioritizeSources(
+      profileId,
+      sources.filter((source) =>
+        this.#integrationStateStore.isConfigured(source.providerId, profileId),
+      ),
+    );
+    const selected = interleaveProviders(
+      ranked,
+      (source) => source.providerId,
+      8,
+    );
     const validated = TitleSourceSchema.array()
       .max(8)
-      .parse(
-        this.prioritizeSources(
-          profileId,
-          interleaveProviders(
-            this.prioritizeSources(
-              profileId,
-              sources.filter((source) =>
-                this.#integrationStateStore.isConfigured(
-                  source.providerId,
-                  profileId,
-                ),
-              ),
-            ),
-            (source) => source.providerId,
-            8,
-          ),
-        ),
-      );
+      .parse(this.prioritizeSources(profileId, selected));
     const key = `${profileId}:${episodeKey(title.id, episode)}`;
     this.#forcedEpisodeSources.set(key, validated);
     if (this.#forcedEpisodeSources.size > 100) {
@@ -2841,12 +2845,14 @@ export class LiveContentCoordinator implements StreamerContentProvider {
                 ...mirrors,
                 ...found,
               ]);
+              const selected = interleaveProviders(
+                combined,
+                (ref) => ref.providerId,
+                8,
+              );
               job.candidates.set(
                 key,
-                this.prioritizeSources(
-                  profileId,
-                  interleaveProviders(combined, (ref) => ref.providerId, 8),
-                ),
+                this.prioritizeSources(profileId, selected),
               );
             };
             const seen = new Set(
@@ -2925,12 +2931,18 @@ export class LiveContentCoordinator implements StreamerContentProvider {
                 if (seen.has(refKey)) continue;
                 seen.add(refKey);
                 try {
-                  await this.mediaProvider(candidate.ref.providerId).inspect(
+                  const checked = await this.mediaProvider(
+                    candidate.ref.providerId,
+                  ).inspect(
                     candidate.ref,
                     this.scopedContext(
                       candidate.ref.providerId,
                       episodeContext,
                     ),
+                  );
+                  this.rememberCandidateScore(
+                    candidate.ref,
+                    sourceQuality(candidate, checked),
                   );
                   signal?.throwIfAborted();
                   if (
@@ -3044,6 +3056,9 @@ export class LiveContentCoordinator implements StreamerContentProvider {
           source.episodeNumber === episode.episodeNumber
         : source.seasonNumber === null && source.episodeNumber === null,
     );
+    for (const source of storedSources) {
+      this.rememberCandidateScore(source, mediaSourceRankingScore(source));
+    }
     if (sourceId !== undefined) {
       const searchedSources = episode
         ? (this.#forcedEpisodeSources.get(
@@ -3122,11 +3137,15 @@ export class LiveContentCoordinator implements StreamerContentProvider {
       const found = jobs.flatMap((result) =>
         result.status === "fulfilled" ? result.value : [],
       );
-      const ordered = orderMediaSources(
-        found.map((item) => ({ providerId: item.candidate.providerId, item })),
-        this.#mediaProviderOrder(profileId),
+      const ordered = this.prioritizeSources(
+        profileId,
+        found.map(({ candidate, context }) => ({
+          ...candidate,
+          context,
+        })),
       );
-      for (const { item } of ordered) yield item;
+      for (const { candidateId, providerId, context } of ordered)
+        yield { candidate: { providerId, candidateId }, context };
       if (
         found.length === 0 &&
         jobs.every((result) => result.status === "rejected")
@@ -3269,11 +3288,40 @@ export class LiveContentCoordinator implements StreamerContentProvider {
     return provider;
   }
 
-  private prioritizeSources<T extends { providerId: string }>(
-    profileId: string,
-    sources: readonly T[],
-  ): T[] {
-    return orderMediaSources(sources, this.#mediaProviderOrder(profileId));
+  private rememberCandidateScore(
+    candidate: MediaCandidateRef,
+    score: number,
+  ): void {
+    const key = `${candidate.providerId}:${candidate.candidateId}`;
+    this.#candidateScores.set(key, score);
+    if (this.#candidateScores.size > 20_000) {
+      const oldest = this.#candidateScores.keys().next().value;
+      if (oldest) this.#candidateScores.delete(oldest);
+    }
+  }
+
+  private prioritizeSources<
+    T extends {
+      providerId: string;
+      candidateId: string;
+      rankingScore?: number;
+      format?: { resolution?: string | null };
+    },
+  >(profileId: string, sources: readonly T[]): T[] {
+    return rankMediaSources(
+      sources.map((source) => ({
+        source,
+        providerId: source.providerId,
+        rankingScore:
+          source.rankingScore ??
+          this.#candidateScores.get(
+            `${source.providerId}:${source.candidateId}`,
+          ),
+        format: source.format,
+      })),
+      this.#mediaSourceMode(profileId),
+      this.#mediaProviderOrder(profileId),
+    ).map((item) => item.source);
   }
 
   private scopedContext(id: string, context: ProviderContext): ProviderContext {
@@ -4012,17 +4060,22 @@ export class LiveContentCoordinator implements StreamerContentProvider {
         );
         const seenRefs = new Set<string>();
         const seenFiles = new Set<string>();
-        sources = interleaveProviders(
-          orderMediaSources(
-            inspected.map((item) => ({
-              providerId: item.candidate.ref.providerId,
-              item,
-            })),
-            this.#mediaProviderOrder(context.profileId ?? "default"),
-          ).map((entry) => entry.item),
+        const profileId = context.profileId ?? "default";
+        const ranked = rankMediaSources(
+          inspected.map((item) => ({
+            providerId: item.candidate.ref.providerId,
+            rankingScore: sourceQuality(item.candidate, item.variant),
+            item,
+          })),
+          this.#mediaSourceMode(profileId),
+          this.#mediaProviderOrder(profileId),
+        ).map((entry) => entry.item);
+        const selected = interleaveProviders(
+          ranked,
           (item) => item.candidate.ref.providerId,
           desiredPlayableSources,
-        ).flatMap((item) => {
+        );
+        sources = selected.flatMap((item) => {
           const ref = item.candidate.ref;
           const refKey = `${ref.providerId}:${ref.candidateId}`;
           const duplicateKey =
@@ -4032,6 +4085,8 @@ export class LiveContentCoordinator implements StreamerContentProvider {
           if (seenRefs.has(refKey) || seenFiles.has(duplicateKey)) return [];
           seenRefs.add(refKey);
           seenFiles.add(duplicateKey);
+          const rankingScore = sourceQuality(item.candidate, item.variant);
+          this.rememberCandidateScore(ref, rankingScore);
           const episode =
             metadata.kind === "series"
               ? episodeNumber(
@@ -4052,6 +4107,7 @@ export class LiveContentCoordinator implements StreamerContentProvider {
               seasonNumber: episode?.season ?? null,
               episodeNumber: episode?.episode ?? null,
               checkedAt: item.variant.provenance.retrievedAt,
+              rankingScore,
             },
           ];
         });

@@ -294,6 +294,7 @@ export function IntegrationManager({
   ]);
   const [addedIds, setAddedIds] = useState<string[]>([]);
   const [sourceOrder, setSourceOrder] = useState<string[]>([]);
+  const [sourceMode, setSourceMode] = useState<"auto" | "by-order">("auto");
   const [orderReady, setOrderReady] = useState(false);
   const [savingOrder, setSavingOrder] = useState(false);
   const [orderMessage, setOrderMessage] = useState("");
@@ -334,6 +335,7 @@ export function IntegrationManager({
       .then((result) => {
         if (active) {
           setSourceOrder(result.providerOrder);
+          setSourceMode(result.mode);
           setOrderReady(true);
         }
       })
@@ -385,37 +387,45 @@ export function IntegrationManager({
     const index = orderedIds.indexOf(id);
     return index < 0 ? orderedIds.length : index;
   };
-  const moveSource = async (id: string, target: string) => {
-    if (
-      id === target ||
-      savingOrder ||
-      !orderReady ||
-      !api.saveMediaSourcePreferences
-    )
-      return;
-    const previous = [...orderedIds];
-    const next = previous.filter((entry) => entry !== id);
-    const targetIndex = previous.indexOf(target);
-    if (!previous.includes(id) || targetIndex < 0) return;
-    next.splice(targetIndex, 0, id);
-    setSourceOrder(next);
+  const saveSourcePreferences = async (
+    nextOrder: string[],
+    nextMode: "auto" | "by-order",
+  ) => {
+    if (savingOrder || !orderReady || !api.saveMediaSourcePreferences) return;
+    const previousOrder = [...orderedIds];
+    const previousMode = sourceMode;
+    setSourceOrder(nextOrder);
+    setSourceMode(nextMode);
     setSavingOrder(true);
     setOrderError(false);
-    setOrderMessage("Saving source priority…");
+    setOrderMessage("Saving source preference…");
     try {
-      const result = await api.saveMediaSourcePreferences(next, profileId);
+      const result = await api.saveMediaSourcePreferences(
+        { mode: nextMode, providerOrder: nextOrder },
+        profileId,
+      );
       setSourceOrder(result.providerOrder);
-      setOrderMessage("Source priority saved.");
+      setSourceMode(result.mode);
+      setOrderMessage("Source preference saved.");
       onConnectionChange?.("source-priority", true);
     } catch {
-      setSourceOrder(previous);
+      setSourceOrder(previousOrder);
+      setSourceMode(previousMode);
       setOrderError(true);
       setOrderMessage(
-        "Could not save source priority. Your previous order is still active.",
+        "Could not save source preference. Your previous selection is still active.",
       );
     } finally {
       setSavingOrder(false);
     }
+  };
+  const moveSource = async (id: string, target: string) => {
+    if (id === target) return;
+    const next = orderedIds.filter((entry) => entry !== id);
+    const targetIndex = orderedIds.indexOf(target);
+    if (!orderedIds.includes(id) || targetIndex < 0) return;
+    next.splice(targetIndex, 0, id);
+    await saveSourcePreferences(next, sourceMode);
   };
   const pickerItems = items.filter(
     (item) =>
@@ -660,9 +670,41 @@ export function IntegrationManager({
                   <h3>{group.title}</h3>
                   <p>
                     {group.id === "media" && context === "settings"
-                      ? "Drag sources to set your preference. Higher sources lead Recommended; all connected sources search in parallel. Local storage comes first by default."
+                      ? "All connected sources search in parallel. Auto recommends the highest scoring file. By Order favors the first provider, even when its file scores lower. Local storage starts first in the order."
                       : group.description}
                   </p>
+                  {group.id === "media" && context === "settings" && (
+                    <fieldset
+                      className="source-ranking-mode"
+                      disabled={!orderReady || savingOrder}
+                    >
+                      <legend>Recommended source</legend>
+                      <label>
+                        <input
+                          type="radio"
+                          name="source-ranking-mode"
+                          value="auto"
+                          checked={sourceMode === "auto"}
+                          onChange={() =>
+                            void saveSourcePreferences(orderedIds, "auto")
+                          }
+                        />
+                        Auto
+                      </label>
+                      <label>
+                        <input
+                          type="radio"
+                          name="source-ranking-mode"
+                          value="by-order"
+                          checked={sourceMode === "by-order"}
+                          onChange={() =>
+                            void saveSourcePreferences(orderedIds, "by-order")
+                          }
+                        />
+                        By Order
+                      </label>
+                    </fieldset>
+                  )}
                   {group.id === "media" && orderMessage && (
                     <p
                       className={

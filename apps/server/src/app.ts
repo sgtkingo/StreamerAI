@@ -293,6 +293,8 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
       profileId,
       media.list().map((provider) => provider.descriptor().id),
     );
+  const mediaSourceMode = (profileId: string) =>
+    sourcePreferences.mode(profileId);
   const subtitleProviders = new AdapterRegistry<SubtitleProvider>(
     "subtitle",
     options.subtitleProviders?.list() ?? [],
@@ -424,6 +426,7 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
           metadata,
           media,
           mediaProviderOrder,
+          mediaSourceMode,
           integrationStateStore: stores.integrationStateStore,
           secretRefForProvider: (providerId, profileId) =>
             database.integrations.getSecretRef(providerId, profileId),
@@ -449,6 +452,7 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
       media.get(providerId) !== null &&
       stores.integrationStateStore.isConfigured(providerId, profileId),
     mediaProviderOrder,
+    mediaSourceMode,
   );
   const availabilityTimer =
     environment === "test"

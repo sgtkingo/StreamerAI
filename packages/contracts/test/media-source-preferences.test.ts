@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   MediaSourcePreferencesSchema,
   orderMediaSources,
+  rankMediaSources,
   resolveMediaSourceOrder,
 } from "../src/index.js";
 
@@ -29,6 +30,23 @@ describe("media source preference contract", () => {
       sources[2],
     ]);
     expect(sources[0]?.providerId).toBe("webshare");
+  });
+  it("defaults old preferences to Auto and ranks lower scoring providers first only in By Order", () => {
+    expect(
+      MediaSourcePreferencesSchema.parse({
+        providerOrder: ["local-files", "webshare"],
+      }).mode,
+    ).toBe("auto");
+    const sources = [
+      { providerId: "local-files", rankingScore: 60 },
+      { providerId: "webshare", rankingScore: 90 },
+    ];
+    expect(
+      rankMediaSources(sources, "auto", ["local-files", "webshare"]),
+    ).toEqual([sources[1], sources[0]]);
+    expect(
+      rankMediaSources(sources, "by-order", ["local-files", "webshare"]),
+    ).toEqual(sources);
   });
   it("rejects duplicates, malformed IDs and unexpected fields", () => {
     for (const value of [

@@ -187,7 +187,7 @@ export interface StreamerApi {
     profileId?: string,
   ): Promise<MediaSourcePreferences>;
   saveMediaSourcePreferences(
-    providerOrder: string[],
+    preferences: MediaSourcePreferences,
     profileId?: string,
   ): Promise<MediaSourcePreferences>;
   getIntegrations(
@@ -688,10 +688,10 @@ export const apiClient: StreamerApi = {
     request<unknown>(
       `/profiles/${encodeURIComponent(profileId)}/media-source-preferences`,
     ).then((value) => MediaSourcePreferencesSchema.parse(value)),
-  saveMediaSourcePreferences: (providerOrder, profileId = "default") =>
+  saveMediaSourcePreferences: (preferences, profileId = "default") =>
     request<unknown>(
       `/profiles/${encodeURIComponent(profileId)}/media-source-preferences`,
-      { method: "PUT", body: JSON.stringify({ providerOrder }) },
+      { method: "PUT", body: JSON.stringify(preferences) },
     ).then((value) => MediaSourcePreferencesSchema.parse(value)),
   searchEnvironmentLocations: (query, language = "en", signal) =>
     request<EnvironmentLocationsResponse>(

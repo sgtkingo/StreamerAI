@@ -58,10 +58,13 @@ function apiWith(integrations: IntegrationCatalogItem[]) {
     getIntegrations: vi.fn().mockResolvedValue({ items: integrations }),
     getMediaSourcePreferences: vi
       .fn()
-      .mockResolvedValue({ providerOrder: ["local-files", "webshare"] }),
+      .mockResolvedValue({
+        mode: "auto",
+        providerOrder: ["local-files", "webshare"],
+      }),
     saveMediaSourcePreferences: vi
       .fn()
-      .mockImplementation(async (providerOrder) => ({ providerOrder })),
+      .mockImplementation(async (preferences) => preferences),
     setIntegrationSelected: vi
       .fn()
       .mockImplementation(async (id: string, selected: boolean) => ({
@@ -99,6 +102,24 @@ function apiWith(integrations: IntegrationCatalogItem[]) {
 }
 
 describe("integration manager", () => {
+  it("defaults to Auto and saves By Order for the active profile", async () => {
+    const user = userEvent.setup();
+    const api = apiWith(items);
+    render(
+      <IntegrationManager api={api} context="settings" profileId="viewer" />,
+    );
+    const auto = await screen.findByRole("radio", { name: "Auto" });
+    const byOrder = screen.getByRole("radio", { name: "By Order" });
+    await waitFor(() => expect(auto).toBeChecked());
+    await user.click(byOrder);
+    await waitFor(() =>
+      expect(api.saveMediaSourcePreferences).toHaveBeenCalledWith(
+        { mode: "by-order", providerOrder: ["local-files", "webshare"] },
+        "viewer",
+      ),
+    );
+    expect(byOrder).toBeChecked();
+  });
   it("defaults local storage first and saves a drag-and-drop source order for this profile", async () => {
     const configured = items.map((item) =>
       item.id === "local-files" ? { ...item, configured: true } : item,
@@ -132,7 +153,7 @@ describe("integration manager", () => {
     fireEvent.drop(local.closest("article")!, { dataTransfer: transfer });
     await waitFor(() =>
       expect(api.saveMediaSourcePreferences).toHaveBeenCalledWith(
-        ["webshare", "local-files"],
+        { mode: "auto", providerOrder: ["webshare", "local-files"] },
         "viewer",
       ),
     );
@@ -142,7 +163,7 @@ describe("integration manager", () => {
         .map((heading) => heading.textContent),
     ).toEqual(["Webshare", "Local folder or drive"]);
     expect(
-      await screen.findByText("Source priority saved."),
+      await screen.findByText("Source preference saved."),
     ).toBeInTheDocument();
   });
 
@@ -164,7 +185,7 @@ describe("integration manager", () => {
     grip.focus();
     await user.keyboard("{ArrowUp}");
     expect(
-      await screen.findByText(/Your previous order is still active/),
+      await screen.findByText(/Your previous selection is still active/),
     ).toBeInTheDocument();
     const region = screen.getByRole("region", { name: "Stream sources" });
     expect(
@@ -174,7 +195,7 @@ describe("integration manager", () => {
     ).toEqual(["Local folder or drive", "Webshare"]);
     await user.click(screen.getByRole("button", { name: "Move Webshare up" }));
     expect(
-      await screen.findByText("Source priority saved."),
+      await screen.findByText("Source preference saved."),
     ).toBeInTheDocument();
     expect(
       within(region).getAllByRole("heading", { level: 4 })[0],

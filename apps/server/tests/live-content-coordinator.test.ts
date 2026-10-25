@@ -424,11 +424,13 @@ describe("LiveContentCoordinator", () => {
       "webshare",
     ]);
     let order = ["local-files", "webshare", "hellspy"];
+    let mode: "auto" | "by-order" = "by-order";
     const coordinator = new LiveContentCoordinator({
       ...dependencies,
       agent: {} as AgentProvider,
       media: registry([dependencies.hellspy, dependencies.webshare, local]),
       mediaProviderOrder: () => order,
+      mediaSourceMode: () => mode,
       integrationStateStore: states,
       inference: {
         provider: "ollama",
@@ -455,6 +457,7 @@ describe("LiveContentCoordinator", () => {
           seasonNumber: 1,
           episodeNumber: 1,
           checkedAt: NOW,
+          rankingScore: [60, 90, 70][index],
         }),
       ),
     };
@@ -467,6 +470,16 @@ describe("LiveContentCoordinator", () => {
       ).providerId,
     ).toBe("local-files");
     order = ["webshare", "local-files", "hellspy"];
+    expect(
+      (
+        await coordinator.preparePlayback("default", title, {
+          seasonNumber: 1,
+          episodeNumber: 1,
+        })
+      ).providerId,
+    ).toBe("webshare");
+    mode = "auto";
+    order = ["local-files", "hellspy", "webshare"];
     expect(
       (
         await coordinator.preparePlayback("default", title, {
@@ -1546,6 +1559,9 @@ describe("LiveContentCoordinator", () => {
       inspect: vi.fn().mockImplementation(async (ref) => ({
         ref,
         variantId: ref.candidateId,
+        format: title.formats[0]!,
+        directPlay: true,
+        supportsHttpRange: true,
       })),
       createPlayback: vi.fn().mockResolvedValue({ titleId: title.id }),
     } as unknown as MediaProvider;

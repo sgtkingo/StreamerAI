@@ -17,6 +17,7 @@ export function registerMediaSourcePreferenceRoutes(
     if (!dependencies.database.profiles.get(profileId))
       return reply.code(404).send();
     return {
+      mode: dependencies.store.mode(profileId),
       providerOrder: dependencies.store.order(
         profileId,
         dependencies.providerIds(),
@@ -39,7 +40,14 @@ export function registerMediaSourcePreferenceRoutes(
           message: "Choose each stream source at most once.",
         },
       });
-    dependencies.store.set(profileId, parsed.data.providerOrder);
-    return { providerOrder: dependencies.store.order(profileId, known) };
+    dependencies.store.set(
+      profileId,
+      parsed.data.providerOrder,
+      parsed.data.mode,
+    );
+    return {
+      mode: dependencies.store.mode(profileId),
+      providerOrder: dependencies.store.order(profileId, known),
+    };
   });
 }

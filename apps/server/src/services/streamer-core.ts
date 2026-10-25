@@ -10,8 +10,9 @@ import {
   mergeAppearancePreferences,
   ViewerProfileSchema,
   TitleDetailSchema,
-  orderMediaSources,
+  rankMediaSources,
   resolveMediaSourceOrder,
+  type MediaSourceRankingMode,
   type PlaybackPreferences,
   type AppearancePreferences,
   type UpdateViewerProfile,
@@ -113,6 +114,9 @@ export class StreamerCore {
     private readonly mediaProviderOrder?: (
       profileId: string,
     ) => readonly string[],
+    private readonly mediaSourceMode?: (
+      profileId: string,
+    ) => MediaSourceRankingMode,
   ) {
     this.preferredSources = new PreferredSourceStore(database);
     this.priorities = new TitlePriorityStore(database, now);
@@ -1460,8 +1464,9 @@ export class StreamerCore {
     if (!projected.sources) return projected;
     return {
       ...projected,
-      sources: orderMediaSources(
+      sources: rankMediaSources(
         projected.sources,
+        this.mediaSourceMode?.(profileId) ?? "auto",
         this.mediaProviderOrder?.(profileId) ??
           resolveMediaSourceOrder(
             [],

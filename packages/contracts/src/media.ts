@@ -67,6 +67,7 @@ export const TitleSourceSchema = z
     seasonNumber: z.number().int().nonnegative().nullable(),
     episodeNumber: z.number().int().positive().nullable(),
     checkedAt: z.string().datetime({ offset: true }),
+    rankingScore: z.number().finite().min(0).max(120).optional(),
   })
   .strict()
   .superRefine((source, context) => {

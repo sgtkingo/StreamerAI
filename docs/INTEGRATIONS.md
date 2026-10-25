@@ -9,17 +9,20 @@ provider's alternate title queries or background episode updates. Failure and
 inspection limits apply per provider. Normalized results merge after validation,
 and disconnected providers remain excluded.
 
-Stream source order is a profile preference stored in SQLite. Settings supports
-drag-and-drop, keyboard arrow keys, and move buttons. Local storage comes first
-by default; saved order controls result ordering, Recommended, cached playback
-fallback, and the order in which provider jobs launch. All jobs still run in
-parallel, and explicit selection of a particular playable file remains supported.
-The same priority applies to discovery, manual episode lookup, background series
-lookup and persisted detail/Library/Home results. Each provider keeps its own
-search limits, so a preferred source cannot exhaust another provider's budget.
+Source ranking is a profile preference stored in SQLite. `Auto` is the default:
+verified files are ordered by the stored quality score (provider confidence,
+resolution, HTTP Range and direct-play support). `By Order` first compares the
+provider positions configured in Settings, then the score within a provider.
+Settings supports drag-and-drop, keyboard arrow keys and move buttons; local
+storage starts first in this order. The mode controls Recommended, cached
+playback fallback and discovery/manual episode results. Explicitly selected or
+remembered title/episode files still take precedence at playback. All connected
+providers search in parallel with separate limits. Older stored source records
+without a score use their known resolution until rediscovery updates them.
 
 `GET` and `PUT /api/v1/profiles/:profileId/media-source-preferences` read/save
-`{ providerOrder: string[] }`. IDs must be unique registered media providers;
+`{ mode: "auto" | "by-order", providerOrder: string[] }`. Older saved values
+without `mode` default to `auto`. IDs must be unique registered media providers;
 metadata and unknown IDs are rejected. Omitted/new sources append predictably,
 disconnect preserves the preference, and deleting a profile removes its order.
 

@@ -39,6 +39,7 @@ describe("profile media source preferences", () => {
           seasonNumber: null,
           episodeNumber: null,
           checkedAt: now,
+          rankingScore: [60, 90, 70][index],
         }),
       ),
     });
@@ -89,7 +90,7 @@ describe("profile media source preferences", () => {
       .json()
       .title.sources.map((source: { providerId: string }) => source.providerId);
   }
-  it("defaults to local storage and applies saved priority to Recommended ordering", async () => {
+  it("defaults to Auto and lets By Order recommend a lower scoring preferred provider", async () => {
     const { app, movie } = await setup();
     const initial = await app.inject(
       "/api/v1/profiles/default/media-source-preferences",
@@ -99,18 +100,37 @@ describe("profile media source preferences", () => {
       "webshare",
       "hellspy",
     ]);
-    expect((await providerIds(app, movie))[0]).toBe("local-files");
+    expect(initial.json().mode).toBe("auto");
+    expect(await providerIds(app, movie)).toEqual([
+      "webshare",
+      "local-files",
+      "hellspy",
+    ]);
     const saved = await app.inject({
       method: "PUT",
       url: "/api/v1/profiles/default/media-source-preferences",
-      payload: { providerOrder: ["hellspy", "local-files", "webshare"] },
+      payload: {
+        mode: "by-order",
+        providerOrder: ["hellspy", "local-files", "webshare"],
+      },
     });
     expect(saved.statusCode).toBe(200);
+    expect(saved.json().mode).toBe("by-order");
     expect(await providerIds(app, movie)).toEqual([
       "hellspy",
       "local-files",
       "webshare",
     ]);
+    const reset = await app.inject({
+      method: "PUT",
+      url: "/api/v1/profiles/default/media-source-preferences",
+      payload: {
+        mode: "auto",
+        providerOrder: ["hellspy", "local-files", "webshare"],
+      },
+    });
+    expect(reset.statusCode).toBe(200);
+    expect((await providerIds(app, movie))[0]).toBe("webshare");
   });
   it("persists across app recreation and keeps other profiles at their own defaults", async () => {
     const { app, options } = await setup();

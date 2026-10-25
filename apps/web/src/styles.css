@@ -1884,6 +1884,37 @@ textarea:not(:disabled):hover {
   gap: 5px;
   flex: 0 0 auto;
 }
+.source-ranking-mode {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0;
+  padding: 0;
+  border: 0;
+}
+.source-ranking-mode legend {
+  margin-bottom: 8px;
+  color: var(--text-muted, #91949e);
+  font-size: 12px;
+}
+.source-ranking-mode label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 36px;
+  padding: 5px 12px;
+  border: 1px solid var(--border, #404047);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.source-ranking-mode label:has(input:checked) {
+  border-color: var(--accent, #e9b99c);
+  background: color-mix(in srgb, var(--accent, #e9b99c) 12%, transparent);
+}
+.source-ranking-mode:disabled label {
+  opacity: 0.55;
+  cursor: default;
+}
 .source-priority-grip {
   display: grid;
   place-items: center;
