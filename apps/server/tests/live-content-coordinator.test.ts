@@ -1106,6 +1106,90 @@ describe("LiveContentCoordinator", () => {
     expect(dependencies.media.inspect).toHaveBeenCalledTimes(3);
   });
 
+  it("searches a named series without the surrounding request words", async () => {
+    const dependencies = coordinatorDependencies();
+    vi.mocked(dependencies.metadata.search).mockResolvedValue([
+      {
+        ref: { providerId: "tmdb", externalId: "42", entityType: "series" },
+        kind: "series",
+        title: "Naruto Shippūden",
+        originalTitle: "ナルト 疾風伝",
+        year: 2007,
+        confidence: 1,
+        provenance,
+      },
+    ]);
+    vi.mocked(dependencies.metadata.getTitle).mockResolvedValue({
+      ...metadataPayload("42", "Naruto Shippūden"),
+      ref: { providerId: "tmdb", externalId: "42", entityType: "series" },
+      kind: "series",
+      originalTitle: "ナルト 疾風伝",
+      year: 2007,
+    });
+    dependencies.metadata.getSeriesStructure = vi
+      .fn()
+      .mockResolvedValue(numberedSeriesStructure());
+    vi.mocked(dependencies.media.search).mockResolvedValue([]);
+    const coordinator = await seriesCoordinator(dependencies);
+    const result = await coordinator.discoverFast(
+      {
+        profileId: "default",
+        sessionId: "naruto-series",
+        message: "Najdi Naruto Shippuden seriál",
+        idempotencyKey: "naruto-series",
+      },
+      NOW,
+    );
+    expect(dependencies.metadata.search).toHaveBeenCalledWith(
+      expect.objectContaining({ query: "naruto shippuden", kind: "series" }),
+      expect.anything(),
+    );
+    expect(
+      [
+        ...result.available,
+        ...result.unavailable,
+        ...result.unverified,
+        ...(result.bestMatch ? [result.bestMatch] : []),
+      ].some((item) => item.title.title === "Naruto Shippūden"),
+    ).toBe(true);
+    const deep = await coordinator.discover(
+      {
+        profileId: "default",
+        sessionId: "naruto-series-deep",
+        message: "Najdi Naruto Shippuden seriál",
+        idempotencyKey: "naruto-series-deep",
+      },
+      NOW,
+    );
+    expect(
+      [
+        ...deep.available,
+        ...deep.unavailable,
+        ...deep.unverified,
+        ...(deep.bestMatch ? [deep.bestMatch] : []),
+      ].some((item) => item.title.title === "Naruto Shippūden"),
+    ).toBe(true);
+    expect(dependencies.generateStructured).not.toHaveBeenCalled();
+    const bare = await coordinator.discover(
+      {
+        profileId: "default",
+        sessionId: "naruto-bare-deep",
+        message: "naruto shippuden",
+        idempotencyKey: "naruto-bare-deep",
+      },
+      NOW,
+    );
+    expect(
+      [
+        ...bare.available,
+        ...bare.unavailable,
+        ...bare.unverified,
+        ...(bare.bestMatch ? [bare.bestMatch] : []),
+      ].some((item) => item.title.title === "Naruto Shippūden"),
+    ).toBe(true);
+    expect(dependencies.generateStructured).not.toHaveBeenCalled();
+  });
+
   it("checks beyond two restricted files before declaring a quick title unavailable", async () => {
     const dependencies = coordinatorDependencies();
     vi.mocked(dependencies.media.search).mockResolvedValue(

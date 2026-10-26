@@ -181,7 +181,7 @@ export class TmdbMetadataProvider implements MetadataProvider {
     const started = this.#now().getTime();
     try {
       await this.#client
-        .forProfile((context.profileId ?? "default"))
+        .forProfile(context.profileId ?? "default")
         .getFeed(
           "movie",
           "trending",
@@ -218,7 +218,7 @@ export class TmdbMetadataProvider implements MetadataProvider {
     if (query.person !== null) {
       const people = results(
         await this.#client
-          .forProfile((context.profileId ?? "default"))
+          .forProfile(context.profileId ?? "default")
           .searchPerson(
             query.person,
             tmdbLanguage(query.locale),
@@ -235,7 +235,7 @@ export class TmdbMetadataProvider implements MetadataProvider {
       if (person === undefined) return [];
       const credits = object(
         await this.#client
-          .forProfile((context.profileId ?? "default"))
+          .forProfile(context.profileId ?? "default")
           .getPersonCombinedCredits(
             positiveInteger(person.id),
             tmdbLanguage(query.locale),
@@ -263,22 +263,26 @@ export class TmdbMetadataProvider implements MetadataProvider {
       kinds.map(async (kind) => {
         const response =
           kind === "movie"
-            ? await this.#client.forProfile((context.profileId ?? "default")).searchMovie(
-                {
-                  query: query.query,
-                  ...(query.year === null ? {} : { year: query.year }),
-                  language: tmdbLanguage(query.locale),
-                },
-                context.signal,
-              )
-            : await this.#client.forProfile((context.profileId ?? "default")).searchSeries(
-                {
-                  query: query.query,
-                  ...(query.year === null ? {} : { year: query.year }),
-                  language: tmdbLanguage(query.locale),
-                },
-                context.signal,
-              );
+            ? await this.#client
+                .forProfile(context.profileId ?? "default")
+                .searchMovie(
+                  {
+                    query: query.query,
+                    ...(query.year === null ? {} : { year: query.year }),
+                    language: tmdbLanguage(query.locale),
+                  },
+                  context.signal,
+                )
+            : await this.#client
+                .forProfile(context.profileId ?? "default")
+                .searchSeries(
+                  {
+                    query: query.query,
+                    ...(query.year === null ? {} : { year: query.year }),
+                    language: tmdbLanguage(query.locale),
+                  },
+                  context.signal,
+                );
         return results(response).flatMap((item): MetadataCandidate[] => {
           if (!Number.isInteger(item.id)) return [];
           if (
@@ -313,7 +317,21 @@ export class TmdbMetadataProvider implements MetadataProvider {
         });
       }),
     );
-    return candidates.flat().slice(0, query.limit);
+    if (candidates.length === 1) return candidates[0]!.slice(0, query.limit);
+    // A franchise can have enough movie hits to fill the entire shared limit.
+    // Keep TV results eligible when the caller has not specified a kind.
+    const balanced: MetadataCandidate[] = [];
+    for (let position = 0; balanced.length < query.limit; position++) {
+      let added = false;
+      for (const group of candidates) {
+        const candidate = group[position];
+        if (!candidate || balanced.length >= query.limit) continue;
+        balanced.push(candidate);
+        added = true;
+      }
+      if (!added) break;
+    }
+    return balanced;
   }
 
   async discover(
@@ -332,7 +350,7 @@ export class TmdbMetadataProvider implements MetadataProvider {
     const retrievedAt = this.#now().toISOString();
     for (let page = 1; page <= 3 && candidates.length < request.limit; page++) {
       const response = object(
-        await this.#client.forProfile((context.profileId ?? "default")).discover(
+        await this.#client.forProfile(context.profileId ?? "default").discover(
           request.kind,
           {
             genreIds: ids as number[],
@@ -395,7 +413,7 @@ export class TmdbMetadataProvider implements MetadataProvider {
     if (cached !== undefined) return cached;
     const body = object(
       await this.#client
-        .forProfile((context.profileId ?? "default"))
+        .forProfile(context.profileId ?? "default")
         .getGenres(kind, context.signal),
     );
     if (!Array.isArray(body.genres)) {
@@ -426,7 +444,7 @@ export class TmdbMetadataProvider implements MetadataProvider {
           try {
             const details = object(
               await this.#client
-                .forProfile((context.profileId ?? "default"))
+                .forProfile(context.profileId ?? "default")
                 .getSeries(
                   Number(item.id),
                   tmdbLanguage(context.locale),
@@ -458,10 +476,10 @@ export class TmdbMetadataProvider implements MetadataProvider {
     const body = object(
       ref.entityType === "movie"
         ? await this.#client
-            .forProfile((context.profileId ?? "default"))
+            .forProfile(context.profileId ?? "default")
             .getMovie(id, tmdbLanguage(context.locale), context.signal)
         : await this.#client
-            .forProfile((context.profileId ?? "default"))
+            .forProfile(context.profileId ?? "default")
             .getSeries(id, tmdbLanguage(context.locale), context.signal),
     );
     const retrievedAt = this.#now().toISOString();
@@ -517,7 +535,7 @@ export class TmdbMetadataProvider implements MetadataProvider {
     const seriesId = positiveInteger(Number(ref.externalId));
     const details = object(
       await this.#client
-        .forProfile((context.profileId ?? "default"))
+        .forProfile(context.profileId ?? "default")
         .getSeries(seriesId, tmdbLanguage(context.locale), context.signal),
     );
     if (!Array.isArray(details.seasons)) {
@@ -531,7 +549,7 @@ export class TmdbMetadataProvider implements MetadataProvider {
       const seasonNumber = Number(summary.season_number);
       const body = object(
         await this.#client
-          .forProfile((context.profileId ?? "default"))
+          .forProfile(context.profileId ?? "default")
           .getSeason(
             seriesId,
             seasonNumber,
@@ -598,10 +616,10 @@ export class TmdbMetadataProvider implements MetadataProvider {
     const body = object(
       ref.entityType === "movie"
         ? await this.#client
-            .forProfile((context.profileId ?? "default"))
+            .forProfile(context.profileId ?? "default")
             .getMovie(id, tmdbLanguage(context.locale), context.signal)
         : await this.#client
-            .forProfile((context.profileId ?? "default"))
+            .forProfile(context.profileId ?? "default")
             .getSeries(id, tmdbLanguage(context.locale), context.signal),
     );
     if (typeof body.vote_average !== "number") return [];
@@ -634,7 +652,7 @@ export class TmdbMetadataProvider implements MetadataProvider {
       kinds.map(async (kind) =>
         results(
           await this.#client
-            .forProfile((context.profileId ?? "default"))
+            .forProfile(context.profileId ?? "default")
             .getFeed(kind, feed, tmdbLanguage(request.locale), context.signal),
         ).flatMap((item): MetadataCandidate[] => {
           if (!Number.isInteger(item.id)) return [];

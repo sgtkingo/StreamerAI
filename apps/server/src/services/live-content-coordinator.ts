@@ -769,6 +769,37 @@ function fastSimilarity(
   );
 }
 
+function fastTitleSearch(message: string): {
+  query: string;
+  kind: "series" | null;
+} {
+  const normalized = normalize(message);
+  const seriesWord = "(?:series|serial|serie|serien|tv show)";
+  const seriesRequested = new RegExp(`(?:^| )${seriesWord}(?: |$)`).test(
+    normalized,
+  );
+  if (!seriesRequested) return { query: message, kind: null };
+  const query = normalized
+    .replace(/^(?:find|search|look for|najdi|hledam|chci|watch|play)\s+/, "")
+    .replace(/^(?:a|the|ten)\s+/, "")
+    .replace(new RegExp(`^${seriesWord}\\s+`), "")
+    .replace(new RegExp(`\\s+${seriesWord}$`), "")
+    .trim();
+  return query ? { query, kind: "series" } : { query: message, kind: null };
+}
+
+function plainTitleQuery(message: string): boolean {
+  const terms = words(message);
+  return (
+    terms.length === 2 &&
+    !terms.some((term) =>
+      /^(?:find|search|watch|play|najdi|hledam|chci|movie|movies|film|films|series|serial|show|something|anything)$/.test(
+        term,
+      ),
+    )
+  );
+}
+
 function accentColor(id: string): string {
   const digest = createHash("sha256").update(id).digest();
   const channels = [...digest.subarray(0, 3)].map((value) => 48 + (value % 96));
@@ -1098,6 +1129,39 @@ export class LiveContentCoordinator implements StreamerContentProvider {
         ],
         completedAt,
       });
+    }
+
+    const namedSeries = fastTitleSearch(request.message);
+    if (
+      (namedSeries.kind === "series" || plainTitleQuery(request.message)) &&
+      !parseThematicDiscoveryIntent(request.message)
+    ) {
+      try {
+        const direct = await this.discoverFast(
+          request,
+          completedAt,
+          conversation,
+        );
+        if (
+          discoveryItems(direct).some(
+            (item) =>
+              (namedSeries.kind === null || item.title.kind === "series") &&
+              [item.title.title, item.title.originalTitle].some(
+                (name) =>
+                  name !== null &&
+                  normalize(name) === normalize(namedSeries.query),
+              ),
+          )
+        ) {
+          return {
+            ...direct,
+            reply: "I found the requested title in the catalog.",
+          };
+        }
+      } catch {
+        context.signal?.throwIfAborted();
+        // A failed catalog lookup still leaves the agent proposal route usable.
+      }
     }
 
     const locale = context.locale;
@@ -2040,12 +2104,15 @@ export class LiveContentCoordinator implements StreamerContentProvider {
         completedAt,
       });
     }
+    const titleSearch = directEpisode
+      ? { query: directEpisode.titleQuery, kind: "series" as const }
+      : fastTitleSearch(request.message);
     let matches: MetadataCandidate[] = [];
     try {
       matches = await this.searchMetadata(
         {
-          query: (directEpisode?.titleQuery ?? request.message).slice(0, 500),
-          kind: directEpisode ? "series" : null,
+          query: titleSearch.query.slice(0, 500),
+          kind: titleSearch.kind,
           year: null,
           person: null,
           locale,

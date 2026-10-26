@@ -34,6 +34,61 @@ function response(
 }
 
 describe("provider HTTP clients", () => {
+  it("keeps a series in a shared TMDB search limit crowded by franchise films", async () => {
+    const secrets = new NonPersistentMemorySecretStore();
+    await secrets.set(TMDB_READ_TOKEN_SECRET_KEY, "test-token");
+    const client = new TmdbApiClient({
+      secretStore: secrets,
+      fetch: async (url) => {
+        const isMovie = new URL(url).pathname.endsWith("/search/movie");
+        return response(
+          200,
+          JSON.stringify({
+            results: isMovie
+              ? Array.from({ length: 20 }, (_, index) => ({
+                  id: index + 1,
+                  title: `Naruto Shippuden Movie ${index + 1}`,
+                }))
+              : [
+                  {
+                    id: 99,
+                    name: "Naruto Shippūden",
+                    original_name: "ナルト 疾風伝",
+                  },
+                ],
+          }),
+        );
+      },
+      baseUrl: "https://tmdb.test/3",
+    });
+    const provider = new TmdbMetadataProvider({ client });
+    const candidates = await provider.search(
+      {
+        query: "naruto shippuden",
+        kind: null,
+        year: null,
+        person: null,
+        locale: "en",
+        limit: 12,
+      },
+      {
+        requestId: "franchise-search",
+        profileId: "default",
+        locale: "en",
+        deadlineAt: "2099-01-01T00:00:00.000Z",
+        secretRef: null,
+      },
+    );
+    expect(candidates).toHaveLength(12);
+    expect(
+      candidates.some(
+        (candidate) =>
+          candidate.ref.entityType === "series" &&
+          candidate.ref.externalId === "99",
+      ),
+    ).toBe(true);
+  });
+
   it("keeps the TMDB episode overview in the series guide", async () => {
     const provider = new TmdbMetadataProvider({
       client: {
