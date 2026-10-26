@@ -17,7 +17,7 @@ export function registerMediaSourcePreferenceRoutes(
     if (!dependencies.database.profiles.get(profileId))
       return reply.code(404).send();
     return {
-      mode: dependencies.store.mode(profileId),
+      ...dependencies.store.get(profileId),
       providerOrder: dependencies.store.order(
         profileId,
         dependencies.providerIds(),
@@ -44,9 +44,11 @@ export function registerMediaSourcePreferenceRoutes(
       profileId,
       parsed.data.providerOrder,
       parsed.data.mode,
+      parsed.data.requireSeeking,
+      parsed.data.requireDirectPlay,
     );
     return {
-      mode: dependencies.store.mode(profileId),
+      ...dependencies.store.get(profileId),
       providerOrder: dependencies.store.order(profileId, known),
     };
   });

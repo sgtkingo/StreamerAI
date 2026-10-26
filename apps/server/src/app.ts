@@ -1,4 +1,8 @@
 import Fastify, { type FastifyBaseLogger, type FastifyInstance } from "fastify";
+import {
+  PlaybackPreferencesSchema,
+  type SourceSelectionContext,
+} from "@streamer-ai/contracts";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
@@ -33,6 +37,10 @@ import { HellspyMediaProvider } from "./integrations/hellspy-media-provider.js";
 import { registerHellspyRoutes } from "./routes/hellspy.js";
 import { LocalMediaProvider } from "./integrations/local-media-provider.js";
 import { MediaSourcePreferenceStore } from "./services/media-source-preferences.js";
+import {
+  requestDisplayHeight,
+  withRequestDisplayHeight,
+} from "./services/request-display.js";
 import { registerMediaSourcePreferenceRoutes } from "./routes/media-source-preferences.js";
 import { OllamaAgentProvider } from "./integrations/ollama-agent-provider.js";
 import { discoverOllamaModels } from "./integrations/ollama-model-catalog.js";
@@ -295,6 +303,23 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
     );
   const mediaSourceMode = (profileId: string) =>
     sourcePreferences.mode(profileId);
+  const sourceSelectionContext = (
+    profileId: string,
+    title: string,
+    originalTitle?: string | null,
+  ): SourceSelectionContext => ({
+    title,
+    originalTitle,
+    playback:
+      PlaybackPreferencesSchema.safeParse(
+        database.profiles.get(profileId)?.preferences.playback ?? {},
+      ).data ?? PlaybackPreferencesSchema.parse({}),
+    displayHeight: requestDisplayHeight(),
+    preferences: {
+      ...sourcePreferences.get(profileId),
+      providerOrder: mediaProviderOrder(profileId),
+    },
+  });
   const subtitleProviders = new AdapterRegistry<SubtitleProvider>(
     "subtitle",
     options.subtitleProviders?.list() ?? [],
@@ -427,6 +452,7 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
           media,
           mediaProviderOrder,
           mediaSourceMode,
+          sourceSelectionContext,
           integrationStateStore: stores.integrationStateStore,
           secretRefForProvider: (providerId, profileId) =>
             database.integrations.getSecretRef(providerId, profileId),
@@ -453,6 +479,7 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
       stores.integrationStateStore.isConfigured(providerId, profileId),
     mediaProviderOrder,
     mediaSourceMode,
+    sourceSelectionContext,
   );
   const availabilityTimer =
     environment === "test"
@@ -470,6 +497,13 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
             createAppLogger({ level: runtimeConfig.server.logLevel }),
           bodyLimit: 64 * 1024,
         });
+
+  app.addHook("onRequest", (request, _reply, done) => {
+    withRequestDisplayHeight(
+      request.headers["x-streamer-display-height"],
+      done,
+    );
+  });
 
   app.addHook("onReady", async () => {
     if (environment !== "test") {

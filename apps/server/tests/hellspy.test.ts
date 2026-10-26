@@ -189,12 +189,20 @@ describe("Hellspy authenticated media adapter", () => {
   it("prefers an original when available and never swaps a missing selected quality", async () => {
     const { provider, fetch } = await fixture();
     fetch.mockImplementation(async (url) =>
-      url.endsWith("/identify")
-        ? json(identity)
-        : json({
-            ...detail,
-            conversions: { "0": directUrl, "1080": directUrl },
-          }),
+      url === directUrl
+        ? new Response("x", {
+            status: 206,
+            headers: {
+              "content-type": "video/mp4",
+              "content-range": "bytes 0-0/100",
+            },
+          })
+        : url.endsWith("/identify")
+          ? json(identity)
+          : json({
+              ...detail,
+              conversions: { "0": directUrl, "1080": directUrl },
+            }),
     );
     expect(await provider.inspect(candidate, context)).toMatchObject({
       variantId: `${candidate.candidateId}:0`,

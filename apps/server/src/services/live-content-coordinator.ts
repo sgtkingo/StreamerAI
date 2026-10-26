@@ -10,9 +10,12 @@ import {
   TitleSourceSchema,
   orderMediaSources,
   rankMediaSources,
+  rankPlayableSources,
   mediaSourceRankingScore,
   resolveMediaSourceOrder,
   type MediaSourceRankingMode,
+  type SourceSelectionContext,
+  type SourceSelectionEvidence,
   type AgentProvider,
   type CatalogTitle,
   type CanonicalTitlePayload,
@@ -196,6 +199,11 @@ export interface LiveContentCoordinatorOptions {
   media: MediaProvider | ProviderRegistry<MediaProvider>;
   mediaProviderOrder?: (profileId: string) => readonly string[];
   mediaSourceMode?: (profileId: string) => MediaSourceRankingMode;
+  sourceSelectionContext?: (
+    profileId: string,
+    title: string,
+    originalTitle?: string | null,
+  ) => SourceSelectionContext;
   integrationStateStore: IntegrationStateStore;
   /** Resolve only opaque vault pointers; adapters fetch their own credentials. */
   secretRefForProvider?: (
@@ -881,7 +889,9 @@ export class LiveContentCoordinator implements StreamerContentProvider {
   readonly #mediaProviders: ReadonlyMap<string, MediaProvider>;
   readonly #mediaProviderOrder: (profileId: string) => readonly string[];
   readonly #mediaSourceMode: (profileId: string) => MediaSourceRankingMode;
+  readonly #sourceSelectionContext?: LiveContentCoordinatorOptions["sourceSelectionContext"];
   readonly #candidateScores = new Map<string, number>();
+  readonly #candidateEvidence = new Map<string, SourceSelectionEvidence>();
   readonly #integrationStateStore: IntegrationStateStore;
   readonly #secretRefForProvider: (
     providerId: string,
@@ -915,6 +925,7 @@ export class LiveContentCoordinator implements StreamerContentProvider {
       options.mediaProviderOrder ??
       (() => resolveMediaSourceOrder([], [...this.#mediaProviders.keys()]));
     this.#mediaSourceMode = options.mediaSourceMode ?? (() => "auto");
+    this.#sourceSelectionContext = options.sourceSelectionContext;
     this.#integrationStateStore = options.integrationStateStore;
     this.#secretRefForProvider = options.secretRefForProvider ?? (() => null);
     this.#inference = options.inference;
@@ -2716,6 +2727,12 @@ export class LiveContentCoordinator implements StreamerContentProvider {
               );
               const rankingScore = sourceQuality(candidate, checked);
               this.rememberCandidateScore(candidate.ref, rankingScore);
+              this.rememberCandidateEvidence(candidate, checked);
+              if (
+                this.prioritizeSources(profileId, [candidate.ref], title)
+                  .length === 0
+              )
+                continue;
               seenFiles.add(fileKey);
               sources.push({
                 id: sourceId(title.id, candidate.ref),
@@ -2728,6 +2745,9 @@ export class LiveContentCoordinator implements StreamerContentProvider {
                 episodeNumber: episode.episodeNumber,
                 checkedAt: checked.provenance.retrievedAt,
                 rankingScore,
+                qualityVotes: candidate.qualityVotes,
+                supportsHttpRange: checked.supportsHttpRange,
+                directPlay: checked.directPlay,
               });
             } catch {
               // Skip files that cannot be inspected as playable media.
@@ -2753,6 +2773,7 @@ export class LiveContentCoordinator implements StreamerContentProvider {
       sources.filter((source) =>
         this.#integrationStateStore.isConfigured(source.providerId, profileId),
       ),
+      title,
     );
     const selected = interleaveProviders(
       ranked,
@@ -2761,7 +2782,7 @@ export class LiveContentCoordinator implements StreamerContentProvider {
     );
     const validated = TitleSourceSchema.array()
       .max(8)
-      .parse(this.prioritizeSources(profileId, selected));
+      .parse(this.prioritizeSources(profileId, selected, title));
     const key = `${profileId}:${episodeKey(title.id, episode)}`;
     this.#forcedEpisodeSources.set(key, validated);
     if (this.#forcedEpisodeSources.size > 100) {
@@ -2841,10 +2862,11 @@ export class LiveContentCoordinator implements StreamerContentProvider {
                     profileId,
                   ),
               );
-              const combined = this.prioritizeSources(profileId, [
-                ...mirrors,
-                ...found,
-              ]);
+              const combined = this.prioritizeSources(
+                profileId,
+                [...mirrors, ...found],
+                title,
+              );
               const selected = interleaveProviders(
                 combined,
                 (ref) => ref.providerId,
@@ -2852,7 +2874,7 @@ export class LiveContentCoordinator implements StreamerContentProvider {
               );
               job.candidates.set(
                 key,
-                this.prioritizeSources(profileId, selected),
+                this.prioritizeSources(profileId, selected, title),
               );
             };
             const seen = new Set(
@@ -2944,6 +2966,12 @@ export class LiveContentCoordinator implements StreamerContentProvider {
                     candidate.ref,
                     sourceQuality(candidate, checked),
                   );
+                  this.rememberCandidateEvidence(candidate, checked);
+                  if (
+                    this.prioritizeSources(profileId, [candidate.ref], title)
+                      .length === 0
+                  )
+                    continue;
                   signal?.throwIfAborted();
                   if (
                     !this.#integrationStateStore.isConfigured(
@@ -3058,6 +3086,10 @@ export class LiveContentCoordinator implements StreamerContentProvider {
     );
     for (const source of storedSources) {
       this.rememberCandidateScore(source, mediaSourceRankingScore(source));
+      this.#candidateEvidence.set(
+        `${source.providerId}:${source.candidateId}`,
+        source,
+      );
     }
     if (sourceId !== undefined) {
       const searchedSources = episode
@@ -3072,6 +3104,8 @@ export class LiveContentCoordinator implements StreamerContentProvider {
         throw new Error("Selected source is not part of this title.");
       if (!activeMediaIds.has(selected.providerId))
         throw new Error("Selected source is not connected.");
+      if (this.prioritizeSources(profileId, [selected], title).length === 0)
+        throw new Error("Selected source does not meet playback requirements.");
       yield {
         candidate: {
           providerId: selected.providerId,
@@ -3107,7 +3141,11 @@ export class LiveContentCoordinator implements StreamerContentProvider {
     ];
     if (candidates.length > 0) {
       let yielded = false;
-      for (const candidate of this.prioritizeSources(profileId, candidates)) {
+      for (const candidate of this.prioritizeSources(
+        profileId,
+        candidates,
+        title,
+      )) {
         if (!activeMediaIds.has(candidate.providerId)) continue;
         yielded = true;
         yield { candidate, context };
@@ -3143,6 +3181,7 @@ export class LiveContentCoordinator implements StreamerContentProvider {
           ...candidate,
           context,
         })),
+        title,
       );
       for (const { candidateId, providerId, context } of ordered)
         yield { candidate: { providerId, candidateId }, context };
@@ -3300,14 +3339,60 @@ export class LiveContentCoordinator implements StreamerContentProvider {
     }
   }
 
+  private rememberCandidateEvidence(
+    candidate: MediaCandidate,
+    variant: Awaited<ReturnType<MediaProvider["inspect"]>>,
+  ): void {
+    const key = `${candidate.ref.providerId}:${candidate.ref.candidateId}`;
+    this.#candidateEvidence.set(key, {
+      providerId: candidate.ref.providerId,
+      releaseName: candidate.releaseName,
+      format: variant.format,
+      qualityVotes: candidate.qualityVotes,
+      supportsHttpRange: variant.supportsHttpRange,
+      directPlay: variant.directPlay,
+    });
+    if (this.#candidateEvidence.size > 20_000) {
+      const oldest = this.#candidateEvidence.keys().next().value;
+      if (oldest) this.#candidateEvidence.delete(oldest);
+    }
+  }
+
   private prioritizeSources<
     T extends {
       providerId: string;
       candidateId: string;
       rankingScore?: number;
-      format?: { resolution?: string | null };
+      releaseName?: string;
+      format?: {
+        resolution?: string | null;
+        audioLanguages?: readonly string[];
+      };
+      qualityVotes?: { positive: number; negative: number };
+      supportsHttpRange?: boolean;
+      directPlay?: boolean;
     },
-  >(profileId: string, sources: readonly T[]): T[] {
+  >(
+    profileId: string,
+    sources: readonly T[],
+    title?: { title: string; originalTitle?: string | null },
+  ): T[] {
+    if (this.#sourceSelectionContext && title) {
+      return rankPlayableSources(
+        sources.map((source) => ({
+          source,
+          ...this.#candidateEvidence.get(
+            `${source.providerId}:${source.candidateId}`,
+          ),
+          ...source,
+        })),
+        this.#sourceSelectionContext(
+          profileId,
+          title.title,
+          title.originalTitle,
+        ),
+      ).map((item) => item.source);
+    }
     return rankMediaSources(
       sources.map((source) => ({
         source,
@@ -4061,14 +4146,29 @@ export class LiveContentCoordinator implements StreamerContentProvider {
         const seenRefs = new Set<string>();
         const seenFiles = new Set<string>();
         const profileId = context.profileId ?? "default";
-        const ranked = rankMediaSources(
-          inspected.map((item) => ({
-            providerId: item.candidate.ref.providerId,
-            rankingScore: sourceQuality(item.candidate, item.variant),
-            item,
-          })),
-          this.#mediaSourceMode(profileId),
-          this.#mediaProviderOrder(profileId),
+        const selectionContext = this.#sourceSelectionContext?.(
+          profileId,
+          metadata.title,
+          metadata.originalTitle,
+        );
+        const sortable = inspected.map((item) => ({
+          providerId: item.candidate.ref.providerId,
+          rankingScore: sourceQuality(item.candidate, item.variant),
+          releaseName: item.candidate.releaseName,
+          qualityVotes: item.candidate.qualityVotes,
+          format: item.variant.format,
+          supportsHttpRange: item.variant.supportsHttpRange,
+          directPlay: item.variant.directPlay,
+          item,
+        }));
+        const ranked = (
+          selectionContext
+            ? rankPlayableSources(sortable, selectionContext)
+            : rankMediaSources(
+                sortable,
+                this.#mediaSourceMode(profileId),
+                this.#mediaProviderOrder(profileId),
+              )
         ).map((entry) => entry.item);
         const selected = interleaveProviders(
           ranked,
@@ -4087,6 +4187,7 @@ export class LiveContentCoordinator implements StreamerContentProvider {
           seenFiles.add(duplicateKey);
           const rankingScore = sourceQuality(item.candidate, item.variant);
           this.rememberCandidateScore(ref, rankingScore);
+          this.rememberCandidateEvidence(item.candidate, item.variant);
           const episode =
             metadata.kind === "series"
               ? episodeNumber(
@@ -4108,12 +4209,16 @@ export class LiveContentCoordinator implements StreamerContentProvider {
               episodeNumber: episode?.episode ?? null,
               checkedAt: item.variant.provenance.retrievedAt,
               rankingScore,
+              qualityVotes: item.candidate.qualityVotes,
+              supportsHttpRange: item.variant.supportsHttpRange,
+              directPlay: item.variant.directPlay,
             },
           ];
         });
         sources = this.prioritizeSources(
           context.profileId ?? "default",
           sources,
+          metadata,
         );
         formats = uniqueFormats(sources.map((source) => source.format));
         playbackCandidates = sources.map((source) => ({

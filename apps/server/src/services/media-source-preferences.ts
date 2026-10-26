@@ -19,7 +19,12 @@ export class MediaSourcePreferenceStore {
     );
     return parsed.success
       ? parsed.data
-      : { mode: "auto" as const, providerOrder: [] };
+      : {
+          mode: "auto" as const,
+          providerOrder: [],
+          requireSeeking: false,
+          requireDirectPlay: false,
+        };
   }
   mode(profileId: string): MediaSourceRankingMode {
     return this.get(profileId).mode;
@@ -28,10 +33,17 @@ export class MediaSourcePreferenceStore {
     profileId: string,
     providerOrder: readonly string[],
     mode: MediaSourceRankingMode = "auto",
+    requireSeeking = false,
+    requireDirectPlay = false,
   ): void {
     this.database.settings.set(
       this.key(profileId),
-      MediaSourcePreferencesSchema.parse({ providerOrder, mode }),
+      MediaSourcePreferencesSchema.parse({
+        providerOrder,
+        mode,
+        requireSeeking,
+        requireDirectPlay,
+      }),
     );
   }
   delete(profileId: string): void {

@@ -56,12 +56,12 @@ const items: IntegrationCatalogItem[] = [
 function apiWith(integrations: IntegrationCatalogItem[]) {
   return {
     getIntegrations: vi.fn().mockResolvedValue({ items: integrations }),
-    getMediaSourcePreferences: vi
-      .fn()
-      .mockResolvedValue({
-        mode: "auto",
-        providerOrder: ["local-files", "webshare"],
-      }),
+    getMediaSourcePreferences: vi.fn().mockResolvedValue({
+      mode: "auto",
+      providerOrder: ["local-files", "webshare"],
+      requireSeeking: false,
+      requireDirectPlay: false,
+    }),
     saveMediaSourcePreferences: vi
       .fn()
       .mockImplementation(async (preferences) => preferences),
@@ -114,11 +114,44 @@ describe("integration manager", () => {
     await user.click(byOrder);
     await waitFor(() =>
       expect(api.saveMediaSourcePreferences).toHaveBeenCalledWith(
-        { mode: "by-order", providerOrder: ["local-files", "webshare"] },
+        {
+          mode: "by-order",
+          providerOrder: ["local-files", "webshare"],
+          requireSeeking: false,
+          requireDirectPlay: false,
+        },
         "viewer",
       ),
     );
     expect(byOrder).toBeChecked();
+  });
+  it("saves seeking and direct-play filters for the active profile", async () => {
+    const user = userEvent.setup();
+    const api = apiWith(items);
+    render(
+      <IntegrationManager api={api} context="settings" profileId="viewer" />,
+    );
+    const seeking = await screen.findByRole("checkbox", {
+      name: "Require seeking",
+    });
+    const direct = screen.getByRole("checkbox", {
+      name: "Require direct play",
+    });
+    await waitFor(() => expect(seeking).toBeEnabled());
+    await user.click(seeking);
+    await waitFor(() => expect(seeking).toBeChecked());
+    await user.click(direct);
+    await waitFor(() =>
+      expect(api.saveMediaSourcePreferences).toHaveBeenLastCalledWith(
+        {
+          mode: "auto",
+          providerOrder: ["local-files", "webshare"],
+          requireSeeking: true,
+          requireDirectPlay: true,
+        },
+        "viewer",
+      ),
+    );
   });
   it("defaults local storage first and saves a drag-and-drop source order for this profile", async () => {
     const configured = items.map((item) =>
@@ -153,7 +186,12 @@ describe("integration manager", () => {
     fireEvent.drop(local.closest("article")!, { dataTransfer: transfer });
     await waitFor(() =>
       expect(api.saveMediaSourcePreferences).toHaveBeenCalledWith(
-        { mode: "auto", providerOrder: ["webshare", "local-files"] },
+        {
+          mode: "auto",
+          providerOrder: ["webshare", "local-files"],
+          requireSeeking: false,
+          requireDirectPlay: false,
+        },
         "viewer",
       ),
     );

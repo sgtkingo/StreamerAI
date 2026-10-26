@@ -205,6 +205,14 @@ export class WebshareMediaProvider implements MediaProvider {
         seasonNumber: request.seasonNumber,
         episodeNumber: request.episodeNumber,
         confidence: 0.5,
+        ...(item.positiveVotes !== null && item.negativeVotes !== null
+          ? {
+              qualityVotes: {
+                positive: item.positiveVotes,
+                negative: item.negativeVotes,
+              },
+            }
+          : {}),
         provenance: {
           ...provenance(retrievedAt),
           confidence: 0.5,
@@ -239,7 +247,7 @@ export class WebshareMediaProvider implements MediaProvider {
         variantId: candidate.candidateId,
         format: mediaFormat(file.name, file.type),
         directPlay: true,
-        supportsHttpRange: false,
+        supportsHttpRange: true,
         embeddedSubtitles: [],
         provenance: provenance(this.#now().toISOString()),
         expiresAt: null,

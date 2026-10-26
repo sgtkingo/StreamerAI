@@ -68,6 +68,15 @@ export const TitleSourceSchema = z
     episodeNumber: z.number().int().positive().nullable(),
     checkedAt: z.string().datetime({ offset: true }),
     rankingScore: z.number().finite().min(0).max(120).optional(),
+    qualityVotes: z
+      .object({
+        positive: z.number().int().nonnegative(),
+        negative: z.number().int().nonnegative(),
+      })
+      .strict()
+      .optional(),
+    supportsHttpRange: z.boolean().optional(),
+    directPlay: z.boolean().optional(),
   })
   .strict()
   .superRefine((source, context) => {

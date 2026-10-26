@@ -446,12 +446,22 @@ async function readPublicErrorCode(
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response;
+  const displayHeight =
+    typeof window === "undefined"
+      ? 1080
+      : Math.round(
+          Math.min(window.screen.width, window.screen.height) *
+            (window.devicePixelRatio || 1),
+        );
 
   try {
     response = await fetch(`/api/v1${path}`, {
       ...init,
       headers: {
         Accept: "application/json",
+        "X-Streamer-Display-Height": String(
+          displayHeight >= 240 && displayHeight <= 4320 ? displayHeight : 1080,
+        ),
         ...(init?.body === undefined
           ? {}
           : { "Content-Type": "application/json" }),

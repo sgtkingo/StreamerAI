@@ -9,3 +9,4 @@ export * from "./providers.js";
 export * from "./appearance.js";
 export * from "./environment.js";
 export * from "./media-source-preferences.js";
+export * from "./source-selection.js";

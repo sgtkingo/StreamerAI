@@ -182,6 +182,13 @@ export const MediaCandidateSchema = z
     episodeNumber: z.number().int().positive().nullable(),
     confidence: z.number().min(0).max(1),
     provenance: FieldProvenanceSchema,
+    qualityVotes: z
+      .object({
+        positive: z.number().int().nonnegative(),
+        negative: z.number().int().nonnegative(),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 export type MediaCandidate = z.infer<typeof MediaCandidateSchema>;

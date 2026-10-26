@@ -1,13 +1,19 @@
-import { CatalogTitleSchema, type CatalogTitle } from "@streamer-ai/contracts";
+import {
+  CatalogTitleSchema,
+  type CatalogTitle,
+  type TitleSource,
+} from "@streamer-ai/contracts";
 
 /** Viewer projection only: never delete another account's canonical source records. */
 export function connectedTitleSources(
   title: CatalogTitle,
-  enabled: (providerId: string) => boolean,
+  enabled: (providerId: string, source: TitleSource) => boolean,
   checkedAt: string,
 ): CatalogTitle {
   if (!title.sources) return title;
-  const sources = title.sources.filter((source) => enabled(source.providerId));
+  const sources = title.sources.filter((source) =>
+    enabled(source.providerId, source),
+  );
   if (sources.length === title.sources.length) return title;
   const playable = sources.length > 0;
   const nextEpisode = sources.find((source) => (source.seasonNumber ?? 0) > 0);

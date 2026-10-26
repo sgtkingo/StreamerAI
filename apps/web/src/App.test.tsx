@@ -51,6 +51,8 @@ function createApi(): StreamerApi {
     getMediaSourcePreferences: vi.fn().mockResolvedValue({
       mode: "auto",
       providerOrder: ["local-files", "webshare", "hellspy"],
+      requireSeeking: false,
+      requireDirectPlay: false,
     }),
     saveMediaSourcePreferences: vi.fn(),
     setIntegrationSelected: vi

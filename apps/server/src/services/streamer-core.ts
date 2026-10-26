@@ -11,8 +11,10 @@ import {
   ViewerProfileSchema,
   TitleDetailSchema,
   rankMediaSources,
+  rankPlayableSources,
   resolveMediaSourceOrder,
   type MediaSourceRankingMode,
+  type SourceSelectionContext,
   type PlaybackPreferences,
   type AppearancePreferences,
   type UpdateViewerProfile,
@@ -117,6 +119,11 @@ export class StreamerCore {
     private readonly mediaSourceMode?: (
       profileId: string,
     ) => MediaSourceRankingMode,
+    private readonly sourceSelectionContext?: (
+      profileId: string,
+      title: string,
+      originalTitle?: string | null,
+    ) => SourceSelectionContext,
   ) {
     this.preferredSources = new PreferredSourceStore(database);
     this.priorities = new TitlePriorityStore(database, now);
@@ -1453,26 +1460,38 @@ export class StreamerCore {
     profileId: string,
     title: CatalogTitle,
   ): CatalogTitle {
+    const selection = this.sourceSelectionContext?.(
+      profileId,
+      title.title,
+      title.originalTitle,
+    );
     const projected =
       this.contentProvider.mode === "live" && this.sourceEnabled
         ? connectedTitleSources(
             title,
-            (id) => this.sourceEnabled!(profileId, id),
+            (id, source) =>
+              this.sourceEnabled!(profileId, id) &&
+              (!selection?.preferences.requireSeeking ||
+                source.supportsHttpRange === true) &&
+              (!selection?.preferences.requireDirectPlay ||
+                source.directPlay === true),
             this.now().toISOString(),
           )
         : title;
     if (!projected.sources) return projected;
     return {
       ...projected,
-      sources: rankMediaSources(
-        projected.sources,
-        this.mediaSourceMode?.(profileId) ?? "auto",
-        this.mediaProviderOrder?.(profileId) ??
-          resolveMediaSourceOrder(
-            [],
-            projected.sources.map((source) => source.providerId),
+      sources: selection
+        ? rankPlayableSources(projected.sources, selection)
+        : rankMediaSources(
+            projected.sources,
+            this.mediaSourceMode?.(profileId) ?? "auto",
+            this.mediaProviderOrder?.(profileId) ??
+              resolveMediaSourceOrder(
+                [],
+                projected.sources.map((source) => source.providerId),
+              ),
           ),
-      ),
     };
   }
 

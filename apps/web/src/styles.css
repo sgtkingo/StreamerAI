@@ -1915,6 +1915,26 @@ textarea:not(:disabled):hover {
   opacity: 0.55;
   cursor: default;
 }
+.source-capability-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  margin: 8px 0 12px;
+  padding: 0;
+  border: 0;
+}
+.source-capability-filters legend {
+  margin-bottom: 8px;
+  color: var(--text-muted, #91949e);
+  font-size: 12px;
+}
+.source-capability-filters label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  cursor: pointer;
+}
 .source-priority-grip {
   display: grid;
   place-items: center;

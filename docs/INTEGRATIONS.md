@@ -10,18 +10,25 @@ inspection limits apply per provider. Normalized results merge after validation,
 and disconnected providers remain excluded.
 
 Source ranking is a profile preference stored in SQLite. `Auto` is the default:
-verified files are ordered by the stored quality score (provider confidence,
-resolution, HTTP Range and direct-play support). `By Order` first compares the
-provider positions configured in Settings, then the score within a provider.
+playable files are ordered first by preferred audio language (primary, secondary,
+unknown, other), then by a 0–100 score. The score combines title match (60),
+source file rating (30), and resolution capped at the requesting device's display
+height (10). File rating uses the Wilson lower bound of positive/negative votes,
+so one positive vote cannot produce the maximum rating; missing ratings score 0.
+`By Order` compares the provider positions configured in Settings before language
+and score. Both modes can additionally require verified seeking (HTTP Range) and
+direct playback; sources without confirmed support are excluded when enabled.
 Settings supports drag-and-drop, keyboard arrow keys and move buttons; local
 storage starts first in this order. The mode controls Recommended, cached
 playback fallback and discovery/manual episode results. Explicitly selected or
 remembered title/episode files still take precedence at playback. All connected
 providers search in parallel with separate limits. Older stored source records
-without a score use their known resolution until rediscovery updates them.
+without vote or capability evidence remain usable unless a capability filter is
+enabled, and rediscovery can update this evidence.
 
 `GET` and `PUT /api/v1/profiles/:profileId/media-source-preferences` read/save
-`{ mode: "auto" | "by-order", providerOrder: string[] }`. Older saved values
+`{ mode: "auto" | "by-order", providerOrder: string[], requireSeeking: boolean,
+requireDirectPlay: boolean }`. Older saved values
 without `mode` default to `auto`. IDs must be unique registered media providers;
 metadata and unknown IDs are rejected. Omitted/new sources append predictably,
 disconnect preserves the preference, and deleting a profile removes its order.

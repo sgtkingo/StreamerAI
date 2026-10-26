@@ -191,7 +191,14 @@ export class HellspyMediaProvider implements MediaProvider {
     candidate: MediaCandidateRef,
     context: ProviderContext,
   ): Promise<MediaVariant> {
-    return (await this.resolve(candidate, context)).variant;
+    const { variant, url } = await this.resolve(candidate, context);
+    return {
+      ...variant,
+      supportsHttpRange: await this.options.client.probeUrl(
+        url,
+        context.signal,
+      ),
+    };
   }
   private quality(candidateId: string, variantId: string): string {
     if (!variantId.startsWith(`${candidateId}:`))

@@ -295,6 +295,8 @@ export function IntegrationManager({
   const [addedIds, setAddedIds] = useState<string[]>([]);
   const [sourceOrder, setSourceOrder] = useState<string[]>([]);
   const [sourceMode, setSourceMode] = useState<"auto" | "by-order">("auto");
+  const [requireSeeking, setRequireSeeking] = useState(false);
+  const [requireDirectPlay, setRequireDirectPlay] = useState(false);
   const [orderReady, setOrderReady] = useState(false);
   const [savingOrder, setSavingOrder] = useState(false);
   const [orderMessage, setOrderMessage] = useState("");
@@ -336,6 +338,8 @@ export function IntegrationManager({
         if (active) {
           setSourceOrder(result.providerOrder);
           setSourceMode(result.mode);
+          setRequireSeeking(result.requireSeeking);
+          setRequireDirectPlay(result.requireDirectPlay);
           setOrderReady(true);
         }
       })
@@ -390,27 +394,42 @@ export function IntegrationManager({
   const saveSourcePreferences = async (
     nextOrder: string[],
     nextMode: "auto" | "by-order",
+    nextSeeking = requireSeeking,
+    nextDirectPlay = requireDirectPlay,
   ) => {
     if (savingOrder || !orderReady || !api.saveMediaSourcePreferences) return;
     const previousOrder = [...orderedIds];
     const previousMode = sourceMode;
+    const previousSeeking = requireSeeking;
+    const previousDirectPlay = requireDirectPlay;
     setSourceOrder(nextOrder);
     setSourceMode(nextMode);
+    setRequireSeeking(nextSeeking);
+    setRequireDirectPlay(nextDirectPlay);
     setSavingOrder(true);
     setOrderError(false);
     setOrderMessage("Saving source preference…");
     try {
       const result = await api.saveMediaSourcePreferences(
-        { mode: nextMode, providerOrder: nextOrder },
+        {
+          mode: nextMode,
+          providerOrder: nextOrder,
+          requireSeeking: nextSeeking,
+          requireDirectPlay: nextDirectPlay,
+        },
         profileId,
       );
       setSourceOrder(result.providerOrder);
       setSourceMode(result.mode);
+      setRequireSeeking(result.requireSeeking);
+      setRequireDirectPlay(result.requireDirectPlay);
       setOrderMessage("Source preference saved.");
       onConnectionChange?.("source-priority", true);
     } catch {
       setSourceOrder(previousOrder);
       setSourceMode(previousMode);
+      setRequireSeeking(previousSeeking);
+      setRequireDirectPlay(previousDirectPlay);
       setOrderError(true);
       setOrderMessage(
         "Could not save source preference. Your previous selection is still active.",
@@ -670,7 +689,7 @@ export function IntegrationManager({
                   <h3>{group.title}</h3>
                   <p>
                     {group.id === "media" && context === "settings"
-                      ? "All connected sources search in parallel. Auto recommends the highest scoring file. By Order favors the first provider, even when its file scores lower. Local storage starts first in the order."
+                      ? "All connected sources search in parallel. Auto favors your preferred audio language, then title match, file rating and device resolution. By Order prioritizes providers first, then uses the same language and score rules. Local storage starts first in the order."
                       : group.description}
                   </p>
                   {group.id === "media" && context === "settings" && (
@@ -702,6 +721,43 @@ export function IntegrationManager({
                           }
                         />
                         By Order
+                      </label>
+                    </fieldset>
+                  )}
+                  {group.id === "media" && context === "settings" && (
+                    <fieldset
+                      className="source-capability-filters"
+                      disabled={!orderReady || savingOrder}
+                    >
+                      <legend>Required playback features</legend>
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={requireSeeking}
+                          onChange={(event) =>
+                            void saveSourcePreferences(
+                              orderedIds,
+                              sourceMode,
+                              event.target.checked,
+                            )
+                          }
+                        />
+                        Require seeking
+                      </label>
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={requireDirectPlay}
+                          onChange={(event) =>
+                            void saveSourcePreferences(
+                              orderedIds,
+                              sourceMode,
+                              requireSeeking,
+                              event.target.checked,
+                            )
+                          }
+                        />
+                        Require direct play
                       </label>
                     </fieldset>
                   )}

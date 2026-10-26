@@ -4,6 +4,8 @@ import { IntegrationIdSchema } from "./integrations.js";
 export const MediaSourcePreferencesSchema = z
   .object({
     mode: z.enum(["auto", "by-order"]).default("auto"),
+    requireSeeking: z.boolean().default(false),
+    requireDirectPlay: z.boolean().default(false),
     providerOrder: z
       .array(IntegrationIdSchema)
       .max(100)

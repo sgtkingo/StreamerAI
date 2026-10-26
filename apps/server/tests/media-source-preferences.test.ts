@@ -33,13 +33,16 @@ describe("profile media source preferences", () => {
           id: "abc"[index]!.repeat(32),
           providerId,
           candidateId: `file-${index}`,
-          releaseName: "Movie.mkv",
+          releaseName: `${base.title}.mkv`,
           sizeBytes: 100,
           format: base.formats[0],
           seasonNumber: null,
           episodeNumber: null,
           checkedAt: now,
           rankingScore: [60, 90, 70][index],
+          ...(providerId === "webshare"
+            ? { qualityVotes: { positive: 100, negative: 0 } }
+            : {}),
         }),
       ),
     });
@@ -103,8 +106,8 @@ describe("profile media source preferences", () => {
     expect(initial.json().mode).toBe("auto");
     expect(await providerIds(app, movie)).toEqual([
       "webshare",
-      "local-files",
       "hellspy",
+      "local-files",
     ]);
     const saved = await app.inject({
       method: "PUT",
