@@ -359,7 +359,7 @@ export function HomePage({
           activeSearch.current?.signal.aborted === false
         ) {
           setIsWakingAgent(false);
-          setAnnouncement("The local agent is awake and finding your matches.");
+          setAnnouncement("The agent is ready and finding your matches.");
         }
       } catch {
         // Keep the wake-up notice until discovery ends if the probe is unavailable.
@@ -810,7 +810,7 @@ export function HomePage({
   const wakeMessage =
     locale === "cs"
       ? "Ouč, agent usnul. Musím ho vzbudit, počkej chvíli…"
-      : "Ouch, the local agent dozed off. Waking it up—hang tight…";
+      : "Ouch, the agent dozed off. Waking it up—hang tight…";
   const chatQuestion =
     locale === "cs"
       ? "Je to podle tvých představ?"
