@@ -1,4 +1,5 @@
 import type { PlaybackPreferences } from "@streamer-ai/contracts";
+import { InfoTip } from "./InfoTip";
 
 export const MEDIA_LANGUAGES = [
   ["cs", "Čeština (CZ)"],
@@ -41,7 +42,13 @@ export function PlaybackLanguageFields({
       {(section === "all" || section === "audio") && (
         <div className="settings-field-grid">
           <label className="field field--compact">
-            <span>Primary audio language</span>
+            <span>
+              Primary audio language{" "}
+              <InfoTip label="About primary audio language">
+                The player picks an available audio track in this language
+                first.
+              </InfoTip>
+            </span>
             <select
               value={value.primaryAudioLanguage}
               onChange={(event) => {
@@ -62,7 +69,13 @@ export function PlaybackLanguageFields({
             </select>
           </label>
           <label className="field field--compact">
-            <span>Secondary audio language</span>
+            <span>
+              Secondary audio language{" "}
+              <InfoTip label="About secondary audio language">
+                Used if no track matches your primary language. If neither is
+                available, the player uses the first audio track.
+              </InfoTip>
+            </span>
             <select
               value={value.secondaryAudioLanguage}
               onChange={(event) =>
@@ -88,7 +101,14 @@ export function PlaybackLanguageFields({
                 onChange({ ...value, autoFindSubtitles: event.target.checked })
               }
             />
-            <span>Automatically find subtitles</span>
+            <span>
+              Automatically find subtitles{" "}
+              <InfoTip label="About automatically finding subtitles">
+                The player can select matching subtitles already inside the
+                video. Searching external subtitle services is not available
+                yet.
+              </InfoTip>
+            </span>
           </label>
           <p className="settings-note">
             Embedded subtitle tracks can be selected automatically. External

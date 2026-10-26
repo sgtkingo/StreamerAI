@@ -4,6 +4,7 @@ import {
   type WeatherLocation,
 } from "@streamer-ai/contracts";
 import { safeErrorMessage, type StreamerApi } from "../api/client";
+import { InfoTip } from "../components/InfoTip";
 import {
   createClockAnchor,
   isValidTimeZone,
@@ -319,7 +320,14 @@ export function AppearanceSettings({
                   />
                   <path d="M12 14v3" />
                 </svg>
-                <span>Use current theme as fixed</span>
+                <span>
+                  Use current theme as fixed{" "}
+                  <InfoTip label="About fixing the current theme">
+                    Keeps the current season, weather and lighting in place
+                    instead of changing them automatically. Turn it off to
+                    resume automatic appearance settings.
+                  </InfoTip>
+                </span>
               </label>
             </div>
           </div>
@@ -554,7 +562,14 @@ export function AppearanceSettings({
                 })
               }
             />
-            <span>Use local weather</span>
+            <span>
+              Use local weather{" "}
+              <InfoTip label="About using local weather">
+                Weather in your selected city changes the atmosphere of the
+                seasonal theme. Turning this off also removes the selected
+                weather location.
+              </InfoTip>
+            </span>
           </label>
           <WeatherLocationCard
             location={environment.location}

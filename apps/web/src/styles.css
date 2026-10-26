@@ -1893,9 +1893,60 @@ textarea:not(:disabled):hover {
   border: 0;
 }
 .source-ranking-mode legend {
+  display: flex;
+  align-items: center;
+  gap: 7px;
   margin-bottom: 8px;
   color: var(--text-muted, #91949e);
   font-size: 12px;
+}
+.info-tip {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: 15px;
+  height: 15px;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  color: #b8bac4;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: normal;
+  vertical-align: middle;
+  cursor: help;
+}
+.info-tip:focus-visible {
+  outline: 2px solid var(--accent, #e9b99c);
+  outline-offset: 2px;
+}
+.info-tip__tooltip {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 8px);
+  left: -8px;
+  width: min(280px, calc(100vw - 64px));
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border: 1px solid #45434d;
+  border-radius: 8px;
+  background: #1b1a20;
+  box-shadow: 0 8px 24px #0008;
+  color: #e6e4eb;
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: normal;
+  line-height: 1.5;
+  white-space: normal;
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+.info-tip:hover .info-tip__tooltip,
+.info-tip:focus .info-tip__tooltip {
+  visibility: visible;
+  opacity: 1;
 }
 .source-ranking-mode label {
   display: inline-flex;
@@ -2356,6 +2407,14 @@ textarea:not(:disabled):hover {
   border: 1px solid #50535b;
   border-radius: 10px;
   background: #24262b;
+}
+.agent-backend__transport-label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 12px 0 6px;
+  color: #b6bbc5;
+  font-size: 12px;
 }
 .agent-backend__transport label {
   position: relative;

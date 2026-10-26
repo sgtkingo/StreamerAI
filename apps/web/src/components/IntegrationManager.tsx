@@ -6,6 +6,7 @@ import type {
   StreamerApi,
 } from "../api/client";
 import { safeErrorMessage } from "../api/client";
+import { InfoTip } from "./InfoTip";
 import { SourceIcon } from "./SourceIcon";
 import { LocalFolderSettings } from "./LocalFolderSettings";
 import { AgentBackendSettings } from "./AgentBackendSettings";
@@ -697,7 +698,17 @@ export function IntegrationManager({
                       className="source-ranking-mode"
                       disabled={!orderReady || savingOrder}
                     >
-                      <legend>Recommended source</legend>
+                      <legend>
+                        Recommended source
+                        <InfoTip label="About recommended source">
+                          <strong>Auto</strong> picks the best match using your
+                          preferred audio language, title match, file rating and
+                          device resolution. <strong>By Order</strong> prioritizes
+                          sources by the order below, then compares their matches.
+                          This changes which stream is recommended first; it does
+                          not disconnect any source.
+                        </InfoTip>
+                      </legend>
                       <label>
                         <input
                           type="radio"

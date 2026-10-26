@@ -10,6 +10,7 @@ import type {
   StreamerApi,
 } from "../api/client";
 import { safeErrorMessage } from "../api/client";
+import { InfoTip } from "./InfoTip";
 
 type LocalProvider = "ollama" | "custom";
 type RemoteProvider = Exclude<AgentBackend, LocalAgentCapability["provider"]>;
@@ -1520,6 +1521,15 @@ export function AgentBackendSettings({
               the connection.
             </p>
           )}
+          <p className="agent-backend__transport-label">
+            Connection mode{" "}
+            <InfoTip label="About AI connection modes">
+              <strong>API</strong> lets StreamerAI call the selected model
+              provider directly with your API key. <strong>MCP</strong> connects
+              your external agent to StreamerAI tools; that agent chooses and
+              runs its own model.
+            </InfoTip>
+          </p>
           <fieldset
             className="agent-backend__transport"
             aria-label="External connection mode"
