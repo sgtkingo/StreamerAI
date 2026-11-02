@@ -97,4 +97,42 @@ describe("MCP tool boundary", () => {
       service.call("get_subtitles", { grantId: "grant-1" }),
     ).rejects.toThrow("did not create");
   });
+
+  it("preserves the authenticated profile context for embedded grant tools", async () => {
+    const requests: Array<{ url: URL; headers: Headers }> = [];
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = new URL(String(input));
+      requests.push({ url, headers: new Headers(init?.headers) });
+      return Response.json(
+        url.pathname.endsWith("/playback/start")
+          ? { playback: { grantId: "grant-embedded", expiresAt: "soon" } }
+          : { subtitleTracks: [] },
+      );
+    };
+    const service = new StreamerToolService(
+      "http://127.0.0.1:4400",
+      fetcher,
+      undefined,
+      "private-internal-token",
+    );
+    await service.call("start_playback", {
+      profileId: "viewer-2",
+      titleId: "tmdb:movie:1",
+    });
+    const subtitles = await service.call("get_subtitles", {
+      profileId: "viewer-2",
+      grantId: "grant-embedded",
+    });
+    await service.call("stop_playback", {
+      profileId: "viewer-2",
+      grantId: "grant-embedded",
+    });
+    for (const request of requests.slice(1)) {
+      expect(request.url.searchParams.get("profileId")).toBe("viewer-2");
+      expect(request.headers.get("x-streamer-internal-token")).toBe(
+        "private-internal-token",
+      );
+    }
+    expect(JSON.stringify(subtitles)).not.toContain("private-internal-token");
+  });
 });

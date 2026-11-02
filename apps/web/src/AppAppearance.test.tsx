@@ -145,10 +145,8 @@ describe("application appearance synchronization", () => {
     fireEvent.click(
       screen.getByRole("button", { name: "Profile menu for Alex" }),
     );
-    fireEvent.click(
-      screen.getByRole("menuitem", { name: "Log out / Switch profile" }),
-    );
-    fireEvent.click(screen.getByRole("button", { name: /Alex/ }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Switch profile" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Alex/ }));
     expect(topbarTheme()).toHaveValue("auto");
     fireEvent.click(
       screen.getByRole("button", { name: "Profile menu for Alex" }),

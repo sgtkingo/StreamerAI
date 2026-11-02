@@ -32,6 +32,7 @@ import {
   type TitleSource,
 } from "@streamer-ai/contracts";
 import {
+  LOCAL_ACCOUNT_ID,
   ProfileLimitError,
   type Profile,
   type StreamerDatabase,
@@ -238,6 +239,8 @@ export class StreamerCore {
     );
     return ViewerProfileSchema.parse({
       id: profile.id,
+      accountId: profile.accountId,
+      pinEnabled: profile.pinEnabled,
       name: profile.name,
       onboardingComplete:
         profile.preferences.onboardingComplete === true ||
@@ -261,19 +264,24 @@ export class StreamerCore {
     });
   }
 
-  listProfiles(): ViewerProfile[] {
+  listProfiles(accountId?: string): ViewerProfile[] {
     return this.database.profiles
-      .list()
+      .list(accountId)
       .map((profile) => this.publicProfile(profile));
   }
 
-  createViewerProfile(input: {
-    name: string;
-    locale: "en" | "cs" | "de";
-  }): ViewerProfile {
-    if (this.database.profiles.count() >= 5) throw new ProfileLimitError();
+  createViewerProfile(
+    input: {
+      name: string;
+      locale: "en" | "cs" | "de";
+    },
+    accountId = LOCAL_ACCOUNT_ID,
+  ): ViewerProfile {
+    if (this.database.profiles.count(accountId) >= 5)
+      throw new ProfileLimitError();
     const profile = this.database.profiles.create({
       id: `profile-${randomUUID()}`,
+      accountId,
       name: input.name,
       locale: input.locale,
       preferences: {

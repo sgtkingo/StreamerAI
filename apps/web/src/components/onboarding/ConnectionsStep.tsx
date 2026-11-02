@@ -31,8 +31,9 @@ export function ConnectionsStep({
         We handle the rest.
       </h1>
       <p className="step-lead">
-        Choose the databases, video sources and subtitle services you want to
-        use. You can add more or change them later in Settings.
+        Services already connected to your account are ready to use. Choose
+        additional databases, video sources and subtitle services below. You can
+        manage shared connections later in Settings.
       </p>
       <IntegrationManager
         api={api}

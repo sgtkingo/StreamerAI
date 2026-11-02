@@ -1,4 +1,5 @@
 import { loadEnvFile } from "node:process";
+import { fileURLToPath } from "node:url";
 import { LOG_LEVELS, type LogLevel } from "./logging.js";
 
 const DEFAULT_SERVER_PORT = 4400;
@@ -6,6 +7,10 @@ const DEFAULT_OLLAMA_BASE_URL = "http://127.0.0.1:11434";
 const DEFAULT_OLLAMA_MODEL = "qwen3.5:4b";
 
 export interface RuntimeConfig {
+  readonly accounts?: {
+    readonly serviceUrl: string | null;
+    readonly webOrigin: string;
+  };
   readonly environment: string;
   readonly server: {
     readonly host: string;
@@ -121,6 +126,28 @@ function ollamaBaseUrl(value: string | undefined): string {
 export function readRuntimeConfig(
   env: Environment = process.env,
 ): RuntimeConfig {
+  const accountService = env.STREAMERAI_ACCOUNT_SERVICE_URL?.trim();
+  let accountServiceUrl: string | null = null;
+  if (accountService) {
+    const parsed = new URL(accountService);
+    if (
+      (parsed.protocol !== "https:" &&
+        !(
+          parsed.protocol === "http:" &&
+          ["localhost", "127.0.0.1", "[::1]"].includes(parsed.hostname)
+        )) ||
+      parsed.username ||
+      parsed.password ||
+      parsed.search ||
+      parsed.hash ||
+      parsed.pathname !== "/"
+    ) {
+      throw new Error(
+        "STREAMERAI_ACCOUNT_SERVICE_URL must be an HTTPS origin (HTTP loopback is allowed for development).",
+      );
+    }
+    accountServiceUrl = parsed.origin;
+  }
   const logLevel = env.STREAMERAI_LOG_LEVEL?.trim() || "info";
   if (!LOG_LEVELS.includes(logLevel as LogLevel)) {
     throw new Error(`STREAMERAI_LOG_LEVEL must be ${LOG_LEVELS.join(", ")}.`);
@@ -199,6 +226,10 @@ export function readRuntimeConfig(
     );
 
   return {
+    accounts: {
+      serviceUrl: accountServiceUrl,
+      webOrigin: env.STREAMERAI_WEB_ORIGIN?.trim() || "http://localhost:5173",
+    },
     environment: nonEmptySetting(env.NODE_ENV, "development", "NODE_ENV"),
     server: {
       host: nonEmptySetting(
@@ -276,18 +307,25 @@ export function readRuntimeConfig(
  * unreadable files fail startup rather than silently running with surprises.
  */
 export function loadLocalEnvironment(filename = ".env"): boolean {
-  try {
-    loadEnvFile(filename);
-    return true;
-  } catch (error) {
-    if (
-      typeof error === "object" &&
-      error !== null &&
-      "code" in error &&
-      error.code === "ENOENT"
-    ) {
-      return false;
+  const candidates =
+    filename === ".env"
+      ? [filename, fileURLToPath(new URL("../../../.env", import.meta.url))]
+      : [filename];
+  for (const candidate of candidates) {
+    try {
+      loadEnvFile(candidate);
+      return true;
+    } catch (error) {
+      if (
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        error.code === "ENOENT"
+      ) {
+        continue;
+      }
+      throw error;
     }
-    throw error;
   }
+  return false;
 }

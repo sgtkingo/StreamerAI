@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { resolveMediaSourceOrder } from "@streamer-ai/contracts";
 import type {
+  AccountOverview,
   ConnectionState,
   IntegrationCatalogItem,
   StreamerApi,
@@ -314,6 +315,8 @@ export function IntegrationManager({
     error: boolean;
   } | null>(null);
   const [catalogError, setCatalogError] = useState("");
+  const [accountOverview, setAccountOverview] =
+    useState<AccountOverview | null>(null);
   const [token, setToken] = useState("");
   const [showToken, setShowToken] = useState(false);
   const [username, setUsername] = useState("");
@@ -359,25 +362,54 @@ export function IntegrationManager({
 
   useEffect(() => {
     let active = true;
-    api
-      .getIntegrations(profileId)
-      .then((response) => {
-        if (!active) return;
-        setItems((current) => {
-          const byId = new Map(current.map((item) => [item.id, item]));
-          for (const item of response.items) byId.set(item.id, item);
-          return [...byId.values()];
+    let revision = 0;
+    const refresh = (openPicker = false) => {
+      const requestRevision = ++revision;
+      void api
+        .getIntegrations(profileId)
+        .then((response) => {
+          if (!active || requestRevision !== revision) return;
+          setItems((current) => {
+            const byId = new Map(current.map((item) => [item.id, item]));
+            for (const item of response.items) byId.set(item.id, item);
+            return [...byId.values()];
+          });
+          setCatalogError("");
+          if (openPicker && discoveryRevision > 0) setPicker("inference");
+        })
+        .catch((error: unknown) => {
+          if (active && requestRevision === revision)
+            setCatalogError(safeErrorMessage(error));
         });
-        setCatalogError("");
-        if (discoveryRevision > 0) setPicker("inference");
-      })
-      .catch((error: unknown) => {
-        if (active) setCatalogError(safeErrorMessage(error));
-      });
+    };
+    refresh(true);
+    const onFocus = () => refresh();
+    window.addEventListener("focus", onFocus);
     return () => {
       active = false;
+      window.removeEventListener("focus", onFocus);
     };
   }, [api, discoveryRevision, profileId]);
+
+  useEffect(() => {
+    if (category !== "services" || !api.getAccount) return;
+    let active = true;
+    const refresh = () => {
+      void api.getAccount!()
+        .then((result) => {
+          if (active) setAccountOverview(result);
+        })
+        .catch(() => {
+          if (active) setAccountOverview(null);
+        });
+    };
+    refresh();
+    window.addEventListener("focus", refresh);
+    return () => {
+      active = false;
+      window.removeEventListener("focus", refresh);
+    };
+  }, [api, category, profileId]);
 
   const visible = (item: IntegrationCatalogItem) =>
     item.configured || item.selected || addedIds.includes(item.id);
@@ -703,10 +735,10 @@ export function IntegrationManager({
                         <InfoTip label="About recommended source">
                           <strong>Auto</strong> picks the best match using your
                           preferred audio language, title match, file rating and
-                          device resolution. <strong>By Order</strong> prioritizes
-                          sources by the order below, then compares their matches.
-                          This changes which stream is recommended first; it does
-                          not disconnect any source.
+                          device resolution. <strong>By Order</strong>{" "}
+                          prioritizes sources by the order below, then compares
+                          their matches. This changes which stream is
+                          recommended first; it does not disconnect any source.
                         </InfoTip>
                       </legend>
                       <label>
@@ -943,18 +975,28 @@ export function IntegrationManager({
                             <span
                               className={
                                 "integration-block__status " +
-                                (item.configured
+                                (item.configured &&
+                                item.status !== "unavailable"
                                   ? "is-connected"
                                   : item.planned
                                     ? "is-planned"
                                     : "")
                               }
                             >
-                              {item.configured
-                                ? "Connected"
-                                : item.planned
-                                  ? "Planned"
-                                  : "Ready to connect"}
+                              {item.id === "cloudflare-sync" &&
+                              item.status === "unavailable"
+                                ? "Sync issue"
+                                : item.id === "cloudflare-sync" &&
+                                    item.selected &&
+                                    !item.configured
+                                  ? "Paused"
+                                  : item.configured
+                                    ? item.id === "cloudflare-sync"
+                                      ? "Active"
+                                      : "Connected"
+                                    : item.planned
+                                      ? "Planned"
+                                      : "Ready to connect"}
                             </span>
                           </div>
                         </div>
@@ -993,23 +1035,26 @@ export function IntegrationManager({
                               {item.configured ? "Settings" : "Connect"}
                             </button>
                           )}
-                          {(!item.configured || supported) && (
-                            <button
-                              type="button"
-                              className="integration-block__remove"
-                              onClick={() =>
-                                item.configured
-                                  ? setConfirmId(item.id)
-                                  : void remove(item)
-                              }
-                              disabled={busy}
-                            >
-                              <ActionIcon
-                                kind={item.configured ? "disconnect" : "remove"}
-                              />
-                              {item.configured ? "Disconnect" : "Remove"}
-                            </button>
-                          )}
+                          {(item.id !== "cloudflare-sync" || !item.selected) &&
+                            (!item.configured || supported) && (
+                              <button
+                                type="button"
+                                className="integration-block__remove"
+                                onClick={() =>
+                                  item.configured
+                                    ? setConfirmId(item.id)
+                                    : void remove(item)
+                                }
+                                disabled={busy}
+                              >
+                                <ActionIcon
+                                  kind={
+                                    item.configured ? "disconnect" : "remove"
+                                  }
+                                />
+                                {item.configured ? "Disconnect" : "Remove"}
+                              </button>
+                            )}
                         </div>
                       </div>
                       <p>{item.description}</p>
@@ -1023,13 +1068,38 @@ export function IntegrationManager({
                           Saved for later. This adapter cannot connect yet.
                         </p>
                       )}
-                      {!item.planned && !supported && item.id !== "ollama" && (
-                        <p className="integration-block__hint">
-                          {item.configured
-                            ? "This connection is managed in its own setup flow."
-                            : "This connector needs its own setup flow before it can be configured here."}
-                        </p>
+                      {item.id === "cloudflare-sync" && (
+                        <>
+                          <p className="integration-block__hint">
+                            {item.status === "unavailable"
+                              ? "Synchronization needs attention. Your changes remain on this home server."
+                              : item.selected && !item.configured
+                                ? "Synchronization is paused. You can enable it in Account settings."
+                                : item.configured
+                                  ? "Profiles, library and watch progress synchronize with your StreamerAI account."
+                                  : "Sign in to a StreamerAI account to enable cloud synchronization."}
+                          </p>
+                          {accountOverview?.manageUrl && (
+                            <a
+                              href={accountOverview.manageUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                            >
+                              Manage account <span aria-hidden="true">↗</span>
+                            </a>
+                          )}
+                        </>
                       )}
+                      {!item.planned &&
+                        !supported &&
+                        item.id !== "ollama" &&
+                        item.id !== "cloudflare-sync" && (
+                          <p className="integration-block__hint">
+                            {item.configured
+                              ? "This connection is managed in its own setup flow."
+                              : "This connector needs its own setup flow before it can be configured here."}
+                          </p>
+                        )}
                       {item.setup.documentationUrl && (
                         <a
                           href={item.setup.documentationUrl}

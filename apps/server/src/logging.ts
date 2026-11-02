@@ -8,6 +8,7 @@ export const LOG_REDACTION_PATHS = [
   "req.headers.authorization",
   "req.headers.cookie",
   'req.headers["x-api-key"]',
+  'req.headers["x-streamer-internal-token"]',
   'res.headers["set-cookie"]',
   "authorization",
   "token",

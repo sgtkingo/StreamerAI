@@ -413,9 +413,9 @@ export const INTEGRATION_DESCRIPTORS = {
       "Cloud-Synchronisierung",
     ),
     description: text(
-      "Optional encrypted synchronization of small user state between devices.",
-      "Volitelná šifrovaná synchronizace malého uživatelského stavu mezi zařízeními.",
-      "Optionale verschlüsselte Synchronisierung kleiner Benutzerzustände zwischen Geräten.",
+      "Synchronize profiles, library and watch progress across home installations.",
+      "Synchronizace profilů, knihovny a rozkoukanosti mezi domácími instalacemi.",
+      "Profile, Mediathek und Wiedergabefortschritt zwischen Heiminstallationen synchronisieren.",
     ),
     setupMode: "device-pairing",
     optional: true,

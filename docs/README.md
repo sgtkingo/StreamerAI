@@ -9,9 +9,12 @@ and approved future decisions remain authoritative in [`../instructions`](../ins
 - [`DEPLOYMENT.md`](DEPLOYMENT.md) - portable Docker profile, encrypted secrets and host Ollama.
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) - boundaries, data flow and invariants.
 - [`API.md`](API.md) - currently implemented HTTP endpoints.
+- [`ACCOUNTS.md`](ACCOUNTS.md) - Google login, TV pairing, account/profile migration, PINs and sync.
+- [`ACCOUNT_MODES_PLAN.md`](ACCOUNT_MODES_PLAN.md) - implemented local/e-mail entry and optional cloud sync; remaining Google Drive design and acceptance checks.
+- [`CLOUD_AUTH.md`](CLOUD_AUTH.md) - Cloudflare Worker/D1 setup and operations.
 - [`TITLE_DETAILS.md`](TITLE_DETAILS.md) - film details, progressive episode discovery, and exact-episode playback.
 - [`PLAYER.md`](PLAYER.md) - audio outputs, subtitles, seek timing and series autoplay.
-- [`PROFILES.md`](PROFILES.md) - local viewers, onboarding, appearance and device context.
+- [`PROFILES.md`](PROFILES.md) - viewer onboarding, appearance and device context.
 - [`ADAPTIVE_THEMES_PLAN.md`](ADAPTIVE_THEMES_PLAN.md) - implemented seasonal,
   weather-aware day/night themes, ambient backgrounds and appearance/time settings.
 - [`INTEGRATIONS.md`](INTEGRATIONS.md) - how to add metadata, media, subtitle,
@@ -46,8 +49,9 @@ ratings and explicitly named people; Webshare deterministically verifies
 availability and formats. The two lanes merge by canonical title ID. The
 preview provider remains a development/test fallback and cannot start
 playback. Real Webshare search and format inspection have passed; the final
-playback/Range/seek acceptance spike, subtitle retrieval, web search and
-Cloudflare sync remain open.
+playback/Range/seek acceptance spike, subtitle retrieval and web search remain
+open. Cloudflare identity and user-state sync are implemented; real Google/TV
+acceptance remains a rollout check.
 
 ## Specification map
 

@@ -77,17 +77,21 @@ describe("TitleDetail", () => {
       related: [],
       series: {
         status: "partial",
-        seasons: [{
-          seasonNumber: 1,
-          title: "Season One",
-          episodes: [{
+        seasons: [
+          {
             seasonNumber: 1,
-            episodeNumber: 1,
-            title: "Pilot",
-            airDate: null,
-            availability: "unavailable",
-          }],
-        }],
+            title: "Season One",
+            episodes: [
+              {
+                seasonNumber: 1,
+                episodeNumber: 1,
+                title: "Pilot",
+                airDate: null,
+                availability: "unavailable",
+              },
+            ],
+          },
+        ],
       },
     };
     const api = {
@@ -95,20 +99,26 @@ describe("TitleDetail", () => {
       getTitleDetail: vi.fn().mockResolvedValue(offline),
     } as unknown as StreamerApi;
     const user = userEvent.setup();
-    render(<TitleDetail
-      api={api}
-      profileId="default"
-      title={offline.title}
-      playbackEnabled
-      onClose={vi.fn()}
-      onOpenRelated={vi.fn()}
-      onPlay={vi.fn()}
-      onAdded={vi.fn()}
-    />);
+    render(
+      <TitleDetail
+        api={api}
+        profileId="default"
+        title={offline.title}
+        playbackEnabled
+        onClose={vi.fn()}
+        onOpenRelated={vi.fn()}
+        onPlay={vi.fn()}
+        onAdded={vi.fn()}
+      />,
+    );
     const episode = (await screen.findByText(/Pilot/)).closest("li")!;
     expect(within(episode).getByText("Ready")).toBeInTheDocument();
     expect(within(episode).queryByText("Unavailable")).toBeNull();
-    await user.click(within(episode).getByRole("button", { name: "Details for Sample Show S01E01" }));
+    await user.click(
+      within(episode).getByRole("button", {
+        name: "Details for Sample Show S01E01",
+      }),
+    );
     expect(screen.getByRole("button", { name: "Play episode" })).toBeEnabled();
   });
 
@@ -122,24 +132,28 @@ describe("TitleDetail", () => {
           {
             seasonNumber: 0,
             title: "Specials",
-            episodes: [{
-              seasonNumber: 0,
-              episodeNumber: 1,
-              title: "Behind the scenes",
-              airDate: null,
-              availability: "unavailable",
-            }],
+            episodes: [
+              {
+                seasonNumber: 0,
+                episodeNumber: 1,
+                title: "Behind the scenes",
+                airDate: null,
+                availability: "unavailable",
+              },
+            ],
           },
           {
             seasonNumber: 1,
             title: "Season One",
-            episodes: [{
-              seasonNumber: 1,
-              episodeNumber: 1,
-              title: "Pilot",
-              airDate: null,
-              availability: "available",
-            }],
+            episodes: [
+              {
+                seasonNumber: 1,
+                episodeNumber: 1,
+                title: "Pilot",
+                airDate: null,
+                availability: "available",
+              },
+            ],
           },
         ],
       },
@@ -148,19 +162,24 @@ describe("TitleDetail", () => {
       ...offlineApi,
       getTitleDetail: vi.fn().mockResolvedValue(withSpecials),
     } as unknown as StreamerApi;
-    render(<TitleDetail
-      api={api}
-      profileId="default"
-      title={title}
-      playbackEnabled
-      onClose={vi.fn()}
-      onOpenRelated={vi.fn()}
-      onPlay={vi.fn()}
-      onAdded={vi.fn()}
-    />);
+    render(
+      <TitleDetail
+        api={api}
+        profileId="default"
+        title={title}
+        playbackEnabled
+        onClose={vi.fn()}
+        onOpenRelated={vi.fn()}
+        onPlay={vi.fn()}
+        onAdded={vi.fn()}
+      />,
+    );
     const seasons = await screen.findByLabelText("Seasons");
     const buttons = within(seasons).getAllByRole("button");
-    expect(buttons.map((button) => button.textContent)).toEqual(["Season 1", "Season 0 · Specials"]);
+    expect(buttons.map((button) => button.textContent)).toEqual([
+      "Season 1",
+      "Season 0 · Specials",
+    ]);
     expect(buttons[1]).toHaveClass("is-special");
     expect(buttons[1]).not.toHaveClass("is-incomplete");
     expect(screen.getByText(/Pilot/)).toBeInTheDocument();
@@ -180,23 +199,31 @@ describe("TitleDetail", () => {
       episodeNumber: 1,
       checkedAt: "2026-09-29T20:00:00.000Z",
     };
-    const local = { ...remote, id: "b".repeat(32), providerId: "local-files" as const };
+    const local = {
+      ...remote,
+      id: "b".repeat(32),
+      providerId: "local-files" as const,
+    };
     const makeDetail = (): Detail => ({
       title: { ...title, sources: deleted ? [remote] : [remote, local] },
       related: [],
       series: {
         status: "complete",
-        seasons: [{
-          seasonNumber: 1,
-          title: "Season One",
-          episodes: [{
+        seasons: [
+          {
             seasonNumber: 1,
-            episodeNumber: 1,
-            title: "Pilot",
-            airDate: null,
-            availability: "available",
-          }],
-        }],
+            title: "Season One",
+            episodes: [
+              {
+                seasonNumber: 1,
+                episodeNumber: 1,
+                title: "Pilot",
+                airDate: null,
+                availability: "available",
+              },
+            ],
+          },
+        ],
       },
     });
     const job = {
@@ -213,23 +240,35 @@ describe("TitleDetail", () => {
     const api = {
       ...offlineApi,
       getTitleDetail: vi.fn().mockImplementation(async () => makeDetail()),
-      getOfflineDownloads: vi.fn().mockImplementation(async () => ({ items: deleted ? [] : [job] })),
-      deleteOfflineDownload: vi.fn().mockImplementation(async () => { deleted = true; }),
+      getOfflineDownloads: vi
+        .fn()
+        .mockImplementation(async () => ({ items: deleted ? [] : [job] })),
+      deleteOfflineDownload: vi.fn().mockImplementation(async () => {
+        deleted = true;
+      }),
     } as unknown as StreamerApi;
-    render(<TitleDetail
-      api={api}
-      profileId="default"
-      title={title}
-      playbackEnabled
-      onClose={vi.fn()}
-      onOpenRelated={vi.fn()}
-      onPlay={vi.fn()}
-      onAdded={vi.fn()}
-    />);
+    render(
+      <TitleDetail
+        api={api}
+        profileId="default"
+        title={title}
+        playbackEnabled
+        onClose={vi.fn()}
+        onOpenRelated={vi.fn()}
+        onPlay={vi.fn()}
+        onAdded={vi.fn()}
+      />,
+    );
 
-    await user.click(await screen.findByRole("button", { name: "Delete saved offline copy of Sample Show S01E01" }));
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Delete saved offline copy of Sample Show S01E01",
+      }),
+    );
     await user.click(screen.getByRole("button", { name: "Delete file" }));
-    const button = await screen.findByRole("button", { name: "Download Sample Show S01E01" });
+    const button = await screen.findByRole("button", {
+      name: "Download Sample Show S01E01",
+    });
     expect(button).toHaveClass("download-button--idle");
     expect(button.querySelector(".download-glyph__check")).toBeNull();
   });
@@ -539,7 +578,7 @@ describe("TitleDetail", () => {
       ),
     ).toBeInTheDocument();
     expect(
-      within(dialog).getAllByText("• searching...").length,
+      within(dialog).getAllByRole("status", { name: "Composing" }).length,
     ).toBeGreaterThan(0);
     const readyEpisode = within(dialog).getByText(/Pilot/).closest("li")!;
     const pendingEpisode = within(dialog).getByText(/Next/).closest("li")!;
@@ -767,7 +806,7 @@ describe("TitleDetail", () => {
     );
   });
 
-  it("offers an offline download into a connected local folder", async () => {
+  it("downloads into a connected local folder and deletes its saved copy", async () => {
     const user = userEvent.setup();
     const source = {
       id: "a".repeat(32),
@@ -816,6 +855,7 @@ describe("TitleDetail", () => {
         totalBytes: 100,
         error: null,
       }),
+      deleteOfflineDownload: vi.fn().mockResolvedValue(undefined),
     } as unknown as StreamerApi;
     render(
       <TitleDetail
@@ -837,27 +877,24 @@ describe("TitleDetail", () => {
       movie.id,
       source.id,
       "root-1",
-      false,
     );
     const savedButton = await screen.findByRole("button", {
-      name: "Download Sample Movie again",
+      name: "Delete saved offline copy of Sample Movie",
     });
     expect(savedButton).toHaveClass("download-button--complete");
     await user.click(savedButton);
     expect(
-      screen.getByRole("dialog", { name: "Replace offline copy" }),
+      screen.getByRole("dialog", { name: "Delete offline copy" }),
     ).toBeInTheDocument();
-    await user.click(
-      screen.getByRole("button", { name: "Replace and download" }),
-    );
-    expect(api.startOfflineDownload).toHaveBeenLastCalledWith(
+    await user.click(screen.getByRole("button", { name: "Delete file" }));
+    expect(api.deleteOfflineDownload).toHaveBeenCalledWith(
       "default",
-      movie.id,
-      source.id,
-      "root-1",
-      true,
+      "download-1",
     );
-    expect(api.getTitleDetail).toHaveBeenCalledTimes(2);
+    expect(api.startOfflineDownload).toHaveBeenCalledOnce();
+    expect(
+      await screen.findByRole("button", { name: "Download Sample Movie" }),
+    ).toHaveClass("download-button--idle");
   });
 
   it("shows the title detail download control as green when a local copy is indexed", async () => {

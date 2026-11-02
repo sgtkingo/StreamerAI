@@ -22,17 +22,10 @@ import type { InferenceFetch } from "./integrations/ollama-preflight.js";
 import { type FetchLike } from "./integrations/tmdb-client.js";
 import type { ProviderFetch } from "./integrations/tmdb-api-client.js";
 import { TmdbApiClient } from "./integrations/tmdb-api-client.js";
-import { TMDB_READ_TOKEN_SECRET_KEY } from "./integrations/tmdb-client.js";
 import { TmdbMetadataProvider } from "./integrations/tmdb-metadata-provider.js";
-import {
-  WEBSHARE_WST_SECRET_KEY,
-  WebshareClient,
-} from "./integrations/webshare-client.js";
+import { WebshareClient } from "./integrations/webshare-client.js";
 import { WebshareMediaProvider } from "./integrations/webshare-media-provider.js";
-import {
-  HellspyClient,
-  HELLSPY_SESSION_SECRET_KEY,
-} from "./integrations/hellspy-client.js";
+import { HellspyClient } from "./integrations/hellspy-client.js";
 import { HellspyMediaProvider } from "./integrations/hellspy-media-provider.js";
 import { registerHellspyRoutes } from "./routes/hellspy.js";
 import { LocalMediaProvider } from "./integrations/local-media-provider.js";
@@ -49,11 +42,7 @@ import { AgentRouter } from "./integrations/agent-router.js";
 import { StreamerToolService } from "./mcp/streamer-tools.js";
 import { LocalAgentHost } from "./integrations/local-agent-host.js";
 import { CustomLocalAgent } from "./integrations/custom-local-agent.js";
-import {
-  RemoteApiAgent,
-  REMOTE_API_NAMES,
-  remoteApiSecretKey,
-} from "./integrations/remote-api-agent.js";
+import { RemoteApiAgent } from "./integrations/remote-api-agent.js";
 import {
   manualAgentSettingKey,
   parseManualAgentConfig,
@@ -99,12 +88,16 @@ import {
 import {
   createSecretStore,
   EncryptedFileSecretStore,
-  profileSecretKey,
   type SecretStore,
 } from "./stores/secret-store.js";
 import { readRuntimeConfig, type RuntimeConfig } from "./runtime-config.js";
+import { AccountScopedSecretStore } from "./stores/account-integrations.js";
+import { AccountAuthService } from "./services/account-auth.js";
+import { AccountSyncService } from "./services/account-sync.js";
 
 export interface CreateAppOptions {
+  accountServiceUrl?: string | null;
+  accountFetch?: typeof fetch;
   environment?: string;
   logger?: FastifyBaseLogger | false;
   fetch?: FetchLike;
@@ -166,7 +159,10 @@ function createStores(
       keyFilename,
     });
   }
-  const secretStore = createSecretStore({ adapter: configuredSecretStore });
+  const secretStore = new AccountScopedSecretStore(
+    database,
+    createSecretStore({ adapter: configuredSecretStore }),
+  );
   const integrationStateStore =
     options.integrationStateStore ?? new SqliteIntegrationStateStore(database);
 
@@ -185,6 +181,7 @@ function createStores(
 }
 
 export function createApp(options: CreateAppOptions = {}): FastifyInstance {
+  const internalAccountToken = randomUUID();
   const now = options.now ?? (() => new Date());
   const environment =
     options.environment ??
@@ -341,7 +338,12 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
     runtimeConfig.agent,
     ollamaAgent,
     remoteApi,
-    new StreamerToolService(`http://127.0.0.1:${runtimeConfig.server.port}`),
+    new StreamerToolService(
+      `http://127.0.0.1:${runtimeConfig.server.port}`,
+      undefined,
+      undefined,
+      internalAccountToken,
+    ),
     now,
     new LocalAgentHost((event) => app.log.info(event, "Local agent lifecycle")),
     async (profileId) =>
@@ -498,6 +500,65 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
           bodyLimit: 64 * 1024,
         });
 
+  if (database.migrationBackupPath) {
+    app.log.info(
+      {
+        code: "ACCOUNT_MIGRATION_BACKUP",
+        filename: database.migrationBackupPath,
+      },
+      "Verified database backup created before the account migration",
+    );
+  }
+  const accountServiceUrl =
+    options.accountServiceUrl !== undefined
+      ? options.accountServiceUrl
+      : (runtimeConfig.accounts?.serviceUrl ?? null);
+  const accountSync: AccountSyncService | undefined = accountServiceUrl
+    ? new AccountSyncService(
+        database,
+        accountServiceUrl,
+        options.accountFetch ?? fetch,
+        now,
+        { getCredential: (accountId) => accountAuth.getCredential(accountId) },
+      )
+    : undefined;
+  const accountAuth: AccountAuthService = new AccountAuthService({
+    database,
+    secretStore: stores.secretStore,
+    serviceUrl: accountServiceUrl,
+    webOrigin: runtimeConfig.accounts?.webOrigin ?? "http://localhost:5173",
+    fetch: options.accountFetch,
+    now,
+    internalToken: internalAccountToken,
+    tickets: playbackTicketStore,
+    sync: accountSync,
+  });
+  accountAuth.register(app);
+  app.addHook("onResponse", async (request, reply) => {
+    if (
+      !accountSync ||
+      reply.statusCode >= 400 ||
+      ["GET", "HEAD", "OPTIONS"].includes(request.method)
+    )
+      return;
+    try {
+      accountSync.capture(accountAuth.account(request).id);
+    } catch {
+      app.log.warn(
+        { code: "ACCOUNT_SYNC_CAPTURE_PENDING" },
+        "User-state synchronization will retry from its durable journal",
+      );
+    }
+  });
+  const accountSyncTimer =
+    accountSync && environment !== "test"
+      ? setInterval(() => {
+          for (const account of database.accounts.list())
+            if (account.cloudUserId) void accountSync.sync(account.id);
+        }, 60_000)
+      : null;
+  accountSyncTimer?.unref();
+
   app.addHook("onRequest", (request, _reply, done) => {
     withRequestDisplayHeight(
       request.headers["x-streamer-display-height"],
@@ -506,6 +567,8 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
   });
 
   app.addHook("onReady", async () => {
+    if (!(await stores.secretStore.isReady()))
+      throw new Error("Account credential storage is not ready.");
     if (environment !== "test") {
       await localMediaLibrary.ensureDefaultRoot(
         resolve(runtimeConfig.server.dataDir, "StreamerAI", "Local", "Library"),
@@ -569,6 +632,15 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
     ),
   );
   registerSystemRoutes(app, {
+    accountSyncState: (request) => {
+      const account = accountAuth.account(request);
+      const state = accountSync?.status(account.id);
+      return {
+        linked: account.cloudUserId !== null,
+        configured: state?.configured === true,
+        status: state?.status ?? "idle",
+      };
+    },
     agentStatus: async (profileId) => {
       const selection = agent.selection(profileId);
       if (selection.mode === "api" && selection.provider === "ollama") {
@@ -599,25 +671,16 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
   });
   registerContentRoutes(app, {
     core,
+    accountId: (request) => accountAuth.account(request).id,
+    maskProfiles: (request, profiles) =>
+      accountAuth.maskProfiles(request, profiles),
     ensureLocalLibrary: (profileId) =>
-      localMediaLibrary.ensureProfileLibrary(profileId),
+      stores.integrationStateStore.isConfigured("local-files", profileId)
+        ? localMediaLibrary.ensureProfileLibrary(profileId)
+        : Promise.resolve(),
     onDeleteProfile: async (profileId) => {
       sourcePreferences.delete(profileId);
       await agent.deleteProfile(profileId);
-      await Promise.all([
-        stores.secretStore.delete(
-          profileSecretKey(profileId, TMDB_READ_TOKEN_SECRET_KEY),
-        ),
-        stores.secretStore.delete(
-          profileSecretKey(profileId, WEBSHARE_WST_SECRET_KEY),
-        ),
-        stores.secretStore.delete(
-          profileSecretKey(profileId, HELLSPY_SESSION_SECRET_KEY),
-        ),
-        ...REMOTE_API_NAMES.map((provider) =>
-          stores.secretStore.delete(remoteApiSecretKey(profileId, provider)),
-        ),
-      ]);
       database.settings.delete(manualAgentSettingKey(profileId));
       profileInferenceConfigs.delete(profileId);
     },
@@ -737,6 +800,7 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
   });
 
   app.addHook("onClose", async () => {
+    if (accountSyncTimer) clearInterval(accountSyncTimer);
     await agent.close();
     if (availabilityTimer) clearInterval(availabilityTimer);
     await offlineDownloads.close();

@@ -102,6 +102,83 @@ function apiWith(integrations: IntegrationCatalogItem[]) {
 }
 
 describe("integration manager", () => {
+  it("refreshes cloud sync status when returning to settings", async () => {
+    const cloud = {
+      id: "cloudflare-sync",
+      name: "Cloud sync",
+      description: "Account sync",
+      category: "sync",
+      planned: false,
+      selected: true,
+      configured: true,
+      status: "connected",
+      setup: { documentationUrl: null, supportsDisconnect: true },
+    } as IntegrationCatalogItem;
+    const api = apiWith([...items, cloud]);
+    render(
+      <IntegrationManager api={api} context="settings" profileId="viewer" />,
+    );
+    const card = (
+      await screen.findByRole("heading", { name: "Cloud sync" })
+    ).closest("article")!;
+    expect(within(card).getByText("Active")).toBeVisible();
+    vi.mocked(api.getIntegrations).mockResolvedValue({
+      items: [
+        ...items,
+        { ...cloud, configured: false, status: "action_required" },
+      ],
+    });
+    fireEvent.focus(window);
+    await waitFor(() => expect(within(card).getByText("Paused")).toBeVisible());
+  });
+  it.each([
+    [{ selected: true, configured: true, status: "connected" }, "Active"],
+    [
+      { selected: true, configured: false, status: "action_required" },
+      "Paused",
+    ],
+    [{ selected: true, configured: true, status: "unavailable" }, "Sync issue"],
+  ])(
+    "shows the actual cloud sync status and account portal",
+    async (state, label) => {
+      const cloud = {
+        id: "cloudflare-sync",
+        name: "Cloud sync",
+        description: "Account sync",
+        category: "sync",
+        planned: false,
+        setup: { documentationUrl: null, supportsDisconnect: true },
+        ...state,
+      } as IntegrationCatalogItem;
+      const api = apiWith([...items, cloud]);
+      api.getAccount = vi.fn().mockResolvedValue({
+        account: { id: "owner", cloudLinked: true },
+        manageUrl: "https://example.com/account?account_id=owner",
+        devices: [],
+      });
+      render(
+        <IntegrationManager api={api} context="settings" profileId="viewer" />,
+      );
+      const card = (
+        await screen.findByRole("heading", { name: "Cloud sync" })
+      ).closest("article")!;
+      expect(within(card).getByText(label)).toBeVisible();
+      const link = await within(card).findByRole("link", {
+        name: /Manage account/,
+      });
+      expect(link).toHaveAttribute(
+        "href",
+        "https://example.com/account?account_id=owner",
+      );
+      expect(link).toHaveAttribute("rel", "noopener noreferrer");
+      expect(
+        within(card).queryByText(/needs its own setup flow/),
+      ).not.toBeInTheDocument();
+      expect(
+        within(card).queryByText(/managed in its own setup flow/),
+      ).not.toBeInTheDocument();
+    },
+  );
   it("defaults to Auto and saves By Order for the active profile", async () => {
     const user = userEvent.setup();
     const api = apiWith(items);

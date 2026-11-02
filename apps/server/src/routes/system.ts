@@ -5,7 +5,7 @@ import {
   type ProviderDescriptor,
   type IntegrationDescriptor,
 } from "@streamer-ai/contracts";
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { StreamerDatabase } from "@streamer-ai/database";
 import {
   integrationCatalogItem,
@@ -18,6 +18,11 @@ import type { SecretStore } from "../stores/secret-store.js";
 import { profileSecretKey } from "../stores/secret-store.js";
 
 export interface SystemRouteDependencies {
+  accountSyncState?: (request: FastifyRequest) => {
+    linked: boolean;
+    configured: boolean;
+    status: "idle" | "pending" | "syncing" | "error";
+  };
   agentStatus?: (profileId: string) => Promise<{
     configured: boolean;
     status: string;
@@ -272,6 +277,7 @@ export function registerSystemRoutes(
         },
       });
     const tmdb = await getTmdbStatus(dependencies, profileId);
+    const accountSync = dependencies.accountSyncState?.(request);
     const states = await dependencies.integrationStateStore.list(profileId);
     const byId = new Map(states.map((state) => [state.integrationId, state]));
     const descriptors = new Map<string, IntegrationDescriptor>(
@@ -301,6 +307,21 @@ export function registerSystemRoutes(
           ? "memory"
           : "persistent",
       items: [...descriptors.values()].map((descriptor) => {
+        if (descriptor.id === "cloudflare-sync") {
+          const configured = accountSync?.configured === true;
+          const status =
+            accountSync?.status === "error"
+              ? "unavailable"
+              : configured
+                ? "connected"
+                : accountSync?.linked
+                  ? "action_required"
+                  : "not_configured";
+          return {
+            ...integrationCatalogItem(descriptor, status, configured),
+            selected: accountSync?.linked === true,
+          };
+        }
         const state = byId.get(descriptor.id);
         const status =
           descriptor.id === "tmdb"

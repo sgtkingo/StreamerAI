@@ -1,0 +1,7 @@
+BETTER_AUTH_SECRET=replace-with-a-random-32-byte-secret
+GOOGLE_CLIENT_ID=replace-with-google-web-client-id
+GOOGLE_CLIENT_SECRET=replace-with-google-client-secret
+AUTH_ORIGIN=http://localhost:8787
+# Optional: configure only with a development mail account/sender.
+# BREVO_API_KEY=replace-with-development-mail-key
+# MAIL_FROM=no-reply@example.test

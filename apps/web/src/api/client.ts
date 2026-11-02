@@ -182,7 +182,88 @@ export interface PlaybackCheckResult {
   subtitleLanguages?: string[];
 }
 
+export interface AccountIdentity {
+  id: string;
+  name: string;
+  email: string | null;
+  cloudLinked?: boolean;
+}
+
+export interface AuthStatus {
+  enabled: boolean;
+  authenticated: boolean;
+  cloudConfigured: boolean;
+  account: AccountIdentity | null;
+  localAvailable?: boolean;
+}
+
+export interface DeviceAuthorization {
+  deviceCode: string;
+  userCode: string;
+  verificationUri: string;
+  verificationUriComplete: string;
+  expiresAt: string;
+  interval: number;
+  qrCodeDataUrl?: string;
+}
+
+export type DeviceAuthorizationInput =
+  | { purpose: "pin-reset"; profileId: string }
+  | { purpose?: "login"; adoptLocalAccount?: boolean; disableSync?: boolean };
+
+export interface AccountOverview {
+  account: AccountIdentity;
+  manageUrl: string | null;
+  devices: {
+    id: string;
+    name: string;
+    lastSeenAt: string;
+    expiresAt: string;
+    current?: boolean;
+  }[];
+  sync?: {
+    configured: boolean;
+    status: string;
+    lastSyncedAt?: string | null;
+    error?: string | null;
+  };
+}
+
+export interface AccountConnections {
+  accountId: string;
+  connections: {
+    provider: string;
+    name: string;
+    connected: boolean;
+    available: boolean;
+  }[];
+}
+
 export interface StreamerApi {
+  getAccountConnections?(): Promise<AccountConnections>;
+  startLocalSession?(): Promise<{ account: AccountIdentity }>;
+  setAccountSync?(
+    enabled: boolean,
+  ): Promise<NonNullable<AccountOverview["sync"]>>;
+  getAuthStatus?(): Promise<AuthStatus>;
+  startDeviceAuthorization?(
+    input?: DeviceAuthorizationInput,
+  ): Promise<DeviceAuthorization>;
+  pollDeviceAuthorization?(deviceCode: string): Promise<{
+    status: "pending" | "approved" | "expired" | "denied";
+    account?: AccountIdentity;
+  }>;
+  logout?(): Promise<void>;
+  getAccount?(): Promise<AccountOverview>;
+  revokeAccountDevice?(deviceId: string): Promise<void>;
+  syncAccount?(): Promise<AccountOverview["sync"]>;
+  unlockProfile?(profileId: string, pin: string): Promise<void>;
+  lockProfile?(profileId: string): Promise<void>;
+  setProfilePin?(
+    profileId: string,
+    pin: string | null,
+    currentPin?: string,
+  ): Promise<{ pinEnabled: boolean }>;
   getMediaSourcePreferences(
     profileId?: string,
   ): Promise<MediaSourcePreferences>;
@@ -412,7 +493,16 @@ const domainErrorMessages: Record<string, string> = {
     "This video could not be opened. Try another title or stream later.",
   PROFILE_NOT_FOUND:
     "This profile is not available. Finish setup or choose another profile.",
-  PROFILE_LIMIT_REACHED: "This installation already has five profiles.",
+  PROFILE_LIMIT_REACHED: "This account already has five profiles.",
+  AUTH_REQUIRED: "Sign in to your StreamerAI account to continue.",
+  PROFILE_LOCKED: "Unlock this profile with its PIN to continue.",
+  PIN_INVALID: "That PIN was not accepted. Please try again.",
+  INVALID_PIN: "Use a PIN containing 4 to 8 digits.",
+  PIN_INCORRECT: "That PIN was not accepted. Please try again.",
+  PIN_RATE_LIMITED: "Too many PIN attempts. Wait a moment and try again.",
+  AUTH_UNAVAILABLE: "Sign-in is temporarily unavailable. Please try again.",
+  ACCOUNT_SERVICE_UNAVAILABLE:
+    "Sign-in is temporarily unavailable. Please try again.",
   HISTORY_EVENT_NOT_FOUND: "That history item no longer exists.",
   IDEMPOTENCY_CONFLICT:
     "This request conflicts with an earlier discovery request. Please send it again.",
@@ -456,6 +546,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
   try {
     response = await fetch(`/api/v1${path}`, {
+      credentials: "same-origin",
       ...init,
       headers: {
         Accept: "application/json",
@@ -479,6 +570,15 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     // Read only the stable domain code. Never surface upstream messages or bodies:
     // they can contain provider details or credentials.
     const code = await readPublicErrorCode(response);
+    if (
+      (code === "AUTH_REQUIRED" || code === "UNAUTHENTICATED") &&
+      typeof window !== "undefined"
+    ) {
+      window.dispatchEvent(new Event("streamer:auth-required"));
+    }
+    if (code === "PROFILE_LOCKED" && typeof window !== "undefined") {
+      window.dispatchEvent(new Event("streamer:profile-locked"));
+    }
     const domainMessage = code ? domainErrorMessages[code] : undefined;
     if (domainMessage) {
       throw new ApiError(domainMessage, response.status, code);
@@ -694,6 +794,49 @@ function readProfile(value: unknown): ProfileDraft | undefined {
 }
 
 export const apiClient: StreamerApi = {
+  startLocalSession: () => request("/auth/local", { method: "POST" }),
+  setAccountSync: (enabled) =>
+    request("/account/sync", {
+      method: "PUT",
+      body: JSON.stringify({ enabled }),
+    }),
+  getAuthStatus: () => request<AuthStatus>("/auth/status"),
+  startDeviceAuthorization: (input) =>
+    request<DeviceAuthorization>("/auth/device", {
+      method: "POST",
+      ...(input ? { body: JSON.stringify(input) } : {}),
+    }),
+  pollDeviceAuthorization: (deviceCode) =>
+    request("/auth/device/poll", {
+      method: "POST",
+      body: JSON.stringify({ deviceCode }),
+    }),
+  logout: () => request<void>("/auth/logout", { method: "POST" }),
+  getAccount: () => request<AccountOverview>("/account"),
+  getAccountConnections: () =>
+    request<AccountConnections>("/account/connections"),
+  revokeAccountDevice: (deviceId) =>
+    request<void>(`/account/devices/${encodeURIComponent(deviceId)}`, {
+      method: "DELETE",
+    }),
+  syncAccount: () => request("/account/sync", { method: "POST" }),
+  unlockProfile: (profileId, pin) =>
+    request<void>(`/profiles/${encodeURIComponent(profileId)}/unlock`, {
+      method: "POST",
+      body: JSON.stringify({ pin }),
+    }),
+  lockProfile: (profileId) =>
+    request<void>(`/profiles/${encodeURIComponent(profileId)}/lock`, {
+      method: "POST",
+    }),
+  setProfilePin: (profileId, pin, currentPin) =>
+    request<{ pinEnabled: boolean }>(
+      `/profiles/${encodeURIComponent(profileId)}/pin`,
+      {
+        method: "PUT",
+        body: JSON.stringify({ pin, ...(currentPin ? { currentPin } : {}) }),
+      },
+    ),
   getMediaSourcePreferences: (profileId = "default") =>
     request<unknown>(
       `/profiles/${encodeURIComponent(profileId)}/media-source-preferences`,

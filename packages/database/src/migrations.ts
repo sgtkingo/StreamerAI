@@ -341,6 +341,133 @@ export const MIGRATIONS: readonly Migration[] = [
       FROM integration_connections;
     `,
   },
+  {
+    version: 9,
+    name: "accounts_shared_integrations_and_profile_security",
+    sql: `
+      CREATE TABLE accounts (
+        id TEXT PRIMARY KEY NOT NULL CHECK (length(id) BETWEEN 1 AND 120),
+        cloud_user_id TEXT UNIQUE CHECK (cloud_user_id IS NULL OR length(cloud_user_id) BETWEEN 1 AND 120),
+        name TEXT NOT NULL CHECK (length(trim(name)) BETWEEN 1 AND 120),
+        email TEXT CHECK (email IS NULL OR length(email) BETWEEN 1 AND 320),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      ) STRICT;
+      INSERT INTO accounts (id, name, created_at, updated_at)
+        VALUES ('local', 'StreamerAI', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+
+      ALTER TABLE profiles ADD COLUMN account_id TEXT REFERENCES accounts(id);
+      UPDATE profiles SET account_id = 'local';
+      ALTER TABLE profiles ADD COLUMN sync_id TEXT;
+      ALTER TABLE profiles ADD COLUMN pin_hash TEXT;
+      ALTER TABLE profiles ADD COLUMN pin_attempts INTEGER NOT NULL DEFAULT 0 CHECK (pin_attempts >= 0);
+      ALTER TABLE profiles ADD COLUMN pin_locked_until TEXT;
+      ALTER TABLE profiles ADD COLUMN pin_version INTEGER NOT NULL DEFAULT 0 CHECK (pin_version >= 0);
+      UPDATE profiles SET sync_id = lower(hex(randomblob(16)));
+      CREATE UNIQUE INDEX profiles_sync_id_idx ON profiles (sync_id);
+      CREATE INDEX profiles_account_idx ON profiles (account_id, created_at, id);
+      CREATE TRIGGER profiles_identity_before_insert
+      BEFORE INSERT ON profiles WHEN NEW.account_id IS NULL OR NEW.sync_id IS NULL
+      BEGIN
+        SELECT RAISE(ABORT, 'PROFILE_IDENTITY_REQUIRED');
+      END;
+      CREATE TRIGGER profiles_identity_before_update
+      BEFORE UPDATE OF account_id, sync_id ON profiles WHEN NEW.account_id IS NULL OR NEW.sync_id IS NULL
+      BEGIN
+        SELECT RAISE(ABORT, 'PROFILE_IDENTITY_REQUIRED');
+      END;
+      INSERT INTO app_settings (key, value_json, updated_at)
+        VALUES ('migration.accountIntegrations.sourceProfile',
+          json_quote(coalesce((SELECT id FROM profiles ORDER BY created_at, id LIMIT 1), 'default')),
+          strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+      DROP TRIGGER profiles_limit_before_insert;
+      CREATE TRIGGER profiles_limit_before_insert
+      BEFORE INSERT ON profiles
+      WHEN (SELECT count(*) FROM profiles WHERE account_id = NEW.account_id) >= 5
+      BEGIN
+        SELECT RAISE(ABORT, 'PROFILE_LIMIT_REACHED');
+      END;
+      CREATE TRIGGER profiles_limit_before_transfer
+      BEFORE UPDATE OF account_id ON profiles
+      WHEN NEW.account_id <> OLD.account_id
+        AND (SELECT count(*) FROM profiles WHERE account_id = NEW.account_id) >= 5
+      BEGIN
+        SELECT RAISE(ABORT, 'PROFILE_LIMIT_REACHED');
+      END;
+
+      CREATE TABLE account_integration_connections (
+        account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+        integration_id TEXT NOT NULL CHECK (length(integration_id) BETWEEN 1 AND 80),
+        enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+        setup_status TEXT NOT NULL,
+        health_status TEXT NOT NULL,
+        secret_ref TEXT,
+        health_code TEXT,
+        last_checked_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (account_id, integration_id)
+      ) STRICT;
+      INSERT INTO account_integration_connections
+        SELECT 'local', integration_id, enabled, setup_status, health_status, secret_ref,
+          health_code, last_checked_at, created_at, updated_at
+        FROM profile_integration_connections
+        WHERE profile_id = coalesce((SELECT id FROM profiles ORDER BY created_at, id LIMIT 1), 'default');
+
+      CREATE TABLE account_sessions (
+        token_hash TEXT PRIMARY KEY NOT NULL CHECK (length(token_hash) BETWEEN 32 AND 128),
+        account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+        device_id TEXT NOT NULL CHECK (length(device_id) BETWEEN 1 AND 120),
+        label TEXT NOT NULL CHECK (length(label) BETWEEN 1 AND 120),
+        expires_at TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        last_seen_at TEXT NOT NULL,
+        revoked_at TEXT
+      ) STRICT;
+      CREATE INDEX account_sessions_devices_idx ON account_sessions(account_id, device_id);
+      CREATE INDEX account_sessions_expiry_idx ON account_sessions(expires_at);
+    `,
+  },
+  {
+    version: 10,
+    name: "durable_account_sync_mutation_journal",
+    sql:
+      `
+      CREATE TABLE account_sync_dirty (
+        account_id TEXT PRIMARY KEY NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+        changed_at TEXT NOT NULL
+      ) STRICT;
+      INSERT INTO account_sync_dirty SELECT id, strftime('%Y-%m-%dT%H:%M:%fZ', 'now') FROM accounts;
+      CREATE TRIGGER account_sync_profile_insert AFTER INSERT ON profiles BEGIN
+        INSERT INTO account_sync_dirty VALUES (NEW.account_id, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+          ON CONFLICT(account_id) DO UPDATE SET changed_at = excluded.changed_at;
+      END;
+      CREATE TRIGGER account_sync_profile_update AFTER UPDATE ON profiles BEGIN
+        INSERT INTO account_sync_dirty VALUES (OLD.account_id, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+          ON CONFLICT(account_id) DO UPDATE SET changed_at = excluded.changed_at;
+        INSERT INTO account_sync_dirty VALUES (NEW.account_id, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+          ON CONFLICT(account_id) DO UPDATE SET changed_at = excluded.changed_at;
+      END;
+      CREATE TRIGGER account_sync_profile_delete BEFORE DELETE ON profiles BEGIN
+        INSERT INTO account_sync_dirty VALUES (OLD.account_id, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+          ON CONFLICT(account_id) DO UPDATE SET changed_at = excluded.changed_at;
+      END;
+    ` +
+      ["library_entries", "watch_history_events", "playback_positions"]
+        .flatMap((table) =>
+          (["INSERT", "UPDATE", "DELETE"] as const).map(
+            (event) => `
+        CREATE TRIGGER account_sync_${table}_${event.toLowerCase()} AFTER ${event} ON ${table} BEGIN
+          INSERT INTO account_sync_dirty (account_id, changed_at)
+            SELECT account_id, strftime('%Y-%m-%dT%H:%M:%fZ', 'now') FROM profiles
+            WHERE id = ${event === "DELETE" ? "OLD" : "NEW"}.profile_id
+            ON CONFLICT(account_id) DO UPDATE SET changed_at = excluded.changed_at;
+        END;
+      `,
+          ),
+        )
+        .join(""),
+  },
 ] as const;
 
 export function applyMigrations(

@@ -368,7 +368,7 @@ export function HomePage({
       }
     }, 2_000);
     return () => window.clearInterval(interval);
-  }, [api, isSearching, isWakingAgent]);
+  }, [api, isSearching, isWakingAgent, profileId]);
 
   useEffect(
     () => () => {

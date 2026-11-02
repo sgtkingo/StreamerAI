@@ -20,6 +20,190 @@
   --error: #ff7a80;
 }
 
+.account-login {
+  width: min(100%, 1100px);
+  min-height: 100dvh;
+  margin: 0 auto;
+  padding: clamp(24px, 5vw, 64px);
+  display: flex;
+  flex-direction: column;
+  gap: clamp(48px, 8vh, 100px);
+}
+
+.account-login__card {
+  width: min(100%, 840px);
+  margin: auto;
+  padding-bottom: 8vh;
+}
+
+.account-login__local {
+  display: block;
+  margin: 24px auto 0;
+  padding: 10px 0;
+  border: 0;
+  background: transparent;
+  color: var(--slate);
+  font: inherit;
+  font-size: 24px;
+  line-height: 1.6;
+  text-align: center;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+  cursor: pointer;
+}
+.account-login__local:hover {
+  color: var(--white);
+}
+.account-login__local:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+.account-login__local-note {
+  color: var(--muted);
+  text-align: center;
+  font-size: 12px;
+}
+.account-login__local:focus-visible,
+.account-login__card .button:focus-visible {
+  outline: 3px solid var(--slate);
+  outline-offset: 4px;
+}
+
+.account-login--compact {
+  min-height: 0;
+  padding: 28px;
+  gap: 0;
+}
+.account-login--compact .account-login__card {
+  padding-bottom: 0;
+}
+.account-login--compact .account-login__card h1 {
+  font-size: 32px;
+}
+.profile-pin-recovery {
+  width: min(900px, calc(100vw - 32px));
+  max-height: calc(100dvh - 48px);
+  overflow: auto;
+  background: var(--deep-black);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+}
+
+.account-login__card h1 {
+  margin: 12px 0 20px;
+  font-size: clamp(32px, 5vw, 56px);
+  letter-spacing: -0.045em;
+}
+
+.account-login__card > p {
+  max-width: 650px;
+  color: var(--slate);
+  line-height: 1.65;
+}
+
+.account-login__card > .button {
+  margin: 16px 0;
+}
+
+.account-login__alert {
+  margin: 28px 0 16px;
+  padding: 20px 24px;
+  border: 1px solid #a84850;
+  border-radius: 16px;
+  background: #35191e;
+  color: #ffe2e4;
+  line-height: 1.6;
+}
+.account-login__alert strong {
+  display: block;
+  font-size: 18px;
+}
+.account-login__alert p {
+  margin: 8px 0 0;
+}
+.account-login__local-option {
+  margin-top: 32px;
+  border-top: 1px solid var(--border);
+}
+.account-login__local-option p {
+  color: var(--slate);
+  line-height: 1.6;
+}
+.account-login__loading {
+  padding: 28px 0;
+}
+
+.device-pairing {
+  display: flex;
+  align-items: center;
+  gap: clamp(24px, 4vw, 48px);
+  margin: 36px 0;
+  padding: 28px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+}
+
+.device-pairing > div {
+  min-width: 0;
+}
+.device-pairing p {
+  line-height: 1.6;
+}
+.device-pairing a {
+  overflow-wrap: anywhere;
+}
+.device-pairing .button {
+  margin-right: 12px;
+}
+.device-pairing__qr {
+  flex: 0 0 auto;
+  border-radius: 10px;
+  background: white;
+}
+.device-pairing__code {
+  display: block;
+  margin: 20px 0 12px;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: clamp(28px, 4vw, 40px);
+  font-weight: 700;
+  letter-spacing: 0.14em;
+}
+
+.account-inline-error {
+  color: var(--error);
+  line-height: 1.6;
+}
+.account-id {
+  display: inline-block;
+  overflow-wrap: anywhere;
+}
+.account-device-list {
+  padding: 0;
+  list-style: none;
+}
+.account-device-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 20px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+@media (max-width: 640px) {
+  .device-pairing {
+    flex-direction: column;
+    align-items: flex-start;
+    padding: 20px;
+  }
+  .account-device-list li {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 8px;
+  }
+}
+
 * {
   box-sizing: border-box;
 }
@@ -1530,6 +1714,15 @@ textarea:not(:disabled):hover {
   padding: 0 clamp(20px, 4vw, 64px);
   border-bottom: 1px solid var(--border);
   background: var(--black);
+}
+.onboarding-header__actions {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+}
+.onboarding-sign-in-error {
+  margin: 20px clamp(20px, 4vw, 64px) 0;
+  color: var(--error);
 }
 
 .onboarding-layout {

@@ -10,8 +10,55 @@ import type {
 
 export type Clock = () => Date;
 
+export const LOCAL_ACCOUNT_ID = "local";
+
+export interface Account {
+  id: string;
+  cloudUserId: string | null;
+  name: string;
+  email: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface UpsertAccountInput {
+  id: string;
+  cloudUserId?: string | null | undefined;
+  name?: string | undefined;
+  email?: string | null | undefined;
+}
+
+export interface AccountSession {
+  tokenHash: string;
+  accountId: string;
+  deviceId: string;
+  label: string;
+  expiresAt: string;
+  createdAt: string;
+  lastSeenAt: string;
+  revokedAt: string | null;
+}
+
+export interface CreateAccountSessionInput {
+  tokenHash: string;
+  accountId: string;
+  deviceId: string;
+  label?: string;
+  expiresAt: string;
+}
+
+export interface ProfilePinRecord {
+  hash: string | null;
+  attempts: number;
+  lockedUntil: string | null;
+  version: number;
+}
+
 export interface Profile {
   id: string;
+  accountId: string;
+  syncId: string;
+  pinEnabled: boolean;
   name: string;
   locale: SupportedLocale;
   preferences: Record<string, unknown>;
@@ -21,6 +68,8 @@ export interface Profile {
 
 export interface CreateProfileInput {
   id: string;
+  accountId?: string;
+  syncId?: string;
   name: string;
   locale: SupportedLocale;
   preferences?: Record<string, unknown>;

@@ -19,14 +19,17 @@ deployment and agent decisions live in [`instructions/`](instructions/).
   provider ID mappings, durable discovery sessions/idempotency, Library and
   editable History.
 - TMDB connection verification designed around an in-app guided setup flow.
+- Google account login, TV pairing by QR/code, up to five profiles per account,
+  optional local profile PINs and Cloudflare Workers/D1 user-state sync.
 - Provider-neutral contracts and registries, TMDB metadata, guided Webshare
   authentication, an optional authenticated Hellspy stream adapter, an FFmpeg-backed in-app player and Ollama structured-agent
   adapters.
 
 The development feed is explicitly labeled as preview data and cannot create
 playback history. Live Webshare playback now has an integrated player, but its
-real-account codec, seeking and subtitle checks remain release gates. Cloudflare
-sync and the complete autonomous discovery pipeline remain future work in
+real-account codec, seeking and subtitle checks remain release gates. Real TV
+and two-account Google acceptance checks are described in
+[`docs/ACCOUNTS.md`](docs/ACCOUNTS.md). The complete autonomous discovery pipeline remains future work in
 [`instructions/DEPLOY.md`](instructions/DEPLOY.md).
 
 ## Prerequisites
@@ -65,6 +68,14 @@ The web application is served by Vite during development and forwards `/api`
 requests to the local server. Copy `.env.example` to `.env` only for non-secret
 runtime overrides. Provider keys and passwords belong in the guided setup flow,
 not in environment files or source control.
+
+To enable Google accounts, set `STREAMERAI_ACCOUNT_SERVICE_URL` to the deployed
+identity Worker and restart the server. See [account setup and migration](docs/ACCOUNTS.md)
+and [Cloudflare deployment](docs/CLOUD_AUTH.md). Leaving it empty retains trusted
+local operation. With cloud accounts configured, **Continue locally** also
+opens an isolated household without registration. Online accounts support Google
+and e-mail codes; synchronization can be paused independently. Apple and Google
+Drive remain planned.
 
 ## Quality checks
 

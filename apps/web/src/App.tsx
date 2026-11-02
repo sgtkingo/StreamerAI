@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import type { ViewerProfile } from "@streamer-ai/contracts";
-import { apiClient, type ProfileDraft, type StreamerApi } from "./api/client";
+import {
+  apiClient,
+  type AuthStatus,
+  type ProfileDraft,
+  type StreamerApi,
+} from "./api/client";
 import { AppShell } from "./components/AppShell";
 import { DownloadProvider } from "./components/DownloadManager";
 import { Brand } from "./components/Brand";
@@ -8,6 +13,8 @@ import { ProfileChooser } from "./components/ProfileChooser";
 import { Onboarding } from "./components/onboarding/Onboarding";
 import { safeErrorMessage } from "./api/client";
 import { ThemeProvider } from "./theme/ThemeProvider";
+import { AccountLogin } from "./components/AccountLogin";
+import { ProfilePinDialog } from "./components/ProfilePin";
 
 export interface AppProps {
   api?: StreamerApi;
@@ -26,6 +33,12 @@ export function App({ api = apiClient, forceOnboarding = false }: AppProps) {
   );
   const [rerunProfile, setRerunProfile] = useState<ViewerProfile | null>(null);
   const [profilesError, setProfilesError] = useState("");
+  const [auth, setAuth] = useState<AuthStatus | null>(null);
+  const [authError, setAuthError] = useState("");
+  const [authVersion, setAuthVersion] = useState(0);
+  const [lockedProfile, setLockedProfile] = useState<ViewerProfile | null>(
+    null,
+  );
 
   const updateProfile = useCallback((updated: ViewerProfile) => {
     setActiveProfile((current) =>
@@ -75,26 +88,111 @@ export function App({ api = apiClient, forceOnboarding = false }: AppProps) {
   useEffect(() => {
     if (forceOnboarding) return;
     let active = true;
-    api
-      .getSetupStatus()
-      .then((status) => {
+    const initialize = async () => {
+      setAuthError("");
+      let accountEnabled = false;
+      if (api.getAuthStatus) {
+        try {
+          const status = await api.getAuthStatus();
+          if (!active) return;
+          setAuth(status);
+          accountEnabled = status.enabled;
+          if (status.enabled && !status.authenticated) return;
+        } catch (reason) {
+          if (active) setAuthError(safeErrorMessage(reason));
+          return;
+        }
+      }
+      const accountProfiles = accountEnabled ? await loadProfiles() : undefined;
+      if (!active) return;
+      if (
+        accountEnabled &&
+        (!accountProfiles || accountProfiles.length === 0)
+      ) {
+        setSetupState("complete");
+        return;
+      }
+      try {
+        const status = await api.getSetupStatus();
         if (!active) return;
         setPlaybackEnabled(status.playback);
-        setSetupState(status.complete ? "complete" : "required");
-        if (status.complete)
-          void loadProfiles().then((items) => {
-            if (active && items?.length === 0) setSetupState("required");
-          });
-      })
-      .catch(() => {
-        // The server is the only setup authority. If it cannot be reached,
-        // onboarding remains available and its actions surface the connection error.
+        setSetupState(
+          status.complete
+            ? "complete"
+            : accountEnabled
+              ? "loading"
+              : "required",
+        );
+        if (status.complete || accountEnabled) {
+          const items = accountProfiles ?? (await loadProfiles());
+          if (active && items?.length === 0)
+            setSetupState(accountEnabled ? "complete" : "required");
+          if (active && accountEnabled && !items) setSetupState("complete");
+          if (active && !status.complete && items?.length) {
+            const initialProfile = items[0]!;
+            if (initialProfile.pinEnabled) setSetupState("complete");
+            else {
+              setRerunProfile(initialProfile);
+              setSetupState("required");
+            }
+          }
+        }
+      } catch {
         if (active) setSetupState("required");
-      });
+      }
+    };
+    void initialize();
     return () => {
       active = false;
     };
-  }, [api, forceOnboarding, loadProfiles]);
+  }, [api, forceOnboarding, loadProfiles, authVersion]);
+
+  useEffect(() => {
+    const expire = () => {
+      setActiveProfile(null);
+      setRerunProfile(null);
+      setLockedProfile(null);
+      setProfiles([]);
+      setAuth(null);
+      setSetupState("loading");
+      setAuthVersion((value) => value + 1);
+    };
+    window.addEventListener("streamer:auth-required", expire);
+    return () => window.removeEventListener("streamer:auth-required", expire);
+  }, []);
+
+  useEffect(() => {
+    const lock = () => {
+      setActiveProfile(null);
+      setRerunProfile(null);
+      setLockedProfile(null);
+      void loadProfiles();
+    };
+    window.addEventListener("streamer:profile-locked", lock);
+    return () => window.removeEventListener("streamer:profile-locked", lock);
+  }, [loadProfiles]);
+
+  const signOut = async () => {
+    if (!api.logout) return;
+    await api.logout();
+    setActiveProfile(null);
+    setRerunProfile(null);
+    setLockedProfile(null);
+    setProfiles([]);
+    setAuth(null);
+    setSetupState("loading");
+    setAuthVersion((value) => value + 1);
+    window.history.pushState({}, "", "/");
+  };
+
+  const selectProfile = (profile: ViewerProfile) => {
+    if (profile.pinEnabled) {
+      setLockedProfile(profile);
+      return;
+    }
+    if (profile.onboardingComplete) setActiveProfile(profile);
+    else setRerunProfile(profile);
+  };
 
   const completeOnboarding = (draft: ProfileDraft) => {
     const selectedId = rerunProfile?.id;
@@ -126,6 +224,24 @@ export function App({ api = apiClient, forceOnboarding = false }: AppProps) {
   };
 
   const renderScreen = () => {
+    if (
+      !forceOnboarding &&
+      (authError || (auth?.enabled && !auth.authenticated))
+    ) {
+      return (
+        <AccountLogin
+          api={api}
+          allowLocal={auth?.localAvailable ?? true}
+          error={authError}
+          onRetry={() => setAuthVersion((value) => value + 1)}
+          onAuthenticated={() => {
+            setAuth(null);
+            setSetupState("loading");
+            setAuthVersion((value) => value + 1);
+          }}
+        />
+      );
+    }
     if (setupState === "loading") {
       return (
         <main className="startup-status" aria-live="polite" aria-busy="true">
@@ -142,13 +258,20 @@ export function App({ api = apiClient, forceOnboarding = false }: AppProps) {
           api={api}
           existingProfile={rerunProfile ?? undefined}
           onCancel={rerunProfile ? () => setRerunProfile(null) : undefined}
+          onSignIn={
+            auth?.cloudConfigured &&
+            auth.account?.cloudLinked === false &&
+            api.logout
+              ? signOut
+              : undefined
+          }
           onComplete={completeOnboarding}
         />
       );
     }
 
     if (!activeProfile) {
-      if (profilesLoading)
+      if (profilesLoading && !lockedProfile)
         return (
           <main className="startup-status" aria-live="polite" aria-busy="true">
             <Brand className="brand--loading" />
@@ -156,22 +279,42 @@ export function App({ api = apiClient, forceOnboarding = false }: AppProps) {
           </main>
         );
       return (
-        <ProfileChooser
-          profiles={profiles}
-          error={profilesError}
-          onRetry={() => {
-            void loadProfiles();
-          }}
-          onSelect={(profile) => {
-            if (profile.onboardingComplete) setActiveProfile(profile);
-            else setRerunProfile(profile);
-          }}
-          onCreate={async (name) => {
-            const created = await api.createProfile({ name, locale: "en" });
-            setProfiles((current) => [...current, created]);
-            setRerunProfile(created);
-          }}
-        />
+        <>
+          <ProfileChooser
+            profiles={profiles}
+            error={profilesError}
+            onRetry={() => {
+              void loadProfiles();
+            }}
+            onSelect={selectProfile}
+            accountName={
+              auth?.enabled ? (auth.account?.email ?? undefined) : undefined
+            }
+            onSignOut={auth?.enabled ? signOut : undefined}
+            onCreate={async (name) => {
+              const created = await api.createProfile({ name, locale: "en" });
+              setProfiles((current) => [...current, created]);
+              setRerunProfile(created);
+            }}
+          />
+          {lockedProfile && (
+            <ProfilePinDialog
+              api={api}
+              profile={lockedProfile}
+              onCancel={() => setLockedProfile(null)}
+              onUnlocked={async () => {
+                const items = await loadProfiles();
+                const selected = items?.find(
+                  (item) => item.id === lockedProfile.id,
+                );
+                if (!selected) throw new Error("Profile unavailable");
+                if (selected.onboardingComplete) setActiveProfile(selected);
+                else setRerunProfile(selected);
+                setLockedProfile(null);
+              }}
+            />
+          )}
+        </>
       );
     }
 
@@ -187,9 +330,13 @@ export function App({ api = apiClient, forceOnboarding = false }: AppProps) {
           profile={activeProfile}
           onProfileUpdated={updateProfileDetails}
           onSwitchAccount={() => {
+            if (activeProfile.pinEnabled)
+              void api.lockProfile?.(activeProfile.id).catch(() => undefined);
             setActiveProfile(null);
+            if (auth?.enabled) void loadProfiles();
             window.history.pushState({}, "", "/");
           }}
+          onSignOut={auth?.enabled ? signOut : undefined}
           onDeleteProfile={async () => {
             await api.deleteProfile(activeProfile.id);
             setProfiles((current) =>

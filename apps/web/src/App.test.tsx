@@ -357,8 +357,12 @@ describe("onboarding", () => {
 
     await user.type(screen.getByLabelText(/display name/i), "Alex");
     await user.click(screen.getByLabelText("Sci-fi"));
-    expect(screen.getByLabelText("Primary audio language")).toHaveValue("cs");
-    expect(screen.getByLabelText("Secondary audio language")).toHaveValue("en");
+    expect(
+      screen.getByRole("combobox", { name: /^Primary audio language\b/ }),
+    ).toHaveValue("cs");
+    expect(
+      screen.getByRole("combobox", { name: /^Secondary audio language\b/ }),
+    ).toHaveValue("en");
     expect(screen.getByLabelText("Subtitles with primary audio")).toHaveValue(
       "off",
     );
@@ -548,10 +552,12 @@ describe("profile navigation", () => {
       screen.getByRole("heading", { name: "Settings" }),
     ).toBeInTheDocument();
     await user.selectOptions(
-      screen.getByLabelText("Secondary audio language"),
+      screen.getByRole("combobox", { name: /^Secondary audio language\b/ }),
       "de",
     );
-    await user.click(screen.getByLabelText("Automatically find subtitles"));
+    await user.click(
+      screen.getByRole("checkbox", { name: /^Automatically find subtitles\b/ }),
+    );
     await user.selectOptions(screen.getByLabelText("Subtitle size"), "150");
     await user.selectOptions(screen.getByLabelText("Subtitle font"), "mono");
     fireEvent.change(screen.getByLabelText("Subtitle color"), {
@@ -594,7 +600,7 @@ describe("profile navigation", () => {
       screen.getByRole("button", { name: /profile menu for alex/i }),
     );
     await user.click(
-      screen.getByRole("menuitem", { name: /log out \/ switch profile/i }),
+      screen.getByRole("menuitem", { name: /^switch profile$/i }),
     );
     expect(
       await screen.findByRole("heading", { name: /who's watching/i }),
@@ -708,7 +714,9 @@ describe("profile navigation", () => {
     );
     await user.click(screen.getByRole("button", { name: /start setup/i }));
     expect(screen.getByLabelText("Display name")).toHaveValue("Alex");
-    expect(screen.getByLabelText("Primary audio language")).toHaveValue("cs");
+    expect(
+      screen.getByRole("combobox", { name: /^Primary audio language\b/ }),
+    ).toHaveValue("cs");
     await user.click(screen.getByRole("button", { name: /^continue/i }));
     await user.click(screen.getByRole("button", { name: /^continue/i }));
     await user.click(screen.getByRole("button", { name: /^continue/i }));
@@ -2106,7 +2114,7 @@ describe("conversational Home", () => {
     await user.click(screen.getByRole("button", { name: "Find something" }));
 
     expect(
-      await screen.findByText(/local agent dozed off/i, {
+      await screen.findByText(/the agent dozed off/i, {
         selector: ".agent-wake-notice",
       }),
     ).toBeInTheDocument();
@@ -2137,7 +2145,7 @@ describe("conversational Home", () => {
       await screen.findByRole("region", { name: /a considered shortlist/i }),
     ).toBeInTheDocument();
     expect(
-      screen.queryByText(/local agent dozed off/i, {
+      screen.queryByText(/the agent dozed off/i, {
         selector: ".agent-wake-notice",
       }),
     ).not.toBeInTheDocument();

@@ -18,6 +18,7 @@ import {
   type ProviderFetch,
 } from "../src/index.js";
 import { profileSecretKey } from "../src/stores/secret-store.js";
+import { accountSecretKey } from "../src/stores/account-integrations.js";
 
 const now = () => new Date("2026-10-25T12:00:00.000Z");
 const session = {
@@ -420,7 +421,11 @@ describe("Hellspy guided connection lifecycle", () => {
       persistence: "memory",
     });
     expect(
-      JSON.parse((await secrets.get(HELLSPY_SESSION_SECRET_KEY))!),
+      JSON.parse(
+        (await secrets.get(
+          accountSecretKey("local", HELLSPY_SESSION_SECRET_KEY),
+        ))!,
+      ),
     ).toEqual(session);
     const catalog = await instance.inject("/api/v1/integrations");
     expect(

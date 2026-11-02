@@ -200,6 +200,9 @@ describe("Webshare external subtitle service", () => {
     ];
     const queries: string[] = [];
     const service = new WebshareExternalSubtitleService({
+      forProfile() {
+        return this;
+      },
       fileInfo: async (id) => fileInfo(id, "The.Expanse.S02E07.mkv"),
       similarSubtitles: async (name) => {
         queries.push(name);
@@ -235,6 +238,9 @@ describe("Webshare external subtitle service", () => {
   it("rechecks availability and size before downloading, then decodes legacy Czech text", async () => {
     const downloads: string[] = [];
     const service = new WebshareExternalSubtitleService({
+      forProfile() {
+        return this;
+      },
       fileInfo: async (id) => fileInfo(id, "Film.2020.cs.srt"),
       similarSubtitles: async () => [],
       downloadFile: async (id) => {
@@ -249,6 +255,9 @@ describe("Webshare external subtitle service", () => {
     expect(downloads).toEqual(["subtitleId"]);
 
     const oversized = new WebshareExternalSubtitleService({
+      forProfile() {
+        return this;
+      },
       fileInfo: async (id) =>
         fileInfo(id, "Film.2020.cs.srt", MAX_EXTERNAL_SUBTITLE_BYTES + 1),
       similarSubtitles: async () => [],
@@ -260,6 +269,9 @@ describe("Webshare external subtitle service", () => {
       kind: "forbidden",
     });
     const malformedUtf16 = new WebshareExternalSubtitleService({
+      forProfile() {
+        return this;
+      },
       fileInfo: async (id) => fileInfo(id, "Film.2020.cs.srt"),
       similarSubtitles: async () => [],
       downloadFile: async () => Buffer.from([0xff, 0xfe, 0x41]),

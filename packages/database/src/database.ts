@@ -1,6 +1,12 @@
 import BetterSqlite3 from "better-sqlite3";
+import { randomUUID } from "node:crypto";
+import { resolve } from "node:path";
 
 import { applyMigrations } from "./migrations.js";
+import {
+  AccountAuthRepository,
+  AccountsRepository,
+} from "./accounts-repository.js";
 import {
   CatalogTitlesRepository,
   DiscoverySessionsRepository,
@@ -23,6 +29,8 @@ export interface OpenStreamerDatabaseOptions {
 }
 
 export class StreamerDatabase {
+  readonly accounts: AccountsRepository;
+  readonly auth: AccountAuthRepository;
   readonly settings: SettingsRepository;
   readonly profiles: ProfilesRepository;
   readonly integrations: IntegrationsRepository;
@@ -40,7 +48,10 @@ export class StreamerDatabase {
   constructor(
     private readonly connection: BetterSqlite3.Database,
     clock: Clock,
+    readonly migrationBackupPath: string | null = null,
   ) {
+    this.accounts = new AccountsRepository(connection, clock);
+    this.auth = new AccountAuthRepository(connection, clock);
     this.settings = new SettingsRepository(connection, clock);
     this.profiles = new ProfilesRepository(connection, clock);
     this.integrations = new IntegrationsRepository(connection, clock);
@@ -84,6 +95,62 @@ export class StreamerDatabase {
   }
 }
 
+/** VACUUM INTO includes committed WAL pages and produces a standalone rollback copy. */
+function backupBeforeAccountMigration(
+  database: BetterSqlite3.Database,
+  filename: string,
+  clock: Clock,
+): string | null {
+  if (database.memory) return null;
+  const hasMigrations = database
+    .prepare(
+      "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'",
+    )
+    .get();
+  if (hasMigrations === undefined) return null;
+  const hasAccountMigration = database
+    .prepare("SELECT 1 FROM schema_migrations WHERE version = 9")
+    .get();
+  const hasPreviousMigration = database
+    .prepare("SELECT 1 FROM schema_migrations LIMIT 1")
+    .get();
+  if (hasAccountMigration !== undefined || hasPreviousMigration === undefined)
+    return null;
+  const timestamp = clock().toISOString().replace(/[:.]/g, "-");
+  const backupPath = `${resolve(filename)}.pre-accounts-${timestamp}-${randomUUID()}.db`;
+  try {
+    database.prepare("VACUUM INTO ?").run(backupPath);
+    const backup = new BetterSqlite3(backupPath, {
+      readonly: true,
+      fileMustExist: true,
+    });
+    try {
+      if (backup.pragma("integrity_check", { simple: true }) !== "ok")
+        throw new Error(
+          "The migration backup did not pass its integrity check.",
+        );
+      const sourceVersions = database
+        .prepare("SELECT version FROM schema_migrations ORDER BY version")
+        .all();
+      const backupVersions = backup
+        .prepare("SELECT version FROM schema_migrations ORDER BY version")
+        .all();
+      if (JSON.stringify(sourceVersions) !== JSON.stringify(backupVersions))
+        throw new Error(
+          "The migration backup does not match the original schema.",
+        );
+    } finally {
+      backup.close();
+    }
+    return backupPath;
+  } catch (cause) {
+    throw new Error(
+      "Account migration stopped because a verified backup could not be created.",
+      { cause },
+    );
+  }
+}
+
 export function openStreamerDatabase(
   options: OpenStreamerDatabaseOptions,
 ): StreamerDatabase {
@@ -112,8 +179,13 @@ export function openStreamerDatabase(
         `SQLite WAL mode is required; received '${journalMode}'.`,
       );
     }
+    const migrationBackupPath = backupBeforeAccountMigration(
+      database,
+      options.filename,
+      clock,
+    );
     applyMigrations(database, () => clock().toISOString());
-    return new StreamerDatabase(database, clock);
+    return new StreamerDatabase(database, clock, migrationBackupPath);
   } catch (error) {
     database.close();
     throw error;

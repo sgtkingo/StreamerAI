@@ -31,6 +31,7 @@ interface OnboardingProps {
   onComplete: (profile: ProfileDraft) => void;
   existingProfile?: ViewerProfile;
   onCancel?: () => void;
+  onSignIn?: () => Promise<void>;
 }
 
 export function Onboarding({
@@ -38,6 +39,7 @@ export function Onboarding({
   onComplete,
   existingProfile,
   onCancel,
+  onSignIn,
 }: OnboardingProps) {
   const { previewAppearance, rememberAppearance } = useTheme();
   const profileId = existingProfile?.id ?? "default";
@@ -55,6 +57,8 @@ export function Onboarding({
   const [localAiEnabled, setLocalAiEnabled] = useState(false);
   const [isCompleting, setIsCompleting] = useState(false);
   const [finishError, setFinishError] = useState("");
+  const [signingIn, setSigningIn] = useState(false);
+  const [signInError, setSignInError] = useState("");
   const contentRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -112,25 +116,60 @@ export function Onboarding({
 
   const canContinue = step !== 1 || Boolean(profile.name.trim());
 
+  const returnToSignIn = async () => {
+    if (!onSignIn || signingIn) return;
+    setSigningIn(true);
+    setSignInError("");
+    try {
+      await onSignIn();
+    } catch (error) {
+      setSignInError(safeErrorMessage(error));
+      setSigningIn(false);
+    }
+  };
+
   return (
     <div className="onboarding-shell">
       <header className="onboarding-header">
         <Brand />
-        {onCancel ? (
-          <button className="text-button" type="button" onClick={onCancel}>
-            Exit setup
-          </button>
-        ) : (
-          <button
-            className="text-button"
-            type="button"
-            onClick={() => setStep(4)}
-            disabled={step === 4}
-          >
-            Finish later
-          </button>
-        )}
+        <nav className="onboarding-header__actions" aria-label="Setup actions">
+          {onSignIn && (
+            <button
+              className="text-button"
+              type="button"
+              onClick={() => void returnToSignIn()}
+              disabled={signingIn || isCompleting}
+            >
+              Sign in
+            </button>
+          )}
+          {onCancel ? (
+            <button
+              className="text-button"
+              type="button"
+              onClick={onCancel}
+              disabled={signingIn || isCompleting}
+            >
+              Exit setup
+            </button>
+          ) : (
+            <button
+              className="text-button"
+              type="button"
+              onClick={() => setStep(4)}
+              disabled={step === 4 || signingIn || isCompleting}
+            >
+              Finish later
+            </button>
+          )}
+        </nav>
       </header>
+
+      {signInError && (
+        <p className="onboarding-sign-in-error" role="alert">
+          Could not return to sign in. {signInError}
+        </p>
+      )}
 
       <div className="onboarding-layout">
         <aside className="progress-panel">
@@ -202,6 +241,7 @@ export function Onboarding({
                 className="button button--ghost"
                 type="button"
                 onClick={() => setStep((current) => current - 1)}
+                disabled={signingIn || isCompleting}
               >
                 Back
               </button>
@@ -210,7 +250,7 @@ export function Onboarding({
               className="button button--primary"
               type="button"
               onClick={next}
-              disabled={!canContinue || isCompleting}
+              disabled={!canContinue || isCompleting || signingIn}
             >
               {step === steps.length - 1
                 ? isCompleting

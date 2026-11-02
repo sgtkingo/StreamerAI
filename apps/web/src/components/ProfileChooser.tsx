@@ -4,6 +4,7 @@ import { Brand } from "./Brand";
 import { useToasts } from "./ToastProvider";
 import { useTheme } from "../theme/ThemeProvider";
 import { ThemeSelect } from "../theme/ThemeSelect";
+import { safeErrorMessage } from "../api/client";
 
 interface ProfileChooserProps {
   profiles: ViewerProfile[];
@@ -11,6 +12,8 @@ interface ProfileChooserProps {
   onCreate: (name: string) => Promise<void>;
   error?: string;
   onRetry?: () => void;
+  accountName?: string;
+  onSignOut?: () => Promise<void>;
 }
 
 export function ProfileChooser({
@@ -19,6 +22,8 @@ export function ProfileChooser({
   onCreate,
   error,
   onRetry,
+  accountName,
+  onSignOut,
 }: ProfileChooserProps) {
   const theme = useTheme();
   const [adding, setAdding] = useState(false);
@@ -74,6 +79,19 @@ export function ProfileChooser({
     <main className="profile-chooser">
       <div className="profile-chooser__header">
         <Brand />
+        {onSignOut && (
+          <button
+            className="text-button"
+            type="button"
+            onClick={() =>
+              void onSignOut().catch((reason: unknown) =>
+                showToast(safeErrorMessage(reason), "error"),
+              )
+            }
+          >
+            Sign out
+          </button>
+        )}
         <ThemeSelect
           compact
           selection="primary"
@@ -110,6 +128,7 @@ export function ProfileChooser({
                     {profile.name.slice(0, 1).toUpperCase()}
                   </span>
                   <span>{profile.name}</span>
+                  {profile.pinEnabled && <small>PIN protected</small>}
                   {!profile.onboardingComplete && <small>Finish setup</small>}
                 </button>
               );
@@ -143,8 +162,8 @@ export function ProfileChooser({
           })}
         </div>
         <small>
-          {profiles.length} of 5 profiles · Profiles are not password-protected
-          yet.
+          {profiles.length} of 5 profiles
+          {accountName ? ` · ${accountName}` : ""}
         </small>
       </div>
       {adding && (

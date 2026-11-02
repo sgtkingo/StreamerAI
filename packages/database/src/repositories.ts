@@ -12,6 +12,8 @@ import {
   type IntegrationPublicStatus,
 } from "@streamer-ai/contracts";
 import type BetterSqlite3 from "better-sqlite3";
+import { randomUUID } from "node:crypto";
+import { LOCAL_ACCOUNT_ID } from "./types.js";
 
 import { DatabaseValidationError, ProfileLimitError } from "./errors.js";
 import type {
@@ -36,6 +38,7 @@ import type {
   LibraryEntryRecord,
   PlaybackPositionRecord,
   Profile,
+  ProfilePinRecord,
   SyncOutboxOperation,
   UpdateProfileInput,
   UpsertCanonicalTitleInput,
@@ -47,6 +50,12 @@ import type {
 
 interface ProfileRow {
   id: string;
+  account_id: string;
+  sync_id: string;
+  pin_hash: string | null;
+  pin_attempts: number;
+  pin_locked_until: string | null;
+  pin_version: number;
   name: string;
   locale: string;
   preferences_json: string;
@@ -313,6 +322,9 @@ function assertIsoTimestamp(value: string, label: string): string {
 function profileFromRow(row: ProfileRow): Profile {
   return {
     id: row.id,
+    accountId: row.account_id,
+    syncId: row.sync_id,
+    pinEnabled: row.pin_hash !== null,
     name: row.name,
     locale: SupportedLocaleSchema.parse(row.locale),
     preferences: parseJson<Record<string, unknown>>(row.preferences_json),
@@ -450,12 +462,22 @@ export class ProfilesRepository {
       this.database
         .prepare(
           `
-          INSERT INTO profiles (id, name, locale, preferences_json, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?)
+          INSERT INTO profiles (id, account_id, sync_id, name, locale, preferences_json, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         `,
         )
         .run(
           assertShortString(input.id, "Profile id", 120),
+          assertShortString(
+            input.accountId ?? LOCAL_ACCOUNT_ID,
+            "Account id",
+            120,
+          ),
+          assertShortString(
+            input.syncId ?? randomUUID(),
+            "Profile sync id",
+            160,
+          ),
           assertShortString(input.name, "Profile name", 80),
           SupportedLocaleSchema.parse(input.locale),
           stringifyJson(input.preferences ?? {}, "Profile preferences"),
@@ -489,17 +511,35 @@ export class ProfilesRepository {
     return profile;
   }
 
-  list(): Profile[] {
+  list(accountId?: string): Profile[] {
     return (
       this.database
-        .prepare("SELECT * FROM profiles ORDER BY created_at, id")
-        .all() as ProfileRow[]
+        .prepare(
+          accountId === undefined
+            ? "SELECT * FROM profiles ORDER BY created_at, id"
+            : "SELECT * FROM profiles WHERE account_id = ? ORDER BY created_at, id",
+        )
+        .all(
+          ...(accountId === undefined
+            ? []
+            : [assertShortString(accountId, "Account id", 120)]),
+        ) as ProfileRow[]
     ).map(profileFromRow);
   }
 
-  count(): number {
+  count(accountId?: string): number {
     return (
-      this.database.prepare("SELECT count(*) AS count FROM profiles").get() as {
+      this.database
+        .prepare(
+          accountId === undefined
+            ? "SELECT count(*) AS count FROM profiles"
+            : "SELECT count(*) AS count FROM profiles WHERE account_id = ?",
+        )
+        .get(
+          ...(accountId === undefined
+            ? []
+            : [assertShortString(accountId, "Account id", 120)]),
+        ) as {
         count: number;
       }
     ).count;
@@ -538,6 +578,114 @@ export class ProfilesRepository {
         .prepare("DELETE FROM profiles WHERE id = ?")
         .run(assertShortString(id, "Profile id", 120)).changes > 0
     );
+  }
+
+  getBySyncId(syncId: string): Profile | null {
+    const row = this.database
+      .prepare("SELECT * FROM profiles WHERE sync_id = ?")
+      .get(assertShortString(syncId, "Profile sync id", 160)) as
+      ProfileRow | undefined;
+    return row === undefined ? null : profileFromRow(row);
+  }
+
+  /** Call only after both account owners have authorized the online transfer. */
+  transfer(id: string, targetAccountId: string): Profile {
+    const current = this.getRequired(id);
+    if (current.accountId === targetAccountId) return current;
+    try {
+      this.database
+        .prepare(
+          `UPDATE profiles SET account_id = ?, pin_hash = NULL,
+        pin_attempts = 0, pin_locked_until = NULL, pin_version = pin_version + 1,
+        updated_at = ? WHERE id = ?`,
+        )
+        .run(
+          assertShortString(targetAccountId, "Account id", 120),
+          isoNow(this.clock),
+          id,
+        );
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        error.message.includes("PROFILE_LIMIT_REACHED")
+      )
+        throw new ProfileLimitError();
+      throw error;
+    }
+    return this.getRequired(id);
+  }
+
+  setPinHash(id: string, hash: string | null): void {
+    this.getRequired(id);
+    if (hash !== null && (hash.length < 32 || hash.length > 512))
+      throw new DatabaseValidationError(
+        "PIN hash must be an encoded password hash.",
+      );
+    this.database
+      .prepare(
+        `UPDATE profiles SET pin_hash = ?, pin_attempts = 0,
+      pin_locked_until = NULL, pin_version = pin_version + 1, updated_at = ? WHERE id = ?`,
+      )
+      .run(hash, isoNow(this.clock), id);
+  }
+
+  /** Internal password-verification boundary. Never expose through public profile DTOs. */
+  getPinRecord(id: string): ProfilePinRecord {
+    this.getRequired(id);
+    const row = this.database
+      .prepare("SELECT * FROM profiles WHERE id = ?")
+      .get(id) as ProfileRow;
+    return {
+      hash: row.pin_hash,
+      attempts: row.pin_attempts,
+      lockedUntil: row.pin_locked_until,
+      version: row.pin_version,
+    };
+  }
+
+  recordPinFailure(
+    id: string,
+    options: { maxAttempts?: number; lockMs?: number } = {},
+  ): ProfilePinRecord {
+    const maxAttempts = options.maxAttempts ?? 5;
+    const lockMs = options.lockMs ?? 300_000;
+    if (
+      !Number.isInteger(maxAttempts) ||
+      maxAttempts < 1 ||
+      maxAttempts > 100 ||
+      !Number.isInteger(lockMs) ||
+      lockMs < 1_000 ||
+      lockMs > 86_400_000
+    )
+      throw new DatabaseValidationError("Invalid PIN attempt policy.");
+    return this.database.transaction(() => {
+      const current = this.getPinRecord(id);
+      if (
+        current.lockedUntil !== null &&
+        Date.parse(current.lockedUntil) > this.clock().getTime()
+      )
+        return current;
+      const attempts =
+        (current.lockedUntil === null ? current.attempts : 0) + 1;
+      const lockedUntil =
+        attempts >= maxAttempts
+          ? new Date(this.clock().getTime() + lockMs).toISOString()
+          : null;
+      this.database
+        .prepare(
+          "UPDATE profiles SET pin_attempts = ?, pin_locked_until = ? WHERE id = ?",
+        )
+        .run(attempts, lockedUntil, id);
+      return this.getPinRecord(id);
+    })();
+  }
+
+  clearPinFailures(id: string): void {
+    this.database
+      .prepare(
+        "UPDATE profiles SET pin_attempts = 0, pin_locked_until = NULL WHERE id = ?",
+      )
+      .run(id);
   }
 }
 
@@ -730,13 +878,17 @@ export class CatalogTitlesRepository {
       sources
         .filter(
           (source) =>
-            source.seasonNumber !== null && source.seasonNumber > 0 && source.episodeNumber !== null,
+            source.seasonNumber !== null &&
+            source.seasonNumber > 0 &&
+            source.episodeNumber !== null,
         )
         .map((source) => `${source.seasonNumber}:${source.episodeNumber}`),
     );
     const seasons = new Set(
       sources
-        .filter((source) => source.seasonNumber !== null && source.seasonNumber > 0)
+        .filter(
+          (source) => source.seasonNumber !== null && source.seasonNumber > 0,
+        )
         .map((source) => source.seasonNumber),
     );
     const expectedEpisodes =
@@ -858,7 +1010,9 @@ export class LibraryRepository {
       input.state ??
       (input.membershipReason === "playback" ? "in-progress" : "saved");
     const progressPercent =
-      input.progressPercent ?? existing?.progressPercent ?? null;
+      input.progressPercent === undefined
+        ? (existing?.progressPercent ?? null)
+        : input.progressPercent;
     if (
       progressPercent !== null &&
       (progressPercent < 0 || progressPercent > 100)
@@ -953,6 +1107,33 @@ export class PlaybackPositionsRepository {
     private readonly database: BetterSqlite3.Database,
     private readonly clock: Clock,
   ) {}
+
+  list(profileId: string): PlaybackPositionRecord[] {
+    const rows = this.database
+      .prepare(
+        "SELECT * FROM playback_positions WHERE profile_id = ? ORDER BY title_id, position_key",
+      )
+      .all(assertShortString(profileId, "Profile id", 120)) as Parameters<
+      PlaybackPositionsRepository["fromRow"]
+    >[0][];
+    return rows.map((row) => this.fromRow(row));
+  }
+
+  remove(
+    profileId: string,
+    titleId: string,
+    seasonNumber: number | null = null,
+    episodeNumber: number | null = null,
+  ): boolean {
+    return (
+      this.database
+        .prepare(
+          "DELETE FROM playback_positions WHERE profile_id = ? AND title_id = ? AND position_key = ?",
+        )
+        .run(profileId, titleId, this.key(seasonNumber, episodeNumber))
+        .changes > 0
+    );
+  }
 
   get(
     profileId: string,
@@ -1186,6 +1367,30 @@ export class HistoryRepository {
           limit,
         ) as WatchHistoryRow[]
     ).map(watchHistoryFromRow);
+  }
+
+  listAll(profileId: string): WatchHistoryRecord[] {
+    return (
+      this.database
+        .prepare(
+          "SELECT * FROM watch_history_events WHERE profile_id = ? ORDER BY occurred_at, id",
+        )
+        .all(
+          assertShortString(profileId, "Profile id", 120),
+        ) as WatchHistoryRow[]
+    ).map(watchHistoryFromRow);
+  }
+
+  get(profileId: string, eventId: string): WatchHistoryRecord | null {
+    const row = this.database
+      .prepare(
+        "SELECT * FROM watch_history_events WHERE profile_id = ? AND id = ?",
+      )
+      .get(
+        assertShortString(profileId, "Profile id", 120),
+        assertShortString(eventId, "History event id", 120),
+      ) as WatchHistoryRow | undefined;
+    return row === undefined ? null : watchHistoryFromRow(row);
   }
 
   titleIds(profileId: string): string[] {
@@ -1633,9 +1838,9 @@ export class IntegrationsRepository {
     return (
       this.database
         .prepare(
-          "SELECT * FROM profile_integration_connections WHERE profile_id = ? ORDER BY integration_id",
+          "SELECT * FROM account_integration_connections WHERE account_id = ? ORDER BY integration_id",
         )
-        .all(profileId) as IntegrationConnectionRow[]
+        .all(this.accountForProfile(profileId)) as IntegrationConnectionRow[]
     ).map(toPublicIntegrationConnection);
   }
 
@@ -1671,11 +1876,11 @@ export class IntegrationsRepository {
     this.database
       .prepare(
         `
-        INSERT INTO profile_integration_connections (
-          profile_id, integration_id, enabled, setup_status, health_status, secret_ref, health_code,
+        INSERT INTO account_integration_connections (
+          account_id, integration_id, enabled, setup_status, health_status, secret_ref, health_code,
           last_checked_at, created_at, updated_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(profile_id, integration_id) DO UPDATE SET
+        ON CONFLICT(account_id, integration_id) DO UPDATE SET
           enabled = excluded.enabled,
           setup_status = excluded.setup_status,
           health_status = excluded.health_status,
@@ -1686,7 +1891,7 @@ export class IntegrationsRepository {
       `,
       )
       .run(
-        profileId,
+        this.accountForProfile(profileId),
         id,
         input.enabled ? 1 : 0,
         IntegrationSetupStateSchema.parse(input.setupStatus),
@@ -1716,12 +1921,17 @@ export class IntegrationsRepository {
   clearSecretRef(id: IntegrationId, profileId = "default"): void {
     this.database
       .prepare(
-        "UPDATE profile_integration_connections SET secret_ref = NULL, updated_at = ? WHERE profile_id = ? AND integration_id = ?",
+        "UPDATE account_integration_connections SET secret_ref = NULL, updated_at = ? WHERE account_id = ? AND integration_id = ?",
       )
-      .run(isoNow(this.clock), profileId, IntegrationIdSchema.parse(id));
+      .run(
+        isoNow(this.clock),
+        this.accountForProfile(profileId),
+        IntegrationIdSchema.parse(id),
+      );
   }
 
   deleteProfile(profileId: string): void {
+    // A profile does not own the shared connection. Remove only obsolete legacy rows.
     this.database
       .prepare(
         "DELETE FROM profile_integration_connections WHERE profile_id = ?",
@@ -1736,10 +1946,21 @@ export class IntegrationsRepository {
     return (
       (this.database
         .prepare(
-          "SELECT * FROM profile_integration_connections WHERE profile_id = ? AND integration_id = ?",
+          "SELECT * FROM account_integration_connections WHERE account_id = ? AND integration_id = ?",
         )
-        .get(profileId, id) as IntegrationConnectionRow | undefined) ?? null
+        .get(this.accountForProfile(profileId), id) as
+        IntegrationConnectionRow | undefined) ?? null
     );
+  }
+
+  private accountForProfile(profileId: string): string {
+    const row = this.database
+      .prepare("SELECT account_id FROM profiles WHERE id = ?")
+      .get(profileId) as { account_id: string } | undefined;
+    if (row !== undefined) return row.account_id;
+    // Bootstrap reads occur before the first profile exists.
+    if (profileId === "default") return LOCAL_ACCOUNT_ID;
+    throw new DatabaseValidationError(`Profile '${profileId}' does not exist.`);
   }
 
   private validateSecretRef(value: string | null): string | null {
@@ -1937,7 +2158,7 @@ export class SyncOutboxRepository {
         assertShortString(input.deviceId, "Device id", 120),
         input.profileId === undefined || input.profileId === null
           ? null
-          : assertShortString(input.profileId, "Profile id", 120),
+          : assertShortString(input.profileId, "Profile sync id", 160),
         assertShortString(input.entityType, "Entity type", 120),
         assertShortString(input.entityId, "Entity id", 240),
         input.schemaVersion,
@@ -1971,6 +2192,46 @@ export class SyncOutboxRepository {
       )
       .all(isoNow(this.clock), limit) as SyncOutboxRow[];
     return rows.map(syncOperationFromRow<TPayload>);
+  }
+
+  listPendingForDevice<TPayload = unknown>(
+    deviceId: string,
+    limit = 100,
+  ): SyncOutboxOperation<TPayload>[] {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 1_000)
+      throw new DatabaseValidationError(
+        "Outbox batch limit must be between 1 and 1000.",
+      );
+    return (
+      this.database
+        .prepare(
+          `SELECT * FROM sync_outbox WHERE device_id = ?
+      AND delivered_at IS NULL AND available_at <= ? ORDER BY rowid LIMIT ?`,
+        )
+        .all(
+          assertShortString(deviceId, "Device id", 120),
+          isoNow(this.clock),
+          limit,
+        ) as SyncOutboxRow[]
+    ).map(syncOperationFromRow<TPayload>);
+  }
+
+  countPendingForDevice(deviceId: string): number {
+    return (
+      this.database
+        .prepare(
+          "SELECT count(*) AS count FROM sync_outbox WHERE device_id = ? AND delivered_at IS NULL",
+        )
+        .get(deviceId) as { count: number }
+    ).count;
+  }
+
+  discardPendingForProfile(deviceId: string, profileId: string): void {
+    this.database
+      .prepare(
+        "UPDATE sync_outbox SET delivered_at = ?, last_error = NULL WHERE device_id = ? AND profile_id = ? AND delivered_at IS NULL",
+      )
+      .run(isoNow(this.clock), deviceId, profileId);
   }
 
   markDelivered(opIds: readonly string[]): number {

@@ -210,7 +210,7 @@ export function TitleDetail({
   };
   useEffect(() => {
     if (downloadManager) setOfflineJobs(downloadManager.jobs);
-  }, [downloadManager?.jobs]);
+  }, [downloadManager]);
 
   useEffect(() => {
     if (error) showToast(error, "error");
@@ -376,7 +376,7 @@ export function TitleDetail({
 
   useEffect(() => {
     if (detail?.series) onAddedRef.current();
-  }, [detail?.series?.status]);
+  }, [detail?.series]);
 
   useEffect(() => {
     if (forceSearch?.status) onAddedRef.current();
@@ -972,6 +972,7 @@ export function TitleDetail({
     localRoots,
     localRootsLoaded,
     offlineJobsLoaded,
+    downloadManager,
     runSeriesDownloadBatch,
     activeSeriesDownloadRequestId,
     showToast,

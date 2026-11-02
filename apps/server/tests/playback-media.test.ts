@@ -275,6 +275,7 @@ describe("in-app media gateway", () => {
       "media-file",
       "Movie.2020.mkv",
       expect.any(AbortSignal),
+      "default",
     );
     const unknown = await app.inject({
       method: "GET",

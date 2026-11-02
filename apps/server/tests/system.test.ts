@@ -259,7 +259,7 @@ describe("system API", () => {
     });
     const integrationBody = integrations.json();
     expect(integrationBody.persistence).toBe("memory");
-    expect(integrationBody.items).toHaveLength(12);
+    expect(integrationBody.items).toHaveLength(16);
     expect(
       integrationBody.items.find((item: { id: string }) => item.id === "tmdb"),
     ).toMatchObject({ id: "tmdb", status: "action_required" });

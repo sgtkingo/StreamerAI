@@ -4,9 +4,10 @@ import {
   DiscoveryRequestSchema,
   EpisodeSelectionSchema,
   UpdateViewerProfileSchema,
+  type ViewerProfile,
 } from "@streamer-ai/contracts";
 import { ProfileLimitError } from "@streamer-ai/database";
-import type { FastifyInstance, FastifyReply } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import {
   StreamerCore,
   DiscoverySessionClosedError,
@@ -24,6 +25,11 @@ import {
 
 interface ContentRouteDependencies {
   core: StreamerCore;
+  accountId?: (request: FastifyRequest) => string;
+  maskProfiles?: (
+    request: FastifyRequest,
+    profiles: ViewerProfile[],
+  ) => ViewerProfile[];
   ensureLocalLibrary?: (profileId: string) => void;
   onDeleteProfile?: (profileId: string) => Promise<void>;
 }
@@ -143,10 +149,15 @@ export function registerContentRoutes(
   app: FastifyInstance,
   dependencies: ContentRouteDependencies,
 ): void {
-  app.get("/api/v1/profiles", async () => ({
-    items: dependencies.core.listProfiles(),
-    limit: 5,
-  }));
+  app.get("/api/v1/profiles", async (request) => {
+    const profiles = dependencies.core.listProfiles(
+      dependencies.accountId?.(request),
+    );
+    return {
+      items: dependencies.maskProfiles?.(request, profiles) ?? profiles,
+      limit: 5,
+    };
+  });
 
   app.post("/api/v1/profiles", async (request, reply) => {
     const parsed = CreateViewerProfileSchema.safeParse(request.body);
@@ -160,7 +171,12 @@ export function registerContentRoutes(
     try {
       return reply
         .code(201)
-        .send(dependencies.core.createViewerProfile(parsed.data));
+        .send(
+          dependencies.core.createViewerProfile(
+            parsed.data,
+            dependencies.accountId?.(request),
+          ),
+        );
     } catch (error) {
       return sendDomainError(reply, error);
     }

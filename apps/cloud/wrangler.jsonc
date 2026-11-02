@@ -1,0 +1,24 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "streamer-ai",
+  "main": "src/index.ts",
+  "account_id": "0fb0f5933d06a77f5d9fbc7883556d84",
+  "compatibility_date": "2026-11-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "preview_urls": false,
+  "vars": {
+    "AUTH_ORIGIN": "https://streamer-ai.streamer-ai.workers.dev",
+    "MAIL_FROM": "no-reply@7265001.xyz",
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "streamer_ai_free",
+      "database_id": "17d0928c-029c-4941-a9c9-7c7e4429f277",
+      "migrations_dir": "migrations",
+    },
+  ],
+  "triggers": { "crons": ["0 */6 * * *"] },
+  "observability": { "enabled": false },
+}

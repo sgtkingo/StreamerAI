@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { accountSecretKey } from "../src/stores/account-integrations.js";
 import {
   createApp,
   NonPersistentMemorySecretStore,
@@ -65,9 +66,9 @@ describe("Webshare connection API", () => {
     });
     expect(response.body).not.toContain("plain-password");
     expect(response.body).not.toContain("authorized-session-token");
-    expect(await secrets.get(WEBSHARE_WST_SECRET_KEY)).toBe(
-      "authorized-session-token",
-    );
+    expect(
+      await secrets.get(accountSecretKey("local", WEBSHARE_WST_SECRET_KEY)),
+    ).toBe("authorized-session-token");
     expect(calls[1]?.body).not.toContain("plain-password");
 
     const setup = await app.inject({

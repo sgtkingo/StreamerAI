@@ -12,6 +12,8 @@ import { useToasts } from "./ToastProvider";
 import { IntegrationManager } from "./IntegrationManager";
 import { AgentBackendSettings } from "./AgentBackendSettings";
 import { AppearanceSettings } from "../theme/AppearanceSettings";
+import { ProfilePinSettings } from "./ProfilePin";
+import { AccountSettings } from "./AccountSettings";
 
 export type ProfilePage = "settings" | "preferences" | "account" | "statistics";
 
@@ -22,6 +24,7 @@ interface ProfilePagesProps {
   onProfileUpdated: (profile: ViewerProfile) => void;
   onRerunOnboarding: () => void;
   onSwitchAccount: () => void;
+  onSignOut?: () => Promise<void>;
   onDeleteProfile: () => Promise<void>;
   onBackHome: () => void;
   onIntegrationsChanged: () => void;
@@ -45,6 +48,7 @@ export function ProfilePages({
   onProfileUpdated,
   onRerunOnboarding,
   onSwitchAccount,
+  onSignOut,
   onDeleteProfile,
   onBackHome,
   onIntegrationsChanged,
@@ -228,8 +232,8 @@ export function ProfilePages({
             <p className="eyebrow">05 / Integrations</p>
             <h2>Connected services</h2>
             <p>
-              Manage your movie databases, streaming sources and subtitle
-              services in one place.
+              Manage the services shared by all profiles on this account.
+              Connecting or disconnecting a service affects every profile.
             </p>
             <IntegrationManager
               api={api}
@@ -336,15 +340,17 @@ export function ProfilePages({
 
       {page === "account" && (
         <div className="profile-page__sections">
-          <section className="profile-page__section">
-            <p className="eyebrow">Account · planned</p>
-            <h2>Login and password</h2>
-            <p>
-              Placeholder: changing account login and password needs a real
-              authentication layer. No password or fake sign-out is stored here
-              yet.
-            </p>
-          </section>
+          <AccountSettings
+            api={api}
+            profile={profile}
+            onSwitchProfile={onSwitchAccount}
+            onSignOut={onSignOut}
+          />
+          <ProfilePinSettings
+            api={api}
+            profile={profile}
+            onProfileUpdated={onProfileUpdated}
+          />
           <section className="profile-page__section">
             <p className="eyebrow">Portrait · planned</p>
             <h2>Profile photo</h2>
@@ -353,13 +359,6 @@ export function ProfilePages({
               initials avatar is used for now.
             </p>
           </section>
-          <button
-            className="button button--secondary"
-            type="button"
-            onClick={onSwitchAccount}
-          >
-            Choose another profile
-          </button>
         </div>
       )}
 

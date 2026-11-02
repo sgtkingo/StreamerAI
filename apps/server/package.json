@@ -22,9 +22,11 @@
     "@streamer-ai/contracts": "workspace:*",
     "@streamer-ai/database": "workspace:*",
     "fastify": "^5.6.1",
+    "qrcode": "1.5.4",
     "pino": "^9.9.5"
   },
   "devDependencies": {
+    "@types/qrcode": "^1.5.5",
     "@types/node": "^24.5.2",
     "tsx": "^4.20.5",
     "typescript": "^5.9.2",

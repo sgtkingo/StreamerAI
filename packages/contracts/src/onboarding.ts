@@ -129,6 +129,8 @@ export const DEFAULT_PLAYBACK_PREFERENCES: PlaybackPreferences =
 export const ViewerProfileSchema = z
   .object({
     id: z.string().min(1).max(120),
+    accountId: z.string().min(1).max(160).optional(),
+    pinEnabled: z.boolean().optional(),
     name: z.string().min(1).max(80),
     onboardingComplete: z.boolean(),
     locale: SupportedLocaleSchema,

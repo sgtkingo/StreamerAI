@@ -2,7 +2,7 @@ export class ProfileLimitError extends Error {
   readonly code = "PROFILE_LIMIT_REACHED";
 
   constructor() {
-    super("An installation can contain at most five profiles.");
+    super("An account can contain at most five profiles.");
     this.name = "ProfileLimitError";
   }
 }

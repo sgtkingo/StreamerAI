@@ -60,7 +60,7 @@ export function DownloadPage({ onOpenTitle }: {
   const [openSourcesFor, setOpenSourcesFor] = useState<string | null>(null);
   const [searchingFor, setSearchingFor] = useState<string | null>(null);
   const [pendingStops, setPendingStops] = useState<Set<string>>(new Set());
-  const jobs = manager?.jobs ?? [];
+  const jobs = useMemo(() => manager?.jobs ?? [], [manager?.jobs]);
   const batches = useMemo(() => Object.values(manager?.batches ?? {}), [manager?.batches]);
   const titleIds = useMemo(() => [...new Set([
     ...jobs.map((job) => job.titleId),

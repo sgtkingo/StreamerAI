@@ -92,6 +92,9 @@ describe("provider HTTP clients", () => {
   it("keeps the TMDB episode overview in the series guide", async () => {
     const provider = new TmdbMetadataProvider({
       client: {
+        forProfile() {
+          return this;
+        },
         getSeries: vi
           .fn()
           .mockResolvedValue({ seasons: [{ season_number: 1 }] }),
@@ -130,7 +133,12 @@ describe("provider HTTP clients", () => {
   it("uses alternate episode terms while preserving movie title and year queries", async () => {
     const search = vi.fn().mockResolvedValue({ total: 0, items: [] });
     const provider = new WebshareMediaProvider({
-      client: { search } as unknown as WebshareClient,
+      client: {
+        search,
+        forProfile() {
+          return this;
+        },
+      } as unknown as WebshareClient,
       issuePlaybackTicket: () => "/playback/test",
     });
     const context = {

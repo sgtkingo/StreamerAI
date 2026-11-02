@@ -5,6 +5,11 @@ prefix to the Fastify server. JSON requests with a body must send
 `Content-Type: application/json`; requests without a body should not send an
 empty JSON content type.
 
+When Google accounts are enabled, application routes require the local account
+session and enforce profile ownership. Protected profiles return 423 until the
+browser unlocks their PIN. Account, pairing and PIN endpoints are documented in
+[ACCOUNTS.md](ACCOUNTS.md); the hosted identity API lives in `apps/cloud`.
+
 ## Health and setup
 
 | Method | Path | Purpose |

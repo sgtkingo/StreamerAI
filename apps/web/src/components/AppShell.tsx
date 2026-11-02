@@ -38,6 +38,7 @@ export function AppShell({
   profile,
   onProfileUpdated,
   onSwitchAccount,
+  onSignOut,
   onDeleteProfile,
   onRerunOnboarding,
   onIntegrationsChanged,
@@ -47,6 +48,7 @@ export function AppShell({
   profile: ViewerProfile;
   onProfileUpdated: (profile: ViewerProfile) => void;
   onSwitchAccount: () => void;
+  onSignOut?: () => Promise<void>;
   onDeleteProfile: () => Promise<void>;
   onRerunOnboarding: () => void;
   onIntegrationsChanged: () => void;
@@ -262,7 +264,7 @@ export function AppShell({
                     onSwitchAccount();
                   }}
                 >
-                  Log out / Switch profile
+                  Switch profile
                 </button>
               </div>
             )}
@@ -320,6 +322,7 @@ export function AppShell({
           onRerunOnboarding={onRerunOnboarding}
           onIntegrationsChanged={onIntegrationsChanged}
           onSwitchAccount={onSwitchAccount}
+          onSignOut={onSignOut}
           onDeleteProfile={onDeleteProfile}
           onBackHome={() => navigate("home")}
         />

@@ -292,10 +292,37 @@ Cloud sync is an optional deployment profile (`SYNC_PROVIDER=local` by default, 
 
 ## 8. Local accounts, profiles, and secrets
 
-MVP identity is one household installation with one administrator and up to five profiles.
+The account extension (implementation resumed 2026-11-01) offers explicit
+local entry without registration alongside StreamerAI accounts, separates login
+from optional synchronization, and adds a user's own Google Drive as an optional
+sync provider in the remaining plan. Brevo supplies the implemented e-mail-code transport. Requirements,
+login-page behavior and implementation prerequisites are recorded in
+[`../docs/ACCOUNT_MODES_PLAN.md`](../docs/ACCOUNT_MODES_PLAN.md). Existing pilot
+behavior below remains implemented; the e-mail Worker release is deployed.
 
-- Local administrator passwords use Argon2id with a per-user salt; profile PINs, if offered, are separately rate-limited.
-- Google and Apple sign-in are deferred until a hosted identity/callback service exists. They are unnecessary for a private LAN MVP.
+The approved account extension uses Google identity on a Cloudflare Worker,
+with a local session on the home server and up to five profiles per account.
+The first Google owner claims the legacy installation account once. Additional
+accounts stay isolated. Google and e-mail login are available; Apple and the
+Google Drive adapter remain planned. Explicit local entry disables automatic
+legacy ownership adoption; a reviewed pairing can adopt that household instead.
+The home application remains a web client served by the local node; native
+Android can reuse the API/device flow later. AI is optional.
+
+- TV sign-in uses a five-minute, single-use code/QR, Google sign-in on a phone,
+  and explicit owner approval. Cloud bearer credentials stay in the local vault.
+- Profiles have optional, separately rate-limited local scrypt PINs. Changes
+  require the current PIN or fresh Google owner approval. PINs protect clients
+  of that home server and are not synchronized as reusable verifiers.
+- Provider credentials are shared per account on an installation. Migration
+  uses the first-created profile's connections without borrowing missing
+  secrets from other profiles; new-profile onboarding inherits those services.
+- Owners can transfer a profile through the hosted portal with target-owner
+  acceptance. Synchronized user state moves; provider credentials stay with
+  the original account/installation, and the target sets a new local PIN.
+- An unset account-service URL preserves trusted local mode without an
+  administrator login. Do not treat that mode as public authenticated hosting.
+- Google sign-in is available through the hosted identity service. Apple remains deferred; neither is required for trusted local operation.
 - Generate an installation master key outside the database. The portable Docker profile mounts a dedicated read-only key file with restrictive host ACLs and encrypts the application vault with AES-256-GCM. OS-specific credential stores are optional adapters, never a deployment requirement.
 - Encrypt provider tokens and other recoverable secrets using an authenticated cipher with a random nonce per value and versioned key ID.
 - Never put secrets in images, source control, Compose files, logs, URLs, crash reports, or AI prompts.

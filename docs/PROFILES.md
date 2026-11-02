@@ -1,6 +1,6 @@
-# Viewer profiles and account placeholders
+# Viewer profiles and accounts
 
-StreamerAI has up to five local viewer profiles per installation. Profile
+StreamerAI has up to five viewer profiles per account. Profile
 selection is a landing screen with five medallion slots. Choosing a profile
 scopes Home, discovery, Library and History to its ID. Creating a profile does
 not overwrite the original `default` viewer. A newly created profile opens
@@ -11,12 +11,13 @@ the existing SQLite `profiles` table; playback-language, taste and appearance
 settings use its `preferences_json` field, including a per-profile completion
 marker. No separate appearance table or database migration is required.
 
-The avatar menu opens Settings, Preferences, My account and Statistics, plus
-Log out / Switch profile. Here, **log out means leaving the active viewer and
-returning to the chooser**. It is not a security boundary: authentication,
-passwords and photo uploads are intentionally placeholders. Do not treat a
-profile as an authenticated account or expose this service publicly on that
-assumption.
+The avatar menu opens Settings, Preferences, My account and Statistics.
+Switch profile locks the current profile and returns to the chooser. Sign out
+revokes the account session separately. Optional profile PINs are enforced by
+the home server. Google account login, QR/code pairing, shared account
+connections, migrations and transfers are described in [ACCOUNTS.md](ACCOUNTS.md).
+The existing trusted local deployment remains available when cloud accounts
+are disabled. Photo uploads remain a placeholder.
 
 Settings saves interface locale, appearance and playback language/subtitle
 preferences per viewer. The player prefers the configured primary audio,
@@ -31,8 +32,9 @@ selection and independent weather/lighting previews. Appearance changes preview
 the full onboarding immediately; completing setup saves them on that viewer,
 while canceling removes the preview and restores the
 saved appearance. Running onboarding again from Settings edits the selected
-profile and preserves its separate taste prompt. Connection settings remain
-installation-wide.
+profile and preserves its separate taste prompt. Connections and encrypted
+provider credentials are shared by the account's profiles on this installation;
+new-profile onboarding reuses them automatically.
 
 ## Appearance and device context
 

@@ -114,11 +114,15 @@ describe("appearance settings", () => {
   it("keeps weather opt-in, lets the viewer select a city, and stores coarse coordinates", async () => {
     const { api, getCurrentPosition } = renderSettings();
     expect(screen.getByLabelText("Auto-detect")).toBeChecked();
-    expect(screen.getByLabelText("Use local weather")).not.toBeChecked();
+    expect(
+      screen.getByRole("checkbox", { name: /^Use local weather\b/ }),
+    ).not.toBeChecked();
     expect(api.getEnvironmentWeather).not.toHaveBeenCalled();
     expect(getCurrentPosition).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByLabelText("Use local weather"));
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: /^Use local weather\b/ }),
+    );
     expect(api.getEnvironmentWeather).not.toHaveBeenCalled();
     const locate = screen.getByRole("button", { name: "Use my location" });
     expect(locate).toHaveAttribute("title", "Use my location");
@@ -158,7 +162,9 @@ describe("appearance settings", () => {
     ).toBeInTheDocument();
     expect(within(weatherCard).getByText("Czechia")).toBeInTheDocument();
     expect(getCurrentPosition).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByLabelText("Use local weather"));
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: /^Use local weather\b/ }),
+    );
     expect(environment()).toMatchObject({
       weatherEnabled: false,
       location: null,
@@ -234,7 +240,9 @@ describe("appearance settings", () => {
 
   it("discards a location permission result after weather has been disabled", () => {
     const { api, getCurrentPosition } = renderSettings();
-    fireEvent.click(screen.getByLabelText("Use local weather"));
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: /^Use local weather\b/ }),
+    );
     fireEvent.click(screen.getByRole("button", { name: "Use my location" }));
     expect(getCurrentPosition).toHaveBeenCalledTimes(1);
     expect(
@@ -244,7 +252,9 @@ describe("appearance settings", () => {
       screen.getByRole("button", { name: "Use my location" }),
     ).toHaveAttribute("aria-busy", "true");
     const success = getCurrentPosition.mock.calls[0]![0] as PositionCallback;
-    fireEvent.click(screen.getByLabelText("Use local weather"));
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: /^Use local weather\b/ }),
+    );
     act(() => {
       success({
         coords: { latitude: 50.083, longitude: 14.437 },
@@ -289,7 +299,9 @@ describe("appearance settings", () => {
 
   it("keeps city search available after geolocation permission is denied", () => {
     const { getCurrentPosition } = renderSettings();
-    fireEvent.click(screen.getByLabelText("Use local weather"));
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: /^Use local weather\b/ }),
+    );
     const locate = screen.getByRole("button", { name: "Use my location" });
     fireEvent.click(locate);
     const fail = getCurrentPosition.mock.calls[0]![1] as PositionErrorCallback;
@@ -326,7 +338,7 @@ describe("appearance settings", () => {
     expect(document.documentElement).toHaveAttribute("data-period", "day");
     fireEvent.click(screen.getByLabelText("Ambient motion"));
     const fixTheme = screen.getByRole("checkbox", {
-      name: "Use current theme as fixed",
+      name: /^Use current theme as fixed\b/,
     });
     fireEvent.click(fixTheme);
     const pinned = AppearancePreferencesSchema.parse({
@@ -337,12 +349,13 @@ describe("appearance settings", () => {
     });
     expect(appearance()).toEqual(pinned);
     expect(
-      screen.getByRole("checkbox", { name: "Use current theme as fixed" }),
+      screen.getByRole("checkbox", { name: /^Use current theme as fixed\b/ }),
     ).toBeChecked();
     expect(
       screen
-        .getByRole("checkbox", { name: "Use current theme as fixed" })
-        .querySelector("svg"),
+        .getByRole("checkbox", { name: /^Use current theme as fixed\b/ })
+        .closest("label")
+        ?.querySelector("svg"),
     ).toHaveAttribute("data-lock-state", "locked");
     expect(screen.getByText(/Appearance fixed:/)).toBeInTheDocument();
 
@@ -376,7 +389,7 @@ describe("appearance settings", () => {
     expect(document.documentElement).toHaveAttribute("data-theme", "autumn");
     expect(document.documentElement).toHaveAttribute("data-period", "day");
     fireEvent.click(
-      screen.getByRole("checkbox", { name: "Use current theme as fixed" }),
+      screen.getByRole("checkbox", { name: /^Use current theme as fixed\b/ }),
     );
     expect(appearance()).toEqual(
       AppearancePreferencesSchema.parse({ ambientMotion: false }),
@@ -385,7 +398,7 @@ describe("appearance settings", () => {
     expect(document.documentElement).toHaveAttribute("data-period", "night");
     expect(screen.queryByText(/Appearance fixed:/)).not.toBeInTheDocument();
     expect(
-      screen.getByRole("checkbox", { name: "Use current theme as fixed" }),
+      screen.getByRole("checkbox", { name: /^Use current theme as fixed\b/ }),
     ).not.toBeChecked();
     expect(api.getEnvironmentWeather).not.toHaveBeenCalled();
   });
@@ -422,7 +435,7 @@ describe("appearance settings", () => {
     expect(device.querySelectorAll(".profile-page__section")).toHaveLength(0);
     expect(within(weather).getByRole("article").previousElementSibling).toBe(
       within(weather)
-        .getByRole("checkbox", { name: "Use local weather" })
+        .getByRole("checkbox", { name: /^Use local weather\b/ })
         .closest("label"),
     );
     expect(card.querySelectorAll(".profile-page__section")).toHaveLength(0);

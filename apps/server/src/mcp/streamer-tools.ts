@@ -98,6 +98,7 @@ export class StreamerToolService {
     private readonly baseUrl: string,
     private readonly fetcher: typeof fetch = fetch,
     private readonly boundProfileId?: string,
+    private readonly internalToken?: string,
   ) {
     const url = new URL(baseUrl);
     if (
@@ -133,7 +134,12 @@ export class StreamerToolService {
   ): Promise<Json> {
     const response = await this.fetcher(new URL(path, this.baseUrl), {
       method,
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        ...(this.internalToken
+          ? { "x-streamer-internal-token": this.internalToken }
+          : {}),
+      },
       body: body ? JSON.stringify(body) : undefined,
       signal: AbortSignal.any([
         signal ?? new AbortController().signal,
@@ -222,7 +228,7 @@ export class StreamerToolService {
       const grantId = this.grantId(args.grantId);
       const data = await this.request(
         "GET",
-        `/api/v1/playback/grants/${encodeURIComponent(grantId)}/manifest`,
+        `/api/v1/playback/grants/${encodeURIComponent(grantId)}/manifest${this.internalToken ? `?profileId=${encodeURIComponent(this.profileId(args.profileId))}` : ""}`,
         undefined,
         signal,
       );
@@ -272,7 +278,7 @@ export class StreamerToolService {
       const grantId = this.grantId(args.grantId);
       await this.request(
         "DELETE",
-        `/api/v1/playback/grants/${encodeURIComponent(grantId)}`,
+        `/api/v1/playback/grants/${encodeURIComponent(grantId)}${this.internalToken ? `?profileId=${encodeURIComponent(this.profileId(args.profileId))}` : ""}`,
         undefined,
         signal,
       );

@@ -1,0 +1,261 @@
+import { createAuth } from "./auth.js";
+import {
+  approveGrant,
+  authenticate,
+  claimGrant,
+  createGrant,
+  decidePendingGrant,
+  listDevices,
+  listPendingGrants,
+  redeemGrant,
+  revokeDevice,
+  verifyGrant,
+} from "./devices.js";
+import { body, HttpError, json, sameOrigin } from "./http.js";
+import { browserScript, page, stylesheet } from "./pages.js";
+import { pull, push, retentionStatements, snapshot } from "./sync.js";
+import {
+  acceptTransfer,
+  createTransfer,
+  listProfiles,
+  listTransfers,
+} from "./transfers.js";
+import type { Clock, Env, SessionReader } from "./types.js";
+import { emailLogin, manageEmailLogin } from "./email-login.js";
+import { mailConfigured } from "./mail.js";
+import { listConnections, removeLoginMethod } from "./connections.js";
+
+const authRoutes: Record<string, string[]> = {
+  "/api/auth/sign-in/social": ["POST"],
+  "/api/auth/callback/google": ["GET"],
+  "/api/auth/get-session": ["GET"],
+  "/api/auth/sign-out": ["POST"],
+  "/api/auth/error": ["GET"],
+  "/api/auth/link-social": ["POST"],
+};
+
+function secured(response: Response): Response {
+  const headers = new Headers(response.headers);
+  headers.set("x-content-type-options", "nosniff");
+  headers.set("x-frame-options", "DENY");
+  headers.set("referrer-policy", "no-referrer");
+  headers.set("permissions-policy", "camera=(), microphone=(), geolocation=()");
+  headers.set(
+    "content-security-policy",
+    "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
+  );
+  headers.set("cache-control", "no-store");
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
+export function createWorker(
+  authFactory = createAuth,
+  clock: Clock = { now: () => Date.now() },
+) {
+  return {
+    async fetch(request: Request, env: Env): Promise<Response> {
+      try {
+        return secured(await route(request, env, authFactory, clock.now()));
+      } catch (error) {
+        const response =
+          error instanceof HttpError
+            ? json({ error: error.code }, error.status)
+            : json({ error: "internal_error" }, 500);
+        if (error instanceof HttpError && error.retryAfter)
+          response.headers.set("retry-after", String(error.retryAfter));
+        return secured(response);
+      }
+    },
+    async scheduled(_event: ScheduledController, env: Env): Promise<void> {
+      const now = clock.now();
+      // Keep ownership and sync tombstones: pruning these can resurrect transferred profiles.
+      await env.DB.batch([
+        ...retentionStatements(env, now),
+        env.DB.prepare(
+          "DELETE FROM cloud_rate_limit WHERE expires_at < ?",
+        ).bind(now),
+        env.DB.prepare(
+          "DELETE FROM cloud_email_cooldown WHERE next_send_at < ?",
+        ).bind(now - 86_400_000),
+        env.DB.prepare('DELETE FROM verification WHERE "expiresAt" < ?').bind(
+          now - 86_400_000,
+        ),
+        env.DB.prepare(
+          "DELETE FROM cloud_device_grant WHERE expires_at < ?",
+        ).bind(now - 86_400_000),
+        env.DB.prepare("DELETE FROM cloud_device WHERE expires_at < ?").bind(
+          now - 7 * 86_400_000,
+        ),
+        env.DB.prepare(
+          "DELETE FROM cloud_transfer WHERE expires_at < ? AND accepted_at IS NULL",
+        ).bind(now - 7 * 86_400_000),
+      ]);
+    },
+  };
+}
+
+async function route(
+  request: Request,
+  env: Env,
+  authFactory: (env: Env) => SessionReader,
+  now: number,
+): Promise<Response> {
+  const url = new URL(request.url);
+  const path = url.pathname;
+  const method = request.method;
+  if (method === "GET") {
+    if (path === "/health")
+      return json({ ok: true, service: "streamer-ai-identity", version: 1 });
+    if (path === "/" || path === "/login")
+      return new Response(page("login", mailConfigured(env)), {
+        headers: { "content-type": "text/html; charset=utf-8" },
+      });
+    if (path === "/device")
+      return new Response(page("device"), {
+        headers: { "content-type": "text/html; charset=utf-8" },
+      });
+    if (path === "/account")
+      return new Response(page("account"), {
+        headers: { "content-type": "text/html; charset=utf-8" },
+      });
+    if (path === "/assets/auth.js")
+      return new Response(browserScript, {
+        headers: { "content-type": "application/javascript; charset=utf-8" },
+      });
+    if (path === "/assets/auth.css")
+      return new Response(stylesheet, {
+        headers: { "content-type": "text/css; charset=utf-8" },
+      });
+  }
+  const origin = request.headers.get("origin");
+  if (origin && origin !== env.AUTH_ORIGIN)
+    throw new HttpError(403, "origin_forbidden");
+  if (
+    method === "POST" &&
+    [
+      "/api/auth/email-otp/send-verification-otp",
+      "/api/auth/sign-in/email-otp",
+    ].includes(path)
+  ) {
+    sameOrigin(request, env.AUTH_ORIGIN);
+    return emailLogin(request, env, authFactory(env), now);
+  }
+  if (
+    (method === "GET" && path === "/v1/account/email-login") ||
+    (method === "POST" &&
+      [
+        "/v1/account/email-login/code",
+        "/v1/account/email-login/confirm",
+      ].includes(path))
+  ) {
+    if (method === "POST") sameOrigin(request, env.AUTH_ORIGIN);
+    return manageEmailLogin(request, env, authFactory(env), now);
+  }
+  if (
+    method === "DELETE" &&
+    ["/v1/account/google-login", "/v1/account/email-login"].includes(path)
+  ) {
+    sameOrigin(request, env.AUTH_ORIGIN);
+    return removeLoginMethod(request, env, authFactory(env), now);
+  }
+  if (path.startsWith("/api/auth/")) {
+    if (!authRoutes[path]?.includes(method))
+      throw new HttpError(404, "not_found");
+    if (method === "POST") sameOrigin(request, env.AUTH_ORIGIN);
+    if (
+      path === "/api/auth/sign-in/social" ||
+      path === "/api/auth/link-social"
+    ) {
+      if (path.endsWith("link-social")) {
+        const owner = await authFactory(env).getSession(request);
+        if (!owner) throw new HttpError(401, "unauthorized");
+        if (!owner.authenticatedAt || now - owner.authenticatedAt > 300_000)
+          throw new HttpError(403, "reauth_required");
+      }
+      // Only our hosted pages can complete login; local/TV devices use a separate grant.
+      let input: unknown;
+      try {
+        input = await body(request.clone(), 8192);
+      } catch {
+        throw new HttpError(400, "invalid_request");
+      }
+      const data = input as Record<string, unknown> | null;
+      if (!data || data.provider !== "google" || data.idToken !== undefined)
+        throw new HttpError(400, "invalid_request");
+      for (const key of [
+        "callbackURL",
+        "errorCallbackURL",
+        "newUserCallbackURL",
+      ]) {
+        if (data[key] !== undefined) {
+          if (typeof data[key] !== "string")
+            throw new HttpError(400, "invalid_callback");
+          const callback = new URL(data[key] as string, env.AUTH_ORIGIN);
+          if (
+            callback.origin !== env.AUTH_ORIGIN ||
+            !["/device", "/account", "/login"].includes(callback.pathname)
+          )
+            throw new HttpError(400, "invalid_callback");
+        }
+      }
+    }
+    return authFactory(env).handler(request);
+  }
+  if (method === "POST" && path === "/v1/device/code")
+    return createGrant(request, env, now);
+  if (method === "POST" && path === "/v1/device/token")
+    return redeemGrant(request, env, now);
+  if (!path.startsWith("/v1/")) throw new HttpError(404, "not_found");
+  const principal = await authenticate(request, env, authFactory(env), now);
+  if (principal.method === "browser" && method !== "GET")
+    sameOrigin(request, env.AUTH_ORIGIN);
+  if (method === "GET" && path === "/v1/account")
+    return json(principal.account);
+  if (
+    principal.method === "device" &&
+    principal.purpose === "pin-reset" &&
+    !(method === "DELETE" && path === `/v1/devices/${principal.deviceId}`)
+  ) {
+    throw new HttpError(403, "token_scope_forbidden");
+  }
+  if (method === "GET" && path === "/v1/device/verify")
+    return verifyGrant(request, env, principal, now);
+  if (method === "POST" && path === "/v1/device/claim")
+    return claimGrant(request, env, principal, now);
+  if (method === "GET" && path === "/v1/device/pending")
+    return listPendingGrants(env, principal, now);
+  const pending = /^\/v1\/device\/pending\/([^/]+)\/decision$/.exec(path);
+  if (method === "POST" && pending?.[1])
+    return decidePendingGrant(request, env, principal, pending[1], now);
+  if (method === "GET" && path === "/v1/account/connections")
+    return listConnections(env, principal);
+  if (method === "POST" && path === "/v1/device/approve")
+    return approveGrant(request, env, principal, now);
+  if (method === "GET" && path === "/v1/devices")
+    return listDevices(env, principal);
+  const device = /^\/v1\/devices\/([^/]+)$/.exec(path);
+  if (method === "DELETE" && device?.[1])
+    return revokeDevice(request, env, principal, device[1], now);
+  if (method === "GET" && path === "/v1/profiles")
+    return listProfiles(env, principal);
+  if (method === "POST" && path === "/v1/transfers")
+    return createTransfer(request, env, principal, now);
+  if (method === "GET" && path === "/v1/transfers")
+    return listTransfers(env, principal, now);
+  const transfer = /^\/v1\/transfers\/([^/]+)\/accept$/.exec(path);
+  if (method === "POST" && transfer?.[1])
+    return acceptTransfer(request, env, principal, transfer[1], now);
+  if (method === "POST" && path === "/v1/sync/push")
+    return push(request, env, principal, now);
+  if (method === "GET" && path === "/v1/sync/pull")
+    return pull(request, env, principal);
+  if (method === "GET" && path === "/v1/sync/snapshot")
+    return snapshot(request, env, principal);
+  throw new HttpError(404, "not_found");
+}
+
+export default createWorker();

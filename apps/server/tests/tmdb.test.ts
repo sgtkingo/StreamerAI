@@ -9,6 +9,7 @@ import {
   type FetchLike,
 } from "../src/index.js";
 import { fetchReturning, TEST_TOKEN, tmdbConfiguration } from "./fixtures.js";
+import { accountSecretKey } from "../src/stores/account-integrations.js";
 
 describe("TMDB guided connection", () => {
   const apps: ReturnType<typeof createApp>[] = [];
@@ -85,7 +86,11 @@ describe("TMDB guided connection", () => {
       messageCode: "CONNECTED",
       persistence: "memory",
     });
-    expect(await secretStore.has("integration.tmdb.read-token")).toBe(true);
+    expect(
+      await secretStore.has(
+        accountSecretKey("local", "integration.tmdb.read-token"),
+      ),
+    ).toBe(true);
     expect(result.body).not.toContain(TEST_TOKEN);
     expect(result.body).not.toContain("secretRef");
     const catalogBody = catalog.json();
@@ -112,7 +117,11 @@ describe("TMDB guided connection", () => {
     });
 
     expect(result.statusCode).toBe(204);
-    expect(await secretStore.has("integration.tmdb.read-token")).toBe(false);
+    expect(
+      await secretStore.has(
+        accountSecretKey("local", "integration.tmdb.read-token"),
+      ),
+    ).toBe(false);
     expect(await integrationStateStore.get("tmdb")).toBeUndefined();
   });
 
