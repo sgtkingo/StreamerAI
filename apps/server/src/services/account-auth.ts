@@ -13,7 +13,9 @@ import type {
   StreamerDatabase,
 } from "@streamer-ai/database";
 import {
+  AccountSyncOperationSchema,
   PlaybackPreferencesSchema,
+  type AccountSyncOperation,
   type ViewerProfile,
 } from "@streamer-ai/contracts";
 import { toDataURL } from "qrcode";
@@ -35,6 +37,18 @@ const publicAccount = (account: Account) => ({
   name: account.name,
   email: account.email,
   cloudLinked: account.cloudUserId !== null,
+});
+const safeIdentityDetails = (identity: Record<string, unknown>) => ({
+  ...(typeof identity.name === "string" &&
+  identity.name.trim().length > 0 &&
+  identity.name.length <= 120
+    ? { name: identity.name.trim() }
+    : {}),
+  ...(typeof identity.email === "string" &&
+  identity.email.trim().length > 0 &&
+  identity.email.length <= 320
+    ? { email: identity.email.trim() }
+    : {}),
 });
 
 interface Context {
@@ -75,6 +89,28 @@ export interface AccountAuthOptions {
     sync(accountId: string): Promise<SyncStatus>;
     status(accountId: string): SyncStatus;
     setEnabled?(accountId: string, enabled: boolean): Promise<SyncStatus>;
+    convertDeletedAccount?(
+      accountId: string,
+      expectedCloudUserId: string,
+    ): boolean;
+    migrateMergedAccount?(
+      accountId: string,
+      oldCloudUserId: string,
+      newCloudUserId: string,
+      identity: { name?: string; email?: string },
+    ): "updated" | "conflict" | "changed";
+    markMergeConflict?(accountId: string): void;
+    applyMergeTombstones?(
+      accountId: string,
+      expectedCloudUserId: string,
+      operations: AccountSyncOperation[],
+    ): boolean;
+    profileStatus?(accountId: string, profileId: string): { paused: boolean };
+    setProfilePaused?(
+      accountId: string,
+      profileId: string,
+      paused: boolean,
+    ): Promise<{ paused: boolean }>;
   };
 }
 
@@ -143,6 +179,18 @@ export class AccountAuthService {
     string,
     { at: number; job?: Promise<boolean>; valid: boolean }
   >();
+  private readonly deletionChecks = new Map<string, Promise<void>>();
+  private recoveredLocalAccounts(): Account[] {
+    const ids =
+      this.options.database.settings.get<string[]>("account.recoveredLocal") ??
+      [];
+    return ids.flatMap((id) => {
+      const account = this.options.database.accounts.get(id);
+      return account && !account.cloudUserId && account.id !== "local"
+        ? [account]
+        : [];
+    });
+  }
   constructor(private readonly options: AccountAuthOptions) {
     this.enabled = options.serviceUrl !== null;
     this.fetcher = options.fetch ?? fetch;
@@ -248,6 +296,8 @@ export class AccountAuthService {
   async getCredential(
     accountId: string,
   ): Promise<{ token: string; deviceId: string } | null> {
+    const expectedCloudUserId =
+      this.options.database.accounts.get(accountId)?.cloudUserId;
     for (const session of this.options.database.auth.listDevices(accountId)) {
       if (
         session.revokedAt ||
@@ -259,7 +309,46 @@ export class AccountAuthService {
       );
       if (token) return { token, deviceId: session.deviceId };
     }
+    // Expired local sessions cannot authorize the browser, but their retained
+    // cloud tokens can still prove that this account was deleted while offline.
+    for (const session of this.options.database.auth.listDeviceHistory(
+      accountId,
+    )) {
+      if (session.revokedAt) continue;
+      const token = await this.options.secretStore.get(
+        `account.cloud-token.${accountId}.${session.deviceId}`,
+      );
+      if (
+        token &&
+        expectedCloudUserId &&
+        (await this.confirmDeletedAccount(
+          accountId,
+          token,
+          expectedCloudUserId,
+        )) === "deleted"
+      )
+        break;
+    }
     return null;
+  }
+
+  checkDeletedAccount(accountId: string): Promise<void> {
+    const existing = this.deletionChecks.get(accountId);
+    if (existing) return existing;
+    const work = (async () => {
+      const expectedCloudUserId =
+        this.options.database.accounts.get(accountId)?.cloudUserId;
+      if (!expectedCloudUserId) return;
+      const credential = await this.getCredential(accountId);
+      if (credential)
+        await this.confirmDeletedAccount(
+          accountId,
+          credential.token,
+          expectedCloudUserId,
+        );
+    })().finally(() => this.deletionChecks.delete(accountId));
+    this.deletionChecks.set(accountId, work);
+    return work;
   }
   private async cloud(path: string, init: RequestInit = {}, token?: string) {
     if (!this.options.serviceUrl)
@@ -275,7 +364,205 @@ export class AccountAuthService {
       signal: AbortSignal.timeout(15_000),
     });
   }
+
+  private async reconcileMergedIdentity(
+    accountId: string,
+    token: string,
+    expectedCloudUserId: string,
+    currentCloudUserId: string,
+    identityDetails: { name?: string; email?: string },
+  ): Promise<"ok" | "updated" | "conflict" | "mismatch" | "unavailable"> {
+    const current = this.options.database.accounts.get(accountId);
+    if (!current?.cloudUserId) return "unavailable";
+    if (current.cloudUserId === currentCloudUserId) return "ok";
+    if (current.cloudUserId !== expectedCloudUserId) return "unavailable";
+    const proof = await this.cloud(
+      `/v1/account/merged-from/${encodeURIComponent(expectedCloudUserId)}`,
+      {},
+      token,
+    );
+    if (proof.status === 404) return "mismatch";
+    if (!proof.ok || object(await proof.json()).merged !== true)
+      return "unavailable";
+    const result = this.options.sync?.migrateMergedAccount?.(
+      accountId,
+      expectedCloudUserId,
+      currentCloudUserId,
+      identityDetails,
+    );
+    if (result === "conflict") {
+      this.options.sync?.markMergeConflict?.(accountId);
+      return "conflict";
+    }
+    if (result === "updated") return "updated";
+    if (
+      this.options.database.accounts.get(accountId)?.cloudUserId ===
+      currentCloudUserId
+    )
+      return "ok";
+    return "unavailable";
+  }
+
+  /** Verify identity and acknowledge each device before allowing any cloud sync. */
+  async prepareCloudSync(
+    accountId: string,
+    credential: { token: string; deviceId: string },
+    expectedCloudUserId: string,
+  ): Promise<"ok" | "auth" | "conflict" | "unavailable"> {
+    try {
+      const response = await this.cloud("/v1/account", {}, credential.token);
+      if (response.status === 401 || response.status === 403) return "auth";
+      if (!response.ok) return "unavailable";
+      const identity = object(await response.json());
+      if (
+        typeof identity.id !== "string" ||
+        !/^[A-Za-z0-9_-]{1,120}$/.test(identity.id)
+      )
+        return "unavailable";
+      const reconciled = await this.reconcileMergedIdentity(
+        accountId,
+        credential.token,
+        expectedCloudUserId,
+        identity.id,
+        safeIdentityDetails(identity),
+      );
+      if (reconciled !== "ok" && reconciled !== "updated")
+        return reconciled === "mismatch" ? "unavailable" : reconciled;
+      if (
+        this.options.database.accounts.get(accountId)?.cloudUserId !==
+        identity.id
+      )
+        return "unavailable";
+      if (
+        identity.mergeAckRequired !== undefined &&
+        typeof identity.mergeAckRequired !== "boolean"
+      )
+        return "unavailable";
+      if (identity.mergeAckRequired === true || reconciled === "updated") {
+        const operations: AccountSyncOperation[] = [];
+        const cursors = new Set<string>();
+        let next: string | null = null;
+        do {
+          const path =
+            "/v1/account/merge-tombstones" +
+            (next === null ? "" : `?after=${encodeURIComponent(next)}`);
+          const page = await this.cloud(path, {}, credential.token);
+          if (!page.ok) return "unavailable";
+          const data = object(await page.json());
+          if (
+            data.accountId !== identity.id ||
+            !Array.isArray(data.operations) ||
+            data.operations.length > 100 ||
+            !(
+              data.next === null ||
+              (typeof data.next === "string" &&
+                data.next.length > 0 &&
+                data.next.length <= 160)
+            )
+          )
+            return "unavailable";
+          for (const value of data.operations) {
+            const parsed = AccountSyncOperationSchema.safeParse(value);
+            if (
+              !parsed.success ||
+              parsed.data.kind !== "profile" ||
+              parsed.data.action !== "delete" ||
+              parsed.data.payload !== null
+            )
+              return "unavailable";
+            operations.push(parsed.data);
+          }
+          next = data.next as string | null;
+          if (next !== null) {
+            if (cursors.has(next) || cursors.size >= 10_000)
+              return "unavailable";
+            cursors.add(next);
+          }
+        } while (next !== null);
+        if (
+          !this.options.sync?.applyMergeTombstones?.(
+            accountId,
+            identity.id,
+            operations,
+          )
+        )
+          return "unavailable";
+        const ack = await this.cloud(
+          "/v1/account/merge-ack",
+          {
+            method: "POST",
+            body: JSON.stringify({ accountId: identity.id }),
+          },
+          credential.token,
+        );
+        if (!ack.ok || object(await ack.json()).ok !== true)
+          return "unavailable";
+      }
+      return this.options.database.accounts.get(accountId)?.cloudUserId ===
+        identity.id
+        ? "ok"
+        : "unavailable";
+    } catch {
+      return "unavailable";
+    }
+  }
+  /** A 401 alone can mean device revocation; only the dedicated signal proves deletion. */
+  async confirmDeletedAccount(
+    accountId: string,
+    token: string,
+    expectedCloudUserId?: string,
+  ): Promise<"deleted" | "unknown" | "unavailable"> {
+    const current = this.options.database.accounts.get(accountId);
+    if (!current?.cloudUserId) return "deleted";
+    if (expectedCloudUserId && current.cloudUserId !== expectedCloudUserId)
+      return "unavailable";
+    try {
+      const response = await this.cloud(
+        "/v1/device/deletion-status",
+        {},
+        token,
+      );
+      if (response.status === 404) return "unknown";
+      if (
+        response.status !== 410 ||
+        object(await response.json()).error !== "account_deleted"
+      )
+        return "unavailable";
+      const sessions = this.options.database.auth.listDeviceHistory(accountId);
+      const converted =
+        this.options.sync?.convertDeletedAccount?.(
+          accountId,
+          current.cloudUserId,
+        ) ?? false;
+      if (
+        !converted &&
+        this.options.database.accounts.get(accountId)?.cloudUserId
+      )
+        return "unavailable";
+      await Promise.allSettled(
+        sessions.map((session) =>
+          this.options.secretStore.delete(
+            `account.cloud-token.${accountId}.${session.deviceId}`,
+          ),
+        ),
+      );
+      return "deleted";
+    } catch {
+      return "unavailable";
+    }
+  }
   private async validateSession(context: Context): Promise<boolean> {
+    const latest = this.options.database.accounts.get(context.account.id);
+    if (!latest) return false;
+    if (
+      latest.cloudUserId &&
+      latest.cloudUserId !== context.account.cloudUserId
+    )
+      return false;
+    if (latest && !latest.cloudUserId) {
+      context.account = latest;
+      return true;
+    }
     if (!this.enabled || !context.session || !context.account.cloudUserId)
       return true;
     const key = `${context.account.id}:${context.session.deviceId}`;
@@ -290,6 +577,28 @@ export class AccountAuthService {
         if (!token) return false;
         const response = await this.cloud("/v1/account", {}, token);
         if (response.status === 401 || response.status === 403) {
+          const deletion = await this.confirmDeletedAccount(
+            context.account.id,
+            token,
+            context.account.cloudUserId!,
+          );
+          if (deletion === "deleted") {
+            context.account = this.options.database.accounts.getRequired(
+              context.account.id,
+            );
+            return true;
+          }
+          if (deletion === "unavailable") {
+            const current = this.options.database.accounts.get(
+              context.account.id,
+            );
+            if (!current) return false;
+            if (!current.cloudUserId) {
+              context.account = current;
+              return true;
+            }
+            return current.cloudUserId === context.account.cloudUserId;
+          }
           this.options.database.auth.revokeDevice(
             context.account.id,
             context.session!.deviceId,
@@ -301,7 +610,27 @@ export class AccountAuthService {
         }
         if (!response.ok) return true; // Cloud outages do not revoke a previously verified, unexpired local session.
         const identity = object(await response.json());
-        return identity.id === context.account.cloudUserId;
+        if (identity.id === context.account.cloudUserId) return true;
+        if (
+          typeof identity.id !== "string" ||
+          !/^[A-Za-z0-9_-]{1,120}$/.test(identity.id)
+        )
+          return false;
+        const result = await this.reconcileMergedIdentity(
+          context.account.id,
+          token,
+          context.account.cloudUserId!,
+          identity.id,
+          safeIdentityDetails(identity),
+        );
+        if (result === "ok" || result === "updated") {
+          context.account = this.options.database.accounts.getRequired(
+            context.account.id,
+          );
+          return true;
+        }
+        // Preserve access to local data while a conflict or transient network error is resolved.
+        return result === "conflict" || result === "unavailable";
       } catch {
         return true;
       }
@@ -539,6 +868,9 @@ export class AccountAuthService {
         enabled: this.enabled,
         cloudConfigured: this.enabled,
         localAvailable: true,
+        recoveredLocalAccounts: this.recoveredLocalAccounts().map(
+          (account) => ({ id: sha(account.id) }),
+        ),
         authenticated: context !== null,
         account: context ? publicAccount(context.account) : null,
       };
@@ -559,7 +891,19 @@ export class AccountAuthService {
           "SIGN_OUT_FIRST",
           "Sign out of the online account before entering the local household.",
         );
-      const account = this.options.database.accounts.getHousehold();
+      const selectedId = object(request.body).recoveredAccountId;
+      const recovered = this.recoveredLocalAccounts();
+      const account =
+        typeof selectedId === "string"
+          ? recovered.find((item) => sha(item.id) === selectedId)
+          : this.options.database.accounts.getHousehold();
+      if (!account)
+        return error(
+          reply,
+          404,
+          "LOCAL_ACCOUNT_UNAVAILABLE",
+          "This local account is no longer available.",
+        );
       this.options.database.settings.set("account.localEntryUsed", true);
       if (this.options.database.profiles.count(account.id) === 0)
         this.options.database.profiles.create({
@@ -883,7 +1227,7 @@ export class AccountAuthService {
           pairing.adoptAccountId,
         );
         if (pairing.adoptAccountId) {
-          for (const session of this.options.database.auth.listDevices(
+          for (const session of this.options.database.auth.listDeviceHistory(
             account.id,
           ))
             this.options.database.auth.revokeDevice(
@@ -1112,6 +1456,49 @@ export class AccountAuthService {
         );
       return this.options.sync.setEnabled(account.id, enabled);
     });
+    app.get<{ Params: { profileId: string } }>(
+      "/api/v1/account/sync/profile/:profileId",
+      async (request, reply) => {
+        const account = this.account(request);
+        if (!account.cloudUserId || !this.options.sync?.profileStatus)
+          return error(
+            reply,
+            409,
+            "CLOUD_NOT_CONFIGURED",
+            "Connect this account before managing profile synchronization.",
+          );
+        return this.options.sync.profileStatus(
+          account.id,
+          request.params.profileId,
+        );
+      },
+    );
+    app.put<{ Params: { profileId: string } }>(
+      "/api/v1/account/sync/profile/:profileId",
+      async (request, reply) => {
+        const account = this.account(request);
+        const paused = object(request.body).paused;
+        if (typeof paused !== "boolean")
+          return error(
+            reply,
+            400,
+            "INVALID_SYNC_SETTING",
+            "Choose whether to pause this profile.",
+          );
+        if (!account.cloudUserId || !this.options.sync?.setProfilePaused)
+          return error(
+            reply,
+            409,
+            "CLOUD_NOT_CONFIGURED",
+            "Connect this account before managing profile synchronization.",
+          );
+        return this.options.sync.setProfilePaused(
+          account.id,
+          request.params.profileId,
+          paused,
+        );
+      },
+    );
     app.post<{ Params: { profileId: string } }>(
       "/api/v1/profiles/:profileId/unlock",
       async (request, reply) => {

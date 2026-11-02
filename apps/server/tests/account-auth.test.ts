@@ -1,4 +1,9 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { randomUUID } from "node:crypto";
+import {
+  DEFAULT_APPEARANCE_PREFERENCES,
+  DEFAULT_PLAYBACK_PREFERENCES,
+} from "@streamer-ai/contracts";
 import {
   openStreamerDatabase,
   type StreamerDatabase,
@@ -6,6 +11,7 @@ import {
 import type { FastifyInstance } from "fastify";
 import { createApp } from "../src/app.js";
 import { NonPersistentMemorySecretStore } from "../src/stores/secret-store.js";
+import { remoteApiSecretKey } from "../src/integrations/remote-api-agent.js";
 import { readRuntimeConfig } from "../src/runtime-config.js";
 
 const apps: FastifyInstance[] = [];
@@ -30,6 +36,10 @@ function cloud() {
   let pending = false;
   let now = Date.now();
   const tokens = new Map<string, string>();
+  const pushes: {
+    owner: string | undefined;
+    operations: { kind: string; payload: unknown }[];
+  }[] = [];
   const database = openStreamerDatabase({
     filename: ":memory:",
     clock: () => new Date(now),
@@ -37,9 +47,23 @@ function cloud() {
   databases.push(database);
   const secrets = new NonPersistentMemorySecretStore();
   let revoked = false;
+  let deleted = false;
+  let deletionStatusAvailable = true;
   let connectionsAvailable = true;
+  let cloudAvailable = true;
+  let ackAvailable = true;
+  let omitMergeFlag = false;
+  const aliases = new Map<string, string>();
+  const pendingAcks = new Set<string>();
+  const syncRequests: string[] = [];
+  const acknowledgements: string[] = [];
+  let tombstonePages: unknown[][] = [[]];
+  let snapshotOperations: unknown[] = [];
+  let tombstoneOwner: string | null = null;
+  const tombstoneRequests: string[] = [];
   const fetcher: typeof fetch = async (input, init) => {
     const path = new URL(String(input)).pathname;
+    if (!cloudAvailable) throw new Error("Cloud offline");
     const body = init?.body
       ? (JSON.parse(String(init.body)) as Record<string, unknown>)
       : {};
@@ -80,13 +104,47 @@ function cloud() {
       });
     }
     if (path === "/v1/account")
-      return revoked
+      return revoked || (deleted && tokens.get(token) === "owner-one")
         ? Response.json({ error: "revoked" }, { status: 401 })
         : Response.json({
             id: tokens.get(token),
             email: `${tokens.get(token)}@example.com`,
             name: tokens.get(token),
+            ...(omitMergeFlag
+              ? {}
+              : { mergeAckRequired: pendingAcks.has(token) }),
           });
+    if (path.startsWith("/v1/account/merged-from/")) {
+      const old = decodeURIComponent(
+        path.slice("/v1/account/merged-from/".length),
+      );
+      return aliases.get(old) === tokens.get(token)
+        ? Response.json({ merged: true })
+        : Response.json({ error: "not_found" }, { status: 404 });
+    }
+    if (path === "/v1/account/merge-tombstones") {
+      const after = new URL(String(input)).searchParams.get("after");
+      tombstoneRequests.push(after ?? "");
+      const index = after === null ? 0 : Number(after);
+      return Response.json({
+        accountId: tombstoneOwner ?? tokens.get(token),
+        operations: tombstonePages[index] ?? [],
+        next: index + 1 < tombstonePages.length ? String(index + 1) : null,
+      });
+    }
+    if (path === "/v1/account/merge-ack") {
+      if (!ackAvailable || body.accountId !== tokens.get(token))
+        return Response.json({ error: "merge_changed" }, { status: 409 });
+      acknowledgements.push(String(body.accountId));
+      pendingAcks.delete(token);
+      return Response.json({ ok: true });
+    }
+    if (path === "/v1/device/deletion-status")
+      return !deletionStatusAvailable
+        ? Response.json({ error: "offline" }, { status: 503 })
+        : deleted && tokens.get(token) === "owner-one"
+          ? Response.json({ error: "account_deleted" }, { status: 410 })
+          : Response.json({ error: "not_found" }, { status: 404 });
     if (path === "/v1/account/connections")
       return connectionsAvailable
         ? Response.json({
@@ -110,13 +168,23 @@ function cloud() {
         : Response.json({ error: "offline" }, { status: 503 });
     if (init?.method === "DELETE" && path.startsWith("/v1/devices/"))
       return new Response(null, { status: 204 });
+    if (path.startsWith("/v1/sync/")) syncRequests.push(path);
     if (path === "/v1/sync/snapshot" || path === "/v1/sync/pull")
-      return Response.json({ cursor: "0", operations: [], hasMore: false });
-    if (path === "/v1/sync/push")
+      return Response.json({
+        cursor: "0",
+        operations: path === "/v1/sync/snapshot" ? snapshotOperations : [],
+        hasMore: false,
+      });
+    if (path === "/v1/sync/push") {
+      pushes.push({
+        owner: tokens.get(token),
+        operations: body.operations as { kind: string; payload: unknown }[],
+      });
       return Response.json({
         cursor: "1",
         acceptedIds: (body.operations as { id: string }[]).map((op) => op.id),
       });
+    }
     throw new Error("Unexpected cloud request.");
   };
   const app = createApp({
@@ -166,6 +234,11 @@ function cloud() {
   return {
     app,
     database,
+    secrets,
+    pushes,
+    syncRequests,
+    acknowledgements,
+    tombstoneRequests,
     login,
     advance: (ms: number) => {
       now += ms;
@@ -173,11 +246,58 @@ function cloud() {
     revoke: () => {
       revoked = true;
     },
+    deleteCloud: () => {
+      deleted = true;
+    },
+    setDeletionStatusAvailable: (value: boolean) => {
+      deletionStatusAvailable = value;
+    },
     setConnectionsAvailable: (value: boolean) => {
       connectionsAvailable = value;
     },
     setIdentity: (user: string) => {
       identity = user;
+    },
+    merge: (from: string, to: string) => {
+      aliases.set(from, to);
+      for (const [token, owner] of tokens)
+        if (owner === from) {
+          tokens.set(token, to);
+          pendingAcks.add(token);
+        }
+    },
+    rebindWithoutProof: (from: string, to: string) => {
+      for (const [token, owner] of tokens)
+        if (owner === from) tokens.set(token, to);
+    },
+    setCloudAvailable: (value: boolean) => {
+      cloudAvailable = value;
+    },
+    setAckAvailable: (value: boolean) => {
+      ackAvailable = value;
+    },
+    setTombstonePages: (pages: unknown[][], owner: string | null = null) => {
+      tombstonePages = pages;
+      tombstoneOwner = owner;
+    },
+    setSnapshotOperations: (operations: unknown[]) => {
+      snapshotOperations = operations;
+    },
+    restart: () => {
+      const restarted = createApp({
+        environment: "test",
+        logger: false,
+        database,
+        secretStore: secrets,
+        accountServiceUrl: "https://accounts.example",
+        accountFetch: fetcher,
+        now: () => new Date(now),
+      });
+      apps.push(restarted);
+      return restarted;
+    },
+    setOmitMergeFlag: (value: boolean) => {
+      omitMergeFlag = value;
     },
     setPending: (value: boolean) => {
       pending = value;
@@ -186,6 +306,517 @@ function cloud() {
 }
 
 describe("account authentication and profile boundaries", () => {
+  it("allows signing into the surviving account after a merge collision without exposing old profile credentials", async () => {
+    const { app, database, secrets, login, merge, setSnapshotOperations } =
+      cloud();
+    const sourceCookie = await login("owner-one");
+    await login("owner-two");
+    const source = database.accounts.getByCloudUserId("owner-one")!;
+    const target = database.accounts.getByCloudUserId("owner-two")!;
+    const original = database.profiles.list(source.id)[0]!;
+    database.profiles.setPinHash(
+      original.id,
+      "scrypt:encoded-test-hash-".padEnd(64, "0"),
+    );
+    await secrets.set(
+      remoteApiSecretKey(original.id, "openai"),
+      "original-private-key",
+    );
+    const { audioOutputDeviceId: _device, ...playback } =
+      DEFAULT_PLAYBACK_PREFERENCES;
+    setSnapshotOperations([
+      {
+        id: randomUUID(),
+        profileId: original.syncId,
+        entityId: original.syncId,
+        kind: "profile",
+        action: "upsert",
+        updatedAt: new Date().toISOString(),
+        payload: {
+          name: "Transferred viewer",
+          locale: "en",
+          genres: [],
+          playback,
+          appearance: DEFAULT_APPEARANCE_PREFERENCES,
+          onboardingComplete: true,
+        },
+      },
+    ]);
+    merge("owner-one", "owner-two");
+    const conflict = await app.inject({
+      method: "POST",
+      url: "/api/v1/account/sync",
+      headers: { cookie: sourceCookie },
+    });
+    expect(conflict.json()).toMatchObject({
+      status: "error",
+      error: "CLOUD_ACCOUNT_MERGE_CONFLICT",
+    });
+    await app.inject({
+      method: "POST",
+      url: "/api/v1/auth/logout",
+      headers: { cookie: sourceCookie },
+    });
+    const survivorCookie = await login("owner-two");
+    const sync = await app.inject({
+      method: "POST",
+      url: "/api/v1/account/sync",
+      headers: { cookie: survivorCookie },
+    });
+    expect(sync.json().status).not.toBe("error");
+    const imported = database.profiles.getBySyncId(original.syncId)!;
+    expect(imported).toMatchObject({
+      accountId: target.id,
+      name: "Transferred viewer",
+      pinEnabled: false,
+    });
+    expect(imported.id).not.toBe(original.id);
+    expect(await secrets.get(remoteApiSecretKey(original.id, "openai"))).toBe(
+      "original-private-key",
+    );
+    const credential = await app.inject({
+      url: `/api/v1/inference/api-credential?profileId=${encodeURIComponent(imported.id)}&provider=openai`,
+      headers: { cookie: survivorCookie },
+    });
+    expect(credential.json()).toMatchObject({
+      provider: "openai",
+      configured: false,
+    });
+  });
+  it("persists missed transfer tombstones across restart, respects profile pause and preserves other accounts", async () => {
+    const {
+      app,
+      database,
+      login,
+      merge,
+      setAckAvailable,
+      setTombstonePages,
+      restart,
+      tombstoneRequests,
+      acknowledgements,
+      pushes,
+    } = cloud();
+    const signed = await login("owner-one");
+    await login("owner-two");
+    const headers = { cookie: signed };
+    const owner = database.accounts.getByCloudUserId("owner-one")!;
+    const other = database.accounts.getByCloudUserId("owner-two")!;
+    const profile = database.profiles.list(owner.id)[0]!;
+    const foreign = database.profiles.list(other.id)[0]!;
+    await app.inject({
+      method: "PUT",
+      url: `/api/v1/account/sync/profile/${profile.id}`,
+      headers,
+      payload: { paused: true },
+    });
+    database.profiles.update(profile.id, { name: "Offline changes" });
+    const tombstone = (id: string) => ({
+      id: randomUUID(),
+      profileId: id,
+      entityId: id,
+      kind: "profile",
+      action: "delete",
+      updatedAt: new Date(0).toISOString(),
+      payload: null,
+    });
+    setTombstonePages([
+      [tombstone(profile.syncId)],
+      [tombstone(foreign.syncId)],
+    ]);
+    merge("owner-one", "owner-merged");
+    setAckAvailable(false);
+    const failed = await app.inject({
+      method: "POST",
+      url: "/api/v1/account/sync",
+      headers,
+    });
+    expect(failed.json().status).toBe("error");
+    expect(tombstoneRequests).toEqual(["", "1"]);
+    expect(acknowledgements).toHaveLength(0);
+    expect(database.profiles.get(profile.id)?.name).toBe("Offline changes");
+    expect(database.profiles.get(foreign.id)?.accountId).toBe(other.id);
+
+    const appAfterRestart = restart();
+    setAckAvailable(true);
+    const retried = await appAfterRestart.inject({
+      method: "POST",
+      url: "/api/v1/account/sync",
+      headers,
+    });
+    expect(retried.json().status).not.toBe("error");
+    expect(acknowledgements).toEqual(["owner-merged"]);
+    expect(database.profiles.get(profile.id)).not.toBeNull();
+    expect(database.profiles.get(foreign.id)?.accountId).toBe(other.id);
+    const beforeResume = pushes.length;
+    await appAfterRestart.inject({
+      method: "PUT",
+      url: `/api/v1/account/sync/profile/${profile.id}`,
+      headers,
+      payload: { paused: false },
+    });
+    await appAfterRestart.inject({
+      method: "POST",
+      url: "/api/v1/account/sync",
+      headers,
+    });
+    expect(database.profiles.get(profile.id)).toBeNull();
+    expect(database.profiles.get(foreign.id)?.accountId).toBe(other.id);
+    expect(JSON.stringify(pushes.slice(beforeResume))).not.toContain(
+      "Offline changes",
+    );
+  });
+
+  it("rejects invalid tombstones or a different cloud identity without applying or acknowledging any page", async () => {
+    const { app, database, login, merge, setTombstonePages, acknowledgements } =
+      cloud();
+    const signed = await login("owner-one");
+    const headers = { cookie: signed };
+    const profile = database.profiles.list(database.accounts.getLocal().id)[0]!;
+    const deletion = {
+      id: randomUUID(),
+      profileId: profile.syncId,
+      entityId: profile.syncId,
+      kind: "profile",
+      action: "delete",
+      updatedAt: new Date().toISOString(),
+      payload: null,
+    };
+    merge("owner-one", "owner-merged");
+    setTombstonePages([[deletion], [{ ...deletion, action: "upsert" }]]);
+    const invalid = await app.inject({
+      method: "POST",
+      url: "/api/v1/account/sync",
+      headers,
+    });
+    expect(invalid.json().status).toBe("error");
+    expect(database.profiles.get(profile.id)).not.toBeNull();
+    expect(acknowledgements).toHaveLength(0);
+    setTombstonePages([[deletion]], "different-owner");
+    const wrongAccount = await app.inject({
+      method: "POST",
+      url: "/api/v1/account/sync",
+      headers,
+    });
+    expect(wrongAccount.json().status).toBe("error");
+    expect(database.profiles.get(profile.id)).not.toBeNull();
+    expect(acknowledgements).toHaveLength(0);
+  });
+  it("reconciles a verified merge before sync and preserves profile pause and queued changes", async () => {
+    const {
+      app,
+      database,
+      login,
+      merge,
+      syncRequests,
+      acknowledgements,
+      setAckAvailable,
+      pushes,
+    } = cloud();
+    const signed = await login("owner-one");
+    const headers = { cookie: signed };
+    const profiles = await app.inject({ url: "/api/v1/profiles", headers });
+    const profileId = profiles.json().items[0].id as string;
+    await app.inject({ method: "POST", url: "/api/v1/account/sync", headers });
+    await app.inject({
+      method: "PUT",
+      url: `/api/v1/account/sync/profile/${profileId}`,
+      headers,
+      payload: { paused: true },
+    });
+    database.profiles.update(profileId, { name: "Saved while paused" });
+    const initialRequests = syncRequests.length;
+    merge("owner-one", "owner-merged");
+    setAckAvailable(false);
+    const blocked = await app.inject({
+      method: "POST",
+      url: "/api/v1/account/sync",
+      headers,
+    });
+    expect(blocked.json().status).toBe("error");
+    expect(database.accounts.getLocal().cloudUserId).toBe("owner-merged");
+    expect(database.accounts.getLocal()).toMatchObject({
+      name: "owner-merged",
+      email: "owner-merged@example.com",
+    });
+    expect(syncRequests.length).toBe(initialRequests);
+    expect(
+      (
+        await app.inject({
+          url: `/api/v1/account/sync/profile/${profileId}`,
+          headers,
+        })
+      ).json(),
+    ).toEqual({ paused: true });
+    setAckAvailable(true);
+    const after = await app.inject({
+      method: "POST",
+      url: "/api/v1/account/sync",
+      headers,
+    });
+    expect(after.json().status).not.toBe("error");
+    expect(acknowledgements).toContain("owner-merged");
+    expect(syncRequests.slice(initialRequests)[0]).toBe("/v1/sync/snapshot");
+    expect(
+      pushes
+        .flatMap((batch) => batch.operations)
+        .some((op) => JSON.stringify(op).includes("Saved while paused")),
+    ).toBe(false);
+    await app.inject({
+      method: "PUT",
+      url: `/api/v1/account/sync/profile/${profileId}`,
+      headers,
+      payload: { paused: false },
+    });
+    await app.inject({ method: "POST", url: "/api/v1/account/sync", headers });
+    expect(
+      pushes
+        .flatMap((batch) => batch.operations)
+        .some((op) => JSON.stringify(op).includes("Saved while paused")),
+    ).toBe(true);
+    const completedRequests = syncRequests.length;
+    const completedAcks = acknowledgements.length;
+    setAckAvailable(false);
+    const unchanged = await app.inject({
+      method: "POST",
+      url: "/api/v1/account/sync",
+      headers,
+    });
+    expect(unchanged.json().status).not.toBe("error");
+    expect(syncRequests.length).toBeGreaterThan(completedRequests);
+    expect(acknowledgements.length).toBe(completedAcks);
+  });
+
+  it("keeps both local accounts and blocks synchronization when a merged UID is already in use", async () => {
+    const { app, database, login, merge, syncRequests } = cloud();
+    const owner = await login("owner-one");
+    await login("owner-two");
+    const first = database.accounts.getByCloudUserId("owner-one")!;
+    const second = database.accounts.getByCloudUserId("owner-two")!;
+    merge("owner-one", "owner-two");
+    const count = syncRequests.length;
+    const result = await app.inject({
+      method: "POST",
+      url: "/api/v1/account/sync",
+      headers: { cookie: owner },
+    });
+    expect(result.json()).toMatchObject({
+      status: "error",
+      error: "CLOUD_ACCOUNT_MERGE_CONFLICT",
+    });
+    expect(syncRequests.length).toBe(count);
+    expect(database.accounts.get(first.id)?.cloudUserId).toBe("owner-one");
+    expect(database.accounts.get(second.id)?.cloudUserId).toBe("owner-two");
+  });
+
+  it("does not sync if the cloud identity cannot be verified", async () => {
+    const { app, login, setCloudAvailable, syncRequests } = cloud();
+    const owner = await login("owner-one");
+    const count = syncRequests.length;
+    setCloudAvailable(false);
+    const result = await app.inject({
+      method: "POST",
+      url: "/api/v1/account/sync",
+      headers: { cookie: owner },
+    });
+    expect(result.json()).toMatchObject({
+      status: "error",
+      error: "CLOUD_SYNC_UNAVAILABLE",
+    });
+    expect(syncRequests.length).toBe(count);
+  });
+
+  it("continues syncing against an older worker when the identity matches", async () => {
+    const { app, login, setOmitMergeFlag, setAckAvailable, syncRequests } =
+      cloud();
+    const signed = await login("owner-one");
+    setOmitMergeFlag(true);
+    setAckAvailable(false);
+    const count = syncRequests.length;
+    const result = await app.inject({
+      method: "POST",
+      url: "/api/v1/account/sync",
+      headers: { cookie: signed },
+    });
+    expect(result.json().status).not.toBe("error");
+    expect(syncRequests.length).toBeGreaterThan(count);
+  });
+
+  it("never switches local identity or syncs when the cloud cannot prove the merge", async () => {
+    const { app, database, login, rebindWithoutProof, syncRequests } = cloud();
+    const signed = await login("owner-one");
+    rebindWithoutProof("owner-one", "unrelated-owner");
+    const count = syncRequests.length;
+    const result = await app.inject({
+      method: "POST",
+      url: "/api/v1/account/sync",
+      headers: { cookie: signed },
+    });
+    expect(result.statusCode).toBe(401);
+    expect(database.accounts.getLocal().cloudUserId).toBe("owner-one");
+    expect(syncRequests.length).toBe(count);
+  });
+  it("does not convert an account when the deletion check is unavailable", async () => {
+    const { app, login, advance, revoke, setDeletionStatusAvailable } = cloud();
+    const signed = await login("owner-one");
+    revoke();
+    setDeletionStatusAvailable(false);
+    advance(61_000);
+    const status = await app.inject({
+      url: "/api/v1/auth/status",
+      headers: { cookie: signed },
+    });
+    expect(status.json()).toMatchObject({
+      authenticated: true,
+      account: { cloudLinked: true },
+    });
+  });
+  it("limits profile sync controls to the owning account", async () => {
+    const { app, login } = cloud();
+    const owner = await login("owner-one");
+    const ownerHeaders = { cookie: owner };
+    const profiles = await app.inject({
+      url: "/api/v1/profiles",
+      headers: ownerHeaders,
+    });
+    const id = profiles.json().items[0].id as string;
+    const path = `/api/v1/account/sync/profile/${encodeURIComponent(id)}`;
+    expect(
+      (await app.inject({ url: path, headers: ownerHeaders })).json(),
+    ).toEqual({ paused: false });
+    expect(
+      (
+        await app.inject({
+          method: "PUT",
+          url: path,
+          headers: ownerHeaders,
+          payload: { paused: true },
+        })
+      ).json(),
+    ).toEqual({ paused: true });
+    expect(
+      (await app.inject({ url: path, headers: ownerHeaders })).json(),
+    ).toEqual({ paused: true });
+    const other = await login("owner-two");
+    expect(
+      (await app.inject({ url: path, headers: { cookie: other } })).statusCode,
+    ).toBe(404);
+    expect(
+      (
+        await app.inject({
+          method: "PUT",
+          url: path,
+          headers: { cookie: other },
+          payload: { paused: false },
+        })
+      ).statusCode,
+    ).toBe(404);
+  });
+  it("converts only a confirmed deleted cloud account into a local account and permits explicit re-pairing", async () => {
+    const { app, database, login, advance, deleteCloud, pushes } = cloud();
+    const signed = await login("owner-one");
+    const headers = { cookie: signed };
+    const before = (
+      await app.inject({ url: "/api/v1/profiles", headers })
+    ).json().items;
+    const profileId = before[0].id as string;
+    database.profiles.update(profileId, { name: "Keep this profile" });
+    deleteCloud();
+    advance(61_000);
+    const status = await app.inject({ url: "/api/v1/auth/status", headers });
+    expect(status.json()).toMatchObject({
+      authenticated: true,
+      account: { cloudLinked: false },
+    });
+    expect(database.profiles.getRequired(profileId).name).toBe(
+      "Keep this profile",
+    );
+    expect(
+      (await app.inject({ url: "/api/v1/account", headers })).json().sync
+        .configured,
+    ).toBe(false);
+    expect(
+      (await app.inject({ url: "/api/v1/profiles", headers })).statusCode,
+    ).toBe(200);
+    const paired = await login("owner-two", {
+      cookie: signed,
+      adoptLocalAccount: true,
+    });
+    expect(
+      (
+        await app.inject({
+          url: "/api/v1/auth/status",
+          headers: { cookie: paired },
+        })
+      ).json().account.cloudLinked,
+    ).toBe(true);
+    expect(database.profiles.getRequired(profileId).name).toBe(
+      "Keep this profile",
+    );
+    await app.inject({
+      method: "POST",
+      url: "/api/v1/account/sync",
+      headers: { cookie: paired },
+    });
+    expect(
+      pushes.some(
+        (push) =>
+          push.owner === "owner-two" &&
+          push.operations.some(
+            (operation) =>
+              operation.kind === "profile" &&
+              JSON.stringify(operation.payload).includes("Keep this profile"),
+          ),
+      ),
+    ).toBe(true);
+  });
+  it("lets an expired session choose a converted household without merging an existing local household", async () => {
+    const { app, database, login, advance, deleteCloud } = cloud();
+    const local = await app.inject({
+      method: "POST",
+      url: "/api/v1/auth/local",
+      payload: {},
+    });
+    const localId = local.json().account.id as string;
+    const signed = await login("owner-one");
+    const original = (
+      await app.inject({
+        url: "/api/v1/auth/status",
+        headers: { cookie: signed },
+      })
+    ).json().account.id as string;
+    expect(original).not.toBe(localId);
+    const profileId = database.profiles.list(original)[0]!.id;
+    deleteCloud();
+    advance(61_000);
+    await app.inject({
+      url: "/api/v1/auth/status",
+      headers: { cookie: signed },
+    });
+    advance(31 * 24 * 60 * 60_000);
+    const status = (await app.inject("/api/v1/auth/status")).json();
+    expect(status.recoveredLocalAccounts).toHaveLength(1);
+    const recoveredId = status.recoveredLocalAccounts[0].id as string;
+    expect(recoveredId).not.toBe(original);
+    const recovered = await app.inject({
+      method: "POST",
+      url: "/api/v1/auth/local",
+      payload: { recoveredAccountId: recoveredId },
+    });
+    expect(recovered.json().account.id).toBe(original);
+    expect(database.profiles.getRequired(profileId).accountId).toBe(original);
+    const defaultLocal = await app.inject({
+      method: "POST",
+      url: "/api/v1/auth/local",
+      payload: {},
+    });
+    expect(defaultLocal.json().account.id).toBe(localId);
+    const invalid = await app.inject({
+      method: "POST",
+      url: "/api/v1/auth/local",
+      payload: { recoveredAccountId: "arbitrary" },
+    });
+    expect(invalid.statusCode).toBe(404);
+  });
   it("reports account synchronization in the integration catalog and respects pause and account isolation", async () => {
     const { app, login } = cloud();
     const signed = await login("owner-one");

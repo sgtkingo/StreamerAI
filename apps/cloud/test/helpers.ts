@@ -4,7 +4,7 @@ import Database from "better-sqlite3";
 import { createWorker } from "../src/index.js";
 import type { Account, Env, SessionReader } from "../src/types.js";
 
-export const origin = "https://streamer-ai.streamer-ai.workers.dev";
+export const origin = "https://cloud.streamer-ai.workers.dev";
 export const accounts: Record<string, Account> = {
   a: { id: "account-a", email: "alice@example.test", name: "Alice" },
   b: { id: "account-b", email: "bob@example.test", name: "Bob" },
@@ -19,6 +19,8 @@ export function fixture() {
     "0002_sync.sql",
     "0003_sync_retention.sql",
     "0004_email_login.sql",
+    "0005_deleted_device.sql",
+    "0006_account_merge.sql",
   ]) {
     sqlite.exec(
       readFileSync(

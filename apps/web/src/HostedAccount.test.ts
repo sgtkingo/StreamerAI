@@ -216,6 +216,7 @@ it("shows existing Google enrollment and displays a resend limit next to its e-m
       if (path === "/v1/devices") return Response.json({ devices: [] });
       if (path === "/v1/profiles") return Response.json({ profiles: [] });
       if (path === "/v1/transfers") return Response.json({ transfers: [] });
+      if (path === "/v1/merges") return Response.json({ merges: [] });
       if (path === "/v1/device/pending") return Response.json({ pairings: [] });
       throw new Error("Unexpected request");
     }),
@@ -269,6 +270,7 @@ function portalFetcher(failure?: string) {
     if (path === "/v1/device/pending") return Response.json({ pairings: [] });
     if (path === "/v1/profiles") return Response.json({ profiles: [] });
     if (path === "/v1/transfers") return Response.json({ transfers: [] });
+    if (path === "/v1/merges") return Response.json({ merges: [] });
     throw new Error("Unexpected request " + path);
   });
 }
@@ -282,6 +284,117 @@ function enableDialog() {
   };
   return dialog;
 }
+
+it("requires an explicit profile selection before accepting an account merge", async () => {
+  const base = portalFetcher();
+  const profiles = Array.from({ length: 6 }, (_, index) => ({
+    id: `profile-${index}`,
+    name: `Profile ${index}`,
+    account_id: index < 3 ? "owner-a" : "owner-b",
+  }));
+  const fetcher = vi.fn(async (path: string, options?: RequestInit) => {
+    if (path === "/v1/merges")
+      return Response.json({
+        merges: [
+          {
+            id: "merge-1",
+            source_email: "one@example.test",
+            target_email: "two@example.test",
+            target_account_id: "owner-a",
+            incoming: true,
+            profiles,
+          },
+        ],
+      });
+    if (path === "/v1/merges/merge-1/decision")
+      return Response.json({ ok: true, accountId: "owner-a" });
+    return base(path, options);
+  });
+  vi.stubGlobal("fetch", fetcher);
+  portal();
+  const dialog = document.getElementById(
+    "profiles-dialog",
+  ) as HTMLDialogElement;
+  dialog.showModal = () => dialog.setAttribute("open", "");
+  dialog.close = () => {
+    dialog.removeAttribute("open");
+    dialog.dispatchEvent(new Event("close"));
+  };
+  await waitFor(() =>
+    expect(document.getElementById("transfers")).toHaveTextContent(
+      "Sloučení účtů",
+    ),
+  );
+  const review = Array.from(document.querySelectorAll("button")).find(
+    (button) => button.textContent === "Zkontrolovat sloučení",
+  )!;
+  review.click();
+  expect(dialog).toHaveAttribute("open");
+  expect(fetcher).not.toHaveBeenCalledWith(
+    "/v1/merges/merge-1/decision",
+    expect.anything(),
+  );
+  const boxes = Array.from(
+    dialog.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'),
+  );
+  boxes.slice(0, 5).forEach((box) => box.click());
+  document.getElementById("profiles-confirm")!.click();
+  await waitFor(() =>
+    expect(fetcher).toHaveBeenCalledWith(
+      "/v1/merges/merge-1/decision",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          approve: true,
+          profileIds: profiles.slice(0, 5).map((p) => p.id),
+          expectedProfileIds: profiles.map((p) => p.id),
+        }),
+      }),
+    ),
+  );
+});
+
+it("requires confirmation before deleting the cloud account and offers reauthentication when needed", async () => {
+  const base = portalFetcher();
+  const fetcher = vi.fn(async (path: string, options?: RequestInit) => {
+    if (path === "/v1/account" && options?.method === "DELETE")
+      return Response.json({ error: "reauth_required" }, { status: 403 });
+    return base(path, options);
+  });
+  vi.stubGlobal("fetch", fetcher);
+  portal();
+  const dialog = enableDialog();
+  await waitFor(() =>
+    expect(document.getElementById("delete-account")).toBeEnabled(),
+  );
+  // Wait for the account page to finish installing its action handlers.
+  await waitFor(() =>
+    expect(
+      document.querySelector('[aria-label="Odebrat zařízení Obývák"]'),
+    ).not.toBeNull(),
+  );
+  document.getElementById("delete-account")!.click();
+  expect(dialog).toHaveTextContent(
+    "Místní data na domácích serverech zůstanou zachována",
+  );
+  document.getElementById("confirm-cancel")!.click();
+  await Promise.resolve();
+  expect(fetcher).not.toHaveBeenCalledWith(
+    "/v1/account",
+    expect.objectContaining({ method: "DELETE" }),
+  );
+  document.getElementById("delete-account")!.click();
+  document.getElementById("confirm-action")!.click();
+  await waitFor(() =>
+    expect(document.getElementById("delete-reauth-help")).not.toHaveAttribute(
+      "hidden",
+    ),
+  );
+  expect(document.getElementById("delete-reauthenticate")).toHaveAttribute(
+    "href",
+    "/login?account_id=owner-a",
+  );
+});
 
 it("asks before removing a device and keeps it when cancelled", async () => {
   const fetcher = portalFetcher();

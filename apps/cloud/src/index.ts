@@ -17,6 +17,7 @@ import { pull, push, retentionStatements, snapshot } from "./sync.js";
 import {
   acceptTransfer,
   createTransfer,
+  declineTransfer,
   listProfiles,
   listTransfers,
 } from "./transfers.js";
@@ -24,6 +25,16 @@ import type { Clock, Env, SessionReader } from "./types.js";
 import { emailLogin, manageEmailLogin } from "./email-login.js";
 import { mailConfigured } from "./mail.js";
 import { listConnections, removeLoginMethod } from "./connections.js";
+import { deleteAccount, deletionStatus } from "./account-deletion.js";
+import { emailApproval, emailApprovalError } from "./email-approval.js";
+import {
+  acknowledgeMerge,
+  createMerge,
+  decideMerge,
+  listMerges,
+  mergedFrom,
+  mergeTombstones,
+} from "./merges.js";
 
 const authRoutes: Record<string, string[]> = {
   "/api/auth/sign-in/social": ["POST"],
@@ -87,11 +98,14 @@ export function createWorker(
         env.DB.prepare(
           "DELETE FROM cloud_device_grant WHERE expires_at < ?",
         ).bind(now - 86_400_000),
-        env.DB.prepare("DELETE FROM cloud_device WHERE expires_at < ?").bind(
-          now - 7 * 86_400_000,
-        ),
+        env.DB.prepare(
+          "DELETE FROM cloud_device WHERE revoked_at IS NOT NULL AND expires_at < ?",
+        ).bind(now - 7 * 86_400_000),
         env.DB.prepare(
           "DELETE FROM cloud_transfer WHERE expires_at < ? AND accepted_at IS NULL",
+        ).bind(now - 7 * 86_400_000),
+        env.DB.prepare(
+          "DELETE FROM cloud_account_merge WHERE expires_at < ? AND accepted_at IS NULL",
         ).bind(now - 7 * 86_400_000),
       ]);
     },
@@ -107,6 +121,14 @@ async function route(
   const url = new URL(request.url);
   const path = url.pathname;
   const method = request.method;
+  if (path === "/email-approval" && (method === "GET" || method === "POST")) {
+    try {
+      return await emailApproval(request, env, now);
+    } catch (error) {
+      if (error instanceof HttpError) return emailApprovalError(error);
+      throw error;
+    }
+  }
   if (method === "GET") {
     if (path === "/health")
       return json({ ok: true, service: "streamer-ai-identity", version: 1 });
@@ -209,12 +231,36 @@ async function route(
     return createGrant(request, env, now);
   if (method === "POST" && path === "/v1/device/token")
     return redeemGrant(request, env, now);
+  if (method === "GET" && path === "/v1/device/deletion-status")
+    return deletionStatus(request, env);
   if (!path.startsWith("/v1/")) throw new HttpError(404, "not_found");
   const principal = await authenticate(request, env, authFactory(env), now);
   if (principal.method === "browser" && method !== "GET")
     sameOrigin(request, env.AUTH_ORIGIN);
   if (method === "GET" && path === "/v1/account")
-    return json(principal.account);
+    return json(
+      principal.method === "device"
+        ? {
+            ...principal.account,
+            mergeAckRequired: !!principal.mergeAckRequired,
+          }
+        : principal.account,
+    );
+  const mergedAccount = /^\/v1\/account\/merged-from\/([^/]+)$/.exec(path);
+  if (method === "GET" && mergedAccount?.[1])
+    return mergedFrom(env, principal, mergedAccount[1], now);
+  if (method === "POST" && path === "/v1/account/merge-ack")
+    return acknowledgeMerge(request, env, principal);
+  if (method === "GET" && path === "/v1/account/merge-tombstones")
+    return mergeTombstones(request, env, principal);
+  if (
+    path.startsWith("/v1/sync/") &&
+    principal.method === "device" &&
+    principal.mergeAckRequired
+  )
+    throw new HttpError(409, "account_merged");
+  if (method === "DELETE" && path === "/v1/account")
+    return deleteAccount(request, env, principal, now);
   if (
     principal.method === "device" &&
     principal.purpose === "pin-reset" &&
@@ -246,9 +292,27 @@ async function route(
     return createTransfer(request, env, principal, now);
   if (method === "GET" && path === "/v1/transfers")
     return listTransfers(env, principal, now);
+  const declineTransferRequest = /^\/v1\/transfers\/([^/]+)\/decline$/.exec(
+    path,
+  );
+  if (method === "POST" && declineTransferRequest?.[1])
+    return declineTransfer(
+      request,
+      env,
+      principal,
+      declineTransferRequest[1],
+      now,
+    );
   const transfer = /^\/v1\/transfers\/([^/]+)\/accept$/.exec(path);
   if (method === "POST" && transfer?.[1])
     return acceptTransfer(request, env, principal, transfer[1], now);
+  if (method === "POST" && path === "/v1/merges")
+    return createMerge(request, env, principal, now);
+  if (method === "GET" && path === "/v1/merges")
+    return listMerges(env, principal, now);
+  const merge = /^\/v1\/merges\/([^/]+)\/decision$/.exec(path);
+  if (method === "POST" && merge?.[1])
+    return decideMerge(request, env, principal, merge[1], now);
   if (method === "POST" && path === "/v1/sync/push")
     return push(request, env, principal, now);
   if (method === "GET" && path === "/v1/sync/pull")

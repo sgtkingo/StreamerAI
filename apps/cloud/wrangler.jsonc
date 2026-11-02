@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "streamer-ai",
+  "name": "cloud",
   "main": "src/index.ts",
   "account_id": "0fb0f5933d06a77f5d9fbc7883556d84",
   "compatibility_date": "2026-11-01",
@@ -8,7 +8,7 @@
   "workers_dev": true,
   "preview_urls": false,
   "vars": {
-    "AUTH_ORIGIN": "https://streamer-ai.streamer-ai.workers.dev",
+    "AUTH_ORIGIN": "https://cloud.streamer-ai.workers.dev",
     "MAIL_FROM": "no-reply@7265001.xyz",
   },
   "d1_databases": [

@@ -18,6 +18,7 @@ export interface AccountSyncTransport {
 }
 
 export class SyncCursorExpiredError extends Error {}
+export class SyncAuthenticationError extends Error {}
 
 export class D1AccountSyncTransport implements AccountSyncTransport {
   private readonly base: string;
@@ -59,6 +60,8 @@ export class D1AccountSyncTransport implements AccountSyncTransport {
       signal: AbortSignal.timeout(15_000),
       redirect: "manual",
     });
+    if (response.status === 401 || response.status === 403)
+      throw new SyncAuthenticationError("Cloud credential is unavailable.");
     if (!response.ok && response.status !== 410)
       throw new Error(`Cloud sync failed (${response.status}).`);
     const serialized = await response.text();

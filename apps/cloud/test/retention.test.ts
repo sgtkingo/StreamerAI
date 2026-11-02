@@ -278,6 +278,9 @@ describe("sync retention", () => {
   });
 
   it("accepts transfers after source and target logs were compacted and keeps source ownership tombstones", async () => {
+    f.sqlite
+      .prepare('UPDATE "user" SET "emailVerified" = 1 WHERE id = ?')
+      .run(accounts.b!.id);
     await push([profile(), library()]);
     await push([profile("target-profile")], "b");
     f.advance(90 * DAY + 1);

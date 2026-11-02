@@ -16,6 +16,7 @@ interface AccountLoginProps {
   compact?: boolean;
   onCancel?: () => void;
   allowLocal?: boolean;
+  recoveredLocalAccounts?: { id: string }[];
   adoptLocalAccount?: boolean;
 }
 
@@ -29,11 +30,14 @@ export function AccountLogin({
   compact = false,
   onCancel,
   allowLocal = false,
+  recoveredLocalAccounts = [],
   adoptLocalAccount = false,
 }: AccountLoginProps) {
   const [grant, setGrant] = useState<DeviceAuthorization | null>(null);
   const [starting, setStarting] = useState(false);
   const [startingLocal, setStartingLocal] = useState(false);
+  const [chooseLocal, setChooseLocal] = useState(false);
+  const [localAccountId, setLocalAccountId] = useState("");
   const [message, setMessage] = useState("");
   const [outcome, setOutcome] = useState<
     "expired" | "denied" | "cancelled" | null
@@ -86,7 +90,7 @@ export function AccountLogin({
     setStartingLocal(true);
     setMessage("");
     try {
-      await api.startLocalSession();
+      await api.startLocalSession(localAccountId || undefined);
       callback.current();
     } catch (reason) {
       setMessage(safeErrorMessage(reason));
@@ -280,13 +284,35 @@ export function AccountLogin({
           api.startLocalSession &&
           !adoptLocalAccount && (
             <div className="account-login__local-option">
+              {chooseLocal && recoveredLocalAccounts.length > 0 && (
+                <label>
+                  Local account
+                  <select
+                    value={localAccountId}
+                    onChange={(event) => setLocalAccountId(event.target.value)}
+                  >
+                    <option value="">Existing local household</option>
+                    {recoveredLocalAccounts.map((account, index) => (
+                      <option key={account.id} value={account.id}>
+                        Account converted to local {index + 1}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
               <button
                 className="account-login__local"
                 type="button"
                 disabled={startingLocal}
-                onClick={() => void local()}
+                onClick={() =>
+                  recoveredLocalAccounts.length && !chooseLocal
+                    ? setChooseLocal(true)
+                    : void local()
+                }
               >
-                Prefer to continue without signing in, with a local account?
+                {chooseLocal
+                  ? "Continue with selected local account"
+                  : "Prefer to continue without signing in, with a local account?"}
               </button>
               <p className="settings-note account-login__local-note">
                 No account required. Profiles and watch progress stay on this

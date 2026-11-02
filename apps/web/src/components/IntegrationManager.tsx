@@ -317,6 +317,11 @@ export function IntegrationManager({
   const [catalogError, setCatalogError] = useState("");
   const [accountOverview, setAccountOverview] =
     useState<AccountOverview | null>(null);
+  const [profileSync, setProfileSync] = useState<{ paused: boolean } | null>(
+    null,
+  );
+  const [profileSyncError, setProfileSyncError] = useState("");
+  const [profileSyncBusy, setProfileSyncBusy] = useState(false);
   const [token, setToken] = useState("");
   const [showToken, setShowToken] = useState(false);
   const [username, setUsername] = useState("");
@@ -410,6 +415,62 @@ export function IntegrationManager({
       window.removeEventListener("focus", refresh);
     };
   }, [api, category, profileId]);
+
+  useEffect(() => {
+    if (
+      context !== "settings" ||
+      !accountOverview?.account.cloudLinked ||
+      !api.getProfileSync
+    ) {
+      setProfileSync(null);
+      return;
+    }
+    let active = true;
+    const refresh = () => {
+      void api.getProfileSync!(profileId)
+        .then((result) => {
+          if (active) {
+            setProfileSync(result);
+            setProfileSyncError("");
+          }
+        })
+        .catch(() => {
+          if (active) {
+            setProfileSync(null);
+            setProfileSyncError(
+              "Could not load profile synchronization settings.",
+            );
+          }
+        });
+    };
+    refresh();
+    window.addEventListener("focus", refresh);
+    return () => {
+      active = false;
+      window.removeEventListener("focus", refresh);
+    };
+  }, [
+    api,
+    context,
+    profileId,
+    accountOverview?.account.id,
+    accountOverview?.account.cloudLinked,
+  ]);
+
+  const toggleProfileSync = async () => {
+    if (!profileSync || !api.setProfileSyncPaused || profileSyncBusy) return;
+    setProfileSyncBusy(true);
+    setProfileSyncError("");
+    try {
+      setProfileSync(
+        await api.setProfileSyncPaused(profileId, !profileSync.paused),
+      );
+    } catch (error) {
+      setProfileSyncError(safeErrorMessage(error));
+    } finally {
+      setProfileSyncBusy(false);
+    }
+  };
 
   const visible = (item: IntegrationCatalogItem) =>
     item.configured || item.selected || addedIds.includes(item.id);
@@ -839,7 +900,7 @@ export function IntegrationManager({
                   const busy = workingId === item.id;
                   return (
                     <article
-                      className={`integration-block${dropTarget === item.id ? " integration-block--drop-target" : ""}${draggedSource === item.id ? " integration-block--dragging" : ""}`}
+                      className={`integration-block${item.id === "cloudflare-sync" ? " integration-block--cloud-sync" : ""}${dropTarget === item.id ? " integration-block--drop-target" : ""}${draggedSource === item.id ? " integration-block--dragging" : ""}`}
                       key={item.id}
                       data-source-id={item.id}
                       onDragOver={(event) => {
@@ -976,6 +1037,10 @@ export function IntegrationManager({
                               className={
                                 "integration-block__status " +
                                 (item.configured &&
+                                !(
+                                  item.id === "cloudflare-sync" &&
+                                  profileSync?.paused
+                                ) &&
                                 item.status !== "unavailable"
                                   ? "is-connected"
                                   : item.planned
@@ -984,23 +1049,79 @@ export function IntegrationManager({
                               }
                             >
                               {item.id === "cloudflare-sync" &&
-                              item.status === "unavailable"
-                                ? "Sync issue"
+                              profileSync?.paused
+                                ? "Paused for this profile"
                                 : item.id === "cloudflare-sync" &&
-                                    item.selected &&
-                                    !item.configured
-                                  ? "Paused"
-                                  : item.configured
-                                    ? item.id === "cloudflare-sync"
-                                      ? "Active"
-                                      : "Connected"
-                                    : item.planned
-                                      ? "Planned"
-                                      : "Ready to connect"}
+                                    item.status === "unavailable"
+                                  ? "Sync issue"
+                                  : item.id === "cloudflare-sync" &&
+                                      item.selected &&
+                                      !item.configured
+                                    ? "Paused"
+                                    : item.configured
+                                      ? item.id === "cloudflare-sync"
+                                        ? "Active"
+                                        : "Connected"
+                                      : item.planned
+                                        ? "Planned"
+                                        : "Ready to connect"}
                             </span>
                           </div>
                         </div>
                         <div className="integration-block__actions">
+                          {item.id === "cloudflare-sync" &&
+                            context === "settings" &&
+                            accountOverview?.account.cloudLinked &&
+                            api.setProfileSyncPaused && (
+                              <button
+                                type="button"
+                                className={`integration-block__sync-toggle${profileSyncBusy ? " is-busy" : ""}`}
+                                title={
+                                  profileSync?.paused
+                                    ? "Resume sync"
+                                    : "Pause sync"
+                                }
+                                aria-label={
+                                  profileSync?.paused
+                                    ? "Resume sync"
+                                    : "Pause sync"
+                                }
+                                aria-pressed={profileSync?.paused ?? false}
+                                aria-busy={profileSyncBusy}
+                                disabled={profileSyncBusy || !profileSync}
+                                onClick={() => void toggleProfileSync()}
+                              >
+                                <svg
+                                  className="sync-icon sync-icon--pause"
+                                  aria-hidden="true"
+                                  viewBox="0 0 24 24"
+                                  fill="currentColor"
+                                >
+                                  <rect
+                                    x="6"
+                                    y="5"
+                                    width="4"
+                                    height="14"
+                                    rx="1"
+                                  />
+                                  <rect
+                                    x="14"
+                                    y="5"
+                                    width="4"
+                                    height="14"
+                                    rx="1"
+                                  />
+                                </svg>
+                                <svg
+                                  className="sync-icon sync-icon--resume"
+                                  aria-hidden="true"
+                                  viewBox="0 0 24 24"
+                                  fill="currentColor"
+                                >
+                                  <path d="M7 4.8c0-.7.76-1.13 1.36-.77l11.1 6.68a1.5 1.5 0 0 1 0 2.58l-11.1 6.68A.9.9 0 0 1 7 19.2V4.8Z" />
+                                </svg>
+                              </button>
+                            )}
                           {item.id === "ollama" && (
                             <button
                               type="button"
@@ -1071,13 +1192,16 @@ export function IntegrationManager({
                       {item.id === "cloudflare-sync" && (
                         <>
                           <p className="integration-block__hint">
-                            {item.status === "unavailable"
-                              ? "Synchronization needs attention. Your changes remain on this home server."
-                              : item.selected && !item.configured
-                                ? "Synchronization is paused. You can enable it in Account settings."
-                                : item.configured
-                                  ? "Profiles, library and watch progress synchronize with your StreamerAI account."
-                                  : "Sign in to a StreamerAI account to enable cloud synchronization."}
+                            {accountOverview?.sync?.error ===
+                            "CLOUD_ACCOUNT_MERGE_CONFLICT"
+                              ? "The merged account is already connected to another local account on this installation. Sign out, sign in to the surviving account and sync to access its profiles."
+                              : item.status === "unavailable"
+                                ? "Synchronization needs attention. Your changes remain on this home server."
+                                : item.selected && !item.configured
+                                  ? "Synchronization is paused. You can enable it in Account settings."
+                                  : item.configured
+                                    ? "Profiles, library and watch progress synchronize with your StreamerAI account."
+                                    : "Sign in to a StreamerAI account to enable cloud synchronization."}
                           </p>
                           {accountOverview?.manageUrl && (
                             <a
@@ -1087,6 +1211,18 @@ export function IntegrationManager({
                             >
                               Manage account <span aria-hidden="true">↗</span>
                             </a>
+                          )}
+                          {profileSync?.paused && (
+                            <p className="integration-block__hint">
+                              This home server queues changes for this profile
+                              and applies incoming changes after you resume.
+                              Other profiles continue syncing.
+                            </p>
+                          )}
+                          {profileSyncError && (
+                            <p className="integration-block__hint" role="alert">
+                              {profileSyncError}
+                            </p>
                           )}
                         </>
                       )}

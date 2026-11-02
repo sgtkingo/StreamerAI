@@ -16,7 +16,7 @@ Deploy the identity service as described in [CLOUD_AUTH.md](CLOUD_AUTH.md), then
 set these non-secret values in the home server's `.env` and restart it:
 
 ```dotenv
-STREAMERAI_ACCOUNT_SERVICE_URL=https://streamer-ai.streamer-ai.workers.dev
+STREAMERAI_ACCOUNT_SERVICE_URL=https://cloud.streamer-ai.workers.dev
 STREAMERAI_WEB_ORIGIN=http://localhost:5173
 ```
 
@@ -72,6 +72,21 @@ also enable/disable sync independently of login. Pausing retains data, the
 remote copy and durable pending changes. In-flight responses are discarded
 after pausing; resuming sends the queued changes. A paused online account still
 uses its regular identity/device session expiry and owner verification.
+
+The Cloud sync card can also pause one profile on this installation. Both
+outgoing and incoming changes for that profile wait durably until it is
+resumed; other profiles continue syncing. A batch already in flight finishes
+before the pause is confirmed. Deferred changes are applied and queued changes
+are sent after resuming, using the usual conflict resolution rules. This
+setting is installation-specific, not a cloud-wide pause.
+
+After confirmed deletion of the online account, an updated home server clears
+the cloud association and sync state while retaining its local profiles and
+other local data. The current local session can then explicitly pair with a
+new online account. A device revocation or temporary cloud outage alone never
+triggers conversion. If another local household exists, Continue locally lets
+the user select a converted household without merging their data. Devices whose tokens were already removed
+by an older worker's retention task also cannot receive the deletion signal.
 
 ## E-mail codes and identity linking
 
@@ -180,14 +195,46 @@ still requires signing in again before synchronization can resume.
 
 Synchronize the source installation, then open **My account → Manage account
 online**, or the Worker's `/account`. Select the profile and the existing
-target account's registered e-mail. The target owner signs in to that portal and
-accepts within ten minutes. The target must have a free profile slot.
+target account's verified e-mail or UID. The target owner signs in to that portal
+and accepts or declines within 24 hours. If the destination already has five
+profiles, the owner chooses which profiles remain. Profiles excluded from that
+selection are deleted from cloud sync and synchronized installations.
 
 The transfer moves synchronized preferences, Library, History and progress.
 It removes source ownership and is imported on the next synchronization.
 The target profile needs a new local PIN. Provider credentials stay with the
 source account/installation and the target uses its own connected services.
 Raw local prompts and device-specific settings are not part of the transfer.
+
+## Merge online accounts
+
+The online account page displays the account UID and offers a merge request by
+verified e-mail or UID. Both owners must use freshly authenticated browser
+sessions. The recipient sees the profiles from both accounts and explicitly
+chooses at most five to keep; the others are deleted from cloud sync and
+synchronized installations. The existing e-mail sign-in account's UID is
+preserved when exactly one has e-mail sign-in; otherwise the requester's UID
+survives. Google identities and device credentials move to the surviving account.
+Merging two accounts that each have separate active e-mail sign-ins is currently
+blocked to avoid silently losing one of those sign-in methods.
+
+Updated home installations verify the merge with the worker and switch to a
+fresh sync snapshot; worker-side synchronization is blocked for merged devices
+until they acknowledge the change. If the surviving online account is already
+attached to a separate local account on the same installation, synchronization
+is blocked on the former account to preserve both local households for review.
+Sign out, pair with the surviving account and synchronize it to import the
+chosen profiles. Unsynchronized changes on the former account are not copied;
+provider credentials remain separate and may need to be reconnected. Update the
+home server before completing a merge; older servers cannot acknowledge the new
+UID.
+
+When delivery is configured, a verified recipient receives signed, one-use
+e-mail links to accept or decline without signing in. The links are bound to the
+request, decision, recipient and verified address, and expire with the request.
+Opening a link performs that decision, including when an e-mail scanner opens
+it. If accepting would exceed five profiles, the link opens a selection form
+without requiring a login. Requests remain in the portal if delivery fails.
 
 ## Local HTTP surface
 

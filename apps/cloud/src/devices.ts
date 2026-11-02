@@ -41,18 +41,25 @@ export async function authenticate(
     if (!match?.[1]) throw new HttpError(401, "unauthorized");
     const row = await env.DB.prepare(
       `
-      SELECT d.id AS device_id, d.purpose, u.id, u.email, u.name FROM cloud_device d
+      SELECT d.id AS device_id, d.purpose, d.merge_ack_required, u.id, u.email, u.name FROM cloud_device d
       JOIN "user" u ON u.id = d.account_id
       WHERE d.token_hash = ? AND d.revoked_at IS NULL AND d.expires_at > ?
     `,
     )
       .bind(await hash(match[1]), now)
-      .first<Account & { device_id: string; purpose: "login" | "pin-reset" }>();
+      .first<
+        Account & {
+          device_id: string;
+          purpose: "login" | "pin-reset";
+          merge_ack_required: number;
+        }
+      >();
     if (!row) throw new HttpError(401, "unauthorized");
     return {
       method: "device",
       deviceId: row.device_id,
       purpose: row.purpose,
+      mergeAckRequired: !!row.merge_ack_required,
       account: { id: row.id, email: row.email, name: row.name },
     };
   }

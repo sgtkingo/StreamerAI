@@ -311,7 +311,7 @@ describe("identity and device grants", () => {
       await (
         await f.request("/v1/account", { token: token.access_token })
       ).json(),
-    ).toEqual(accounts.a);
+    ).toEqual({ ...accounts.a, mergeAckRequired: false });
     const stored = f.sqlite
       .prepare("SELECT token_hash FROM cloud_device")
       .get() as { token_hash: string };
@@ -653,6 +653,11 @@ describe("account synchronization", () => {
 });
 
 describe("profile transfer", () => {
+  beforeEach(() => {
+    f.sqlite
+      .prepare('UPDATE "user" SET "emailVerified" = 1 WHERE id = ?')
+      .run(accounts.b!.id);
+  });
   it("requires the target browser owner and transfers all safe state while revoking source writes", async () => {
     await push([profile(), library()]);
     const transfer = (await (
@@ -741,7 +746,7 @@ describe("profile transfer", () => {
         .prepare("SELECT accepted_at FROM cloud_transfer WHERE id = ?")
         .get(transfer.id),
     ).toEqual({ accepted_at: null });
-    f.advance(600_001);
+    f.advance(86_400_001);
     expect(
       (
         await f.request(`/v1/transfers/${transfer.id}/accept`, {
@@ -751,5 +756,142 @@ describe("profile transfer", () => {
         })
       ).status,
     ).toBe(404);
+  });
+
+  it("accepts a transfer by account UID only after explicit replacement and publishes the deletion", async () => {
+    await push([profile(), library()]);
+    await push(
+      [
+        profile("b1"),
+        profile("b2"),
+        profile("b3"),
+        profile("b4"),
+        profile("b5"),
+        library("b1"),
+      ],
+      "b",
+    );
+    const before = await snapshot("b");
+    const created = await f.request("/v1/transfers", {
+      method: "POST",
+      account: "a",
+      data: { profileId: "profile-1", target: accounts.b!.id },
+    });
+    expect(created.status).toBe(201);
+    const transfer = (await created.json()) as {
+      id: string;
+      expires_at: number;
+      emailStatus: string;
+    };
+    expect(transfer.expires_at).toBe(f.now() + 86_400_000);
+    expect(transfer.emailStatus).toBe("unavailable");
+
+    const wrongProfile = await f.request(
+      `/v1/transfers/${transfer.id}/accept`,
+      {
+        method: "POST",
+        account: "b",
+        data: { removeProfileIds: ["profile-1"] },
+      },
+    );
+    expect(wrongProfile.status).toBe(409);
+    expect(
+      f.sqlite
+        .prepare("SELECT active FROM cloud_profile WHERE id = 'b1'")
+        .get(),
+    ).toEqual({ active: 1 });
+
+    const accepted = await f.request(`/v1/transfers/${transfer.id}/accept`, {
+      method: "POST",
+      account: "b",
+      data: { removeProfileIds: ["b1"] },
+    });
+    expect(accepted.status).toBe(200);
+    const delta = (await (
+      await f.request(`/v1/sync/pull?after=${before.cursor}`, { account: "b" })
+    ).json()) as { operations: AccountSyncOperation[] };
+    expect(delta.operations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          profileId: "b1",
+          kind: "profile",
+          action: "delete",
+        }),
+        expect.objectContaining({
+          profileId: "profile-1",
+          kind: "profile",
+          action: "upsert",
+        }),
+        expect.objectContaining({
+          profileId: "profile-1",
+          kind: "library",
+          action: "upsert",
+        }),
+      ]),
+    );
+    expect(
+      f.sqlite
+        .prepare("SELECT active FROM cloud_profile WHERE id = 'b1'")
+        .get(),
+    ).toEqual({ active: 0 });
+    expect(
+      f.sqlite
+        .prepare(
+          "SELECT COUNT(*) AS n FROM cloud_entity WHERE profile_id = 'b1' AND kind <> 'profile'",
+        )
+        .get(),
+    ).toEqual({ n: 0 });
+  });
+
+  it("requires recent owner authentication for initiating and accepting a transfer", async () => {
+    await push([profile()]);
+    const stale = f.now() - 300_001;
+    const input = { profileId: "profile-1", target: accounts.b!.id };
+    const create = await f.request("/v1/transfers", {
+      method: "POST",
+      account: "a",
+      authenticatedAt: stale,
+      data: input,
+    });
+    expect(await create.json()).toEqual({ error: "reauth_required" });
+    const created = await f.request("/v1/transfers", {
+      method: "POST",
+      account: "a",
+      data: input,
+    });
+    const transfer = (await created.json()) as { id: string };
+    const accept = await f.request(`/v1/transfers/${transfer.id}/accept`, {
+      method: "POST",
+      account: "b",
+      authenticatedAt: stale,
+      data: {},
+    });
+    expect(await accept.json()).toEqual({ error: "reauth_required" });
+    expect(
+      f.sqlite
+        .prepare("SELECT account_id FROM cloud_profile WHERE id = 'profile-1'")
+        .get(),
+    ).toEqual({ account_id: accounts.a!.id });
+  });
+
+  it("finds unverified recipient accounts only by UID", async () => {
+    f.sqlite
+      .prepare('UPDATE "user" SET "emailVerified" = 0 WHERE id = ?')
+      .run(accounts.b!.id);
+    await push([profile()]);
+    const byEmail = await f.request("/v1/transfers", {
+      method: "POST",
+      account: "a",
+      data: { profileId: "profile-1", target: accounts.b!.email },
+    });
+    expect(await byEmail.json()).toEqual({
+      error: "target_account_unavailable",
+    });
+    const byUid = await f.request("/v1/transfers", {
+      method: "POST",
+      account: "a",
+      data: { profileId: "profile-1", target: accounts.b!.id },
+    });
+    expect(byUid.status).toBe(201);
   });
 });

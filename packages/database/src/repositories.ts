@@ -2197,20 +2197,28 @@ export class SyncOutboxRepository {
   listPendingForDevice<TPayload = unknown>(
     deviceId: string,
     limit = 100,
+    excludedProfileIds: readonly string[] = [],
   ): SyncOutboxOperation<TPayload>[] {
     if (!Number.isInteger(limit) || limit < 1 || limit > 1_000)
       throw new DatabaseValidationError(
         "Outbox batch limit must be between 1 and 1000.",
       );
+    const excluded = excludedProfileIds.map((id) =>
+      assertShortString(id, "Profile sync id", 160),
+    );
+    const filter = excluded.length
+      ? ` AND profile_id NOT IN (${excluded.map(() => "?").join(", ")})`
+      : "";
     return (
       this.database
         .prepare(
           `SELECT * FROM sync_outbox WHERE device_id = ?
-      AND delivered_at IS NULL AND available_at <= ? ORDER BY rowid LIMIT ?`,
+      AND delivered_at IS NULL AND available_at <= ?${filter} ORDER BY rowid LIMIT ?`,
         )
         .all(
           assertShortString(deviceId, "Device id", 120),
           isoNow(this.clock),
+          ...excluded,
           limit,
         ) as SyncOutboxRow[]
     ).map(syncOperationFromRow<TPayload>);
@@ -2232,6 +2240,14 @@ export class SyncOutboxRepository {
         "UPDATE sync_outbox SET delivered_at = ?, last_error = NULL WHERE device_id = ? AND profile_id = ? AND delivered_at IS NULL",
       )
       .run(isoNow(this.clock), deviceId, profileId);
+  }
+
+  discardPendingForDevice(deviceId: string): void {
+    this.database
+      .prepare(
+        "UPDATE sync_outbox SET delivered_at = ?, last_error = NULL WHERE device_id = ? AND delivered_at IS NULL",
+      )
+      .run(isoNow(this.clock), deviceId);
   }
 
   markDelivered(opIds: readonly string[]): number {

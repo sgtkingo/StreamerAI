@@ -195,6 +195,7 @@ export interface AuthStatus {
   cloudConfigured: boolean;
   account: AccountIdentity | null;
   localAvailable?: boolean;
+  recoveredLocalAccounts?: { id: string }[];
 }
 
 export interface DeviceAuthorization {
@@ -241,7 +242,9 @@ export interface AccountConnections {
 
 export interface StreamerApi {
   getAccountConnections?(): Promise<AccountConnections>;
-  startLocalSession?(): Promise<{ account: AccountIdentity }>;
+  startLocalSession?(
+    recoveredAccountId?: string,
+  ): Promise<{ account: AccountIdentity }>;
   setAccountSync?(
     enabled: boolean,
   ): Promise<NonNullable<AccountOverview["sync"]>>;
@@ -257,6 +260,11 @@ export interface StreamerApi {
   getAccount?(): Promise<AccountOverview>;
   revokeAccountDevice?(deviceId: string): Promise<void>;
   syncAccount?(): Promise<AccountOverview["sync"]>;
+  getProfileSync?(profileId: string): Promise<{ paused: boolean }>;
+  setProfileSyncPaused?(
+    profileId: string,
+    paused: boolean,
+  ): Promise<{ paused: boolean }>;
   unlockProfile?(profileId: string, pin: string): Promise<void>;
   lockProfile?(profileId: string): Promise<void>;
   setProfilePin?(
@@ -794,7 +802,13 @@ function readProfile(value: unknown): ProfileDraft | undefined {
 }
 
 export const apiClient: StreamerApi = {
-  startLocalSession: () => request("/auth/local", { method: "POST" }),
+  startLocalSession: (recoveredAccountId) =>
+    request("/auth/local", {
+      method: "POST",
+      ...(recoveredAccountId
+        ? { body: JSON.stringify({ recoveredAccountId }) }
+        : {}),
+    }),
   setAccountSync: (enabled) =>
     request("/account/sync", {
       method: "PUT",
@@ -820,6 +834,13 @@ export const apiClient: StreamerApi = {
       method: "DELETE",
     }),
   syncAccount: () => request("/account/sync", { method: "POST" }),
+  getProfileSync: (profileId) =>
+    request(`/account/sync/profile/${encodeURIComponent(profileId)}`),
+  setProfileSyncPaused: (profileId, paused) =>
+    request(`/account/sync/profile/${encodeURIComponent(profileId)}`, {
+      method: "PUT",
+      body: JSON.stringify({ paused }),
+    }),
   unlockProfile: (profileId, pin) =>
     request<void>(`/profiles/${encodeURIComponent(profileId)}/unlock`, {
       method: "POST",

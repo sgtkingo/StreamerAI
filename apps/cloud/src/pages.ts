@@ -32,9 +32,12 @@ body[data-page="login"] h1{font-size:clamp(28px,5vw,38px);letter-spacing:-.04em}
 .login-card p{font-size:13px}.login-card p:empty{display:none}
 .login-tip{margin:24px 0;padding:18px 20px;border:1px solid #34384a;border-radius:14px;color:#b6b9c6;font-size:13px;line-height:1.6;background:#ffffff03}
 .login-tip h2{font-size:14px;font-weight:600;margin:0 0 8px;color:#d2d5df}.login-tip p{margin:0;color:inherit}
+.account-uid{display:flex;align-items:center;gap:10px;flex-wrap:wrap;color:#aeb3c8;font-size:.85rem}.account-uid code{font:inherit;letter-spacing:0;overflow-wrap:anywhere;color:#e0e1eb}.account-uid button{margin:0;padding:5px 9px;font-size:.8rem}
+.email-approval__profiles label{display:flex;align-items:center;gap:10px;padding:10px 12px;margin:8px 0;border:1px solid #45495c;border-radius:9px}.email-approval__profiles input[type=checkbox]{width:auto;accent-color:#a7a2ff}
+.operation-form{margin-top:20px;padding:18px;border:1px solid #34384a;border-radius:12px;background:#151823}.operation-form summary{cursor:pointer;font-weight:700}.operation-form summary:focus-visible{outline:3px solid #a7a2ff;outline-offset:4px}.operation-form p,.approval-note{font-size:.9rem}.operation-form button{margin-top:16px}.approval-list{display:grid;gap:10px;margin-top:16px}.approval-card{padding:16px;border:1px solid #34384a;border-radius:12px;background:#151823}.approval-card strong{display:block}.approval-card p{margin:6px 0;font-size:.88rem}.approval-card button{font-size:.85rem;padding:9px 12px}.profile-picks{display:grid;gap:8px;max-height:45vh;overflow:auto}.profile-pick{display:flex;gap:10px;align-items:center;padding:10px 12px;margin:0;border:1px solid #45495c;border-radius:9px}.profile-pick input{width:auto;max-width:none;accent-color:#a7a2ff}.profile-pick span{overflow-wrap:anywhere}.selection-error{color:#ffaaaa;font-size:.85rem}
 button:focus-visible,input:focus-visible,summary:focus-visible{outline:3px solid #a7a2ff;outline-offset:4px}
 .account-section h2{margin:0 0 8px;font-size:1.25rem}.account-section>.section-intro{margin:0 0 20px;font-size:.9rem;color:#aeb3c8}
-.method-list{display:grid;gap:10px;margin-top:20px}.method-card,.device-row,.pairing-row{display:flex;align-items:center;gap:14px;padding:16px;border:1px solid #34384a;border-radius:12px;background:#151823}.method-icon{display:grid;place-items:center;flex:none;width:40px;height:40px;border-radius:10px;background:#25283a;font-size:18px;font-weight:700;color:#d8d5ff}.method-content,.device-info,.pairing-info{min-width:0;flex:1}.method-content strong,.device-info strong,.pairing-info strong{display:block}.method-content p,.device-info p,.pairing-info p{font-size:.85rem;margin:4px 0 0;color:#aeb3c8}.method-card button,.device-row button,.pairing-row button{flex:none;margin:0}.method-card button{padding:9px 12px;font-size:.85rem}.account-help{margin-top:18px}.account-link{display:inline-block;margin-top:20px}.device-list,.pairing-list{display:grid;gap:10px;margin-top:20px}.empty-state{color:#aeb3c8;font-size:.9rem;margin:0}.icon-button{display:grid;place-items:center;width:42px;height:42px;padding:0;background:transparent;border-color:#545970;color:#c8cbd6}.icon-button:hover{color:#ffb4b4;border-color:#e77e88;background:#7a273522}.icon-button svg{width:20px;height:20px}.danger-button{background:#a12d40;border-color:#a12d40}.danger-button:hover{background:#b7374b}.confirm-dialog{width:min(440px,calc(100% - 32px));padding:24px;background:#1c1f2b;color:#f3f4f7;border:1px solid #545970;border-radius:16px}.confirm-dialog::backdrop{background:#080910b8}.confirm-dialog h2{margin:0;font-size:1.25rem}.confirm-dialog p{margin:12px 0}.dialog-actions{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap}.dialog-actions button{margin:8px 0 0}
+.method-list{display:grid;gap:10px;margin-top:20px}.method-card,.device-row,.pairing-row{display:flex;align-items:center;gap:14px;padding:16px;border:1px solid #34384a;border-radius:12px;background:#151823}.method-icon{display:grid;place-items:center;flex:none;width:40px;height:40px;border-radius:10px;background:#25283a;font-size:18px;font-weight:700;color:#d8d5ff}.method-content,.device-info,.pairing-info{min-width:0;flex:1}.method-content strong,.device-info strong,.pairing-info strong{display:block}.method-content p,.device-info p,.pairing-info p{font-size:.85rem;margin:4px 0 0;color:#aeb3c8}.method-card button,.device-row button,.pairing-row button{flex:none;margin:0}.method-card button{padding:9px 12px;font-size:.85rem}.account-help{margin-top:18px}.account-link{display:inline-block;margin-top:20px}.device-list,.pairing-list{display:grid;gap:10px;margin-top:20px}.empty-state{color:#aeb3c8;font-size:.9rem;margin:0}.icon-button{display:grid;place-items:center;width:42px;height:42px;padding:0;background:transparent;border-color:#545970;color:#c8cbd6}.icon-button:hover{color:#ffb4b4;border-color:#e77e88;background:#7a273522}.icon-button svg{width:20px;height:20px}.danger-button{background:#a12d40;border-color:#a12d40}.danger-button:hover{background:#b7374b}.confirm-dialog{width:min(440px,calc(100% - 32px));padding:24px;background:#1c1f2b;color:#f3f4f7;border:1px solid #545970;border-radius:16px}.confirm-dialog::backdrop{background:#080910b8}.confirm-dialog h2{margin:0;font-size:1.25rem}.confirm-dialog p{margin:12px 0}.account-final-actions{display:flex;gap:8px;flex-wrap:wrap}.account-final-actions button{margin:12px 0 0}.dialog-actions{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap}.dialog-actions button{margin:8px 0 0}
 @media(max-width:500px){.method-card{flex-wrap:wrap}.method-card button{margin-left:54px}.account-section{padding:20px}}
 @media(max-width:400px){body[data-page="login"]{padding:24px 16px}.login-card{padding:20px}}
 
@@ -47,7 +50,7 @@ export function page(
   const content =
     kind === "login"
       ? `
-    <h1>Přihlášení ke StreamerAI</h1><p>Přihlaste se a připojte domácí server nebo TV ke svému účtu.</p>
+    <h1>Přihlášení ke StreamerAI</h1><p>Přihlaste se a připojte domácí server nebo TV ke svému účtu.</p><p id="delete-success" role="status" hidden>Váš online účet byl smazán. Místní data zůstala na domácích serverech.</p><p id="merge-success" role="status" hidden>Účty byly sloučeny. Přihlaste se ke společnému účtu.</p>
     <section class="login-card"><div role="group" aria-label="Přihlášení přes třetí stranu"><p class="auth-label">S vaším stávajícím účtem</p><button id="google" class="google-button"><svg aria-hidden="true" viewBox="0 0 24 24" width="20" height="20"><path fill="#4285F4" d="M21.6 12.23c0-.71-.06-1.39-.18-2.05H12v3.88h5.38a4.6 4.6 0 0 1-2 3.02v2.51h3.24c1.9-1.75 2.98-4.33 2.98-7.36Z"/><path fill="#34A853" d="M12 22c2.7 0 4.96-.9 6.62-2.41l-3.24-2.51c-.9.6-2.05.96-3.38.96-2.6 0-4.8-1.76-5.59-4.12H3.07v2.59A10 10 0 0 0 12 22Z"/><path fill="#FBBC05" d="M6.41 13.92a6 6 0 0 1 0-3.84V7.49H3.07a10 10 0 0 0 0 9.02l3.34-2.59Z"/><path fill="#EA4335" d="M12 5.96c1.47 0 2.79.5 3.82 1.49l2.87-2.87A9.6 9.6 0 0 0 12 2a10 10 0 0 0-8.93 5.49l3.34 2.59C7.2 7.72 9.4 5.96 12 5.96Z"/></svg><span>Pokračovat přes Google</span></button></div><div class="auth-divider"><span>nebo e-mailem</span></div>
     ${
       emailAvailable
@@ -76,7 +79,7 @@ export function page(
     <p><a href="/account">Spravovat účet a zařízení</a></p>
   `
         : `
-    <h1>Váš účet StreamerAI</h1><p id="identity"></p>
+    <h1>Váš účet StreamerAI</h1><p id="identity"></p><div class="account-uid"><span>UID účtu:</span><code id="account-uid"></code><button id="copy-account-uid" class="secondary" type="button">Kopírovat</button></div>
     <p><a id="login-again" href="/login">Změnit účet</a></p>
     <section id="connections" class="account-section"><h2>Propojené účty</h2><p class="section-intro">Spravujte způsoby přihlášení ke svému účtu.</p>
       <div class="method-list"><div class="method-card"><span class="method-icon" aria-hidden="true">G</span><div class="method-content"><strong>Google</strong><p id="google-status"></p></div><button id="link-google" class="secondary" hidden>Propojit</button><button id="unlink-google" class="secondary" hidden>Odpojit</button></div>
@@ -84,15 +87,23 @@ export function page(
       <p id="email-feedback" role="status" aria-live="polite"></p>
       <form id="enable-email-form" hidden><label for="enable-email-otp">Osmimístný ověřovací kód</label><input id="enable-email-otp" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{8}" maxlength="8" required><button type="submit">Potvrdit e-mailové přihlášení</button></form>
       <small id="reauth-help" class="account-help" role="status" aria-live="polite" hidden>Pro změnu způsobů přihlášení je potřeba čerstvé ověření účtu. <a id="reauthenticate" href="/login">Přihlaste se znovu</a>.</small></section>
-    <section class="account-section"><h2>Čekající párování</h2><p class="section-intro">Potvrďte pouze žádosti ze zařízení, které máte u sebe.</p><div id="pairings" class="pairing-list"></div><a class="account-link" href="/device">Zadat párovací kód ručně</a></section>
+    <section class="account-section"><h2>Čekající párování</h2><p class="section-intro">Potvrďte pouze žádosti ze zařízení, které znáte.</p><div id="pairings" class="pairing-list"></div><a class="account-link" href="/device">Zadat párovací kód ručně</a></section>
     <section class="account-section"><h2>Připojená zařízení</h2><div id="devices" class="device-list"></div><a class="account-link" href="/device">Připojit další zařízení</a></section>
-    <section><h2>Převést profil</h2><p>Převod přenese knihovnu, historii a rozkoukanost. Cílový účet musí být již vytvořený a mít volné místo mezi pěti profily. PIN nastavíte znovu na cílovém serveru.</p>
-      <form id="transfer-form"><label for="profile">Profil</label><select id="profile" required></select>
-      <label for="target-email">E-mail cílového účtu</label><input id="target-email" type="email" autocomplete="email" required>
-      <button type="submit">Požádat o převod</button></form><small>Požadavek platí 10 minut. Převod dokončí přihlášený vlastník cílového účtu.</small></section>
-    <section><h2>Čekající převody</h2><div id="transfers"></div></section>
-    <button id="signout" class="secondary">Odhlásit</button>
+    <section class="account-section"><h2>Čekající ke schválení</h2><p class="section-intro">Žádosti o převod profilů a sloučení účtů.</p><div id="transfers" class="approval-list"></div></section>
+    <section class="account-section"><h2>Účty a profily</h2><p class="section-intro">Převádějte profily nebo spojte své účty. Každou žádost potvrdí vlastník druhého účtu.</p>
+      <details class="operation-form"><summary>Převést profil</summary><p>Přenese se synchronizovaná knihovna, historie a rozkoukanost. Před převodem spusťte synchronizaci na zdrojovém serveru; nesynchronizované změny a místní přihlašovací údaje ke službám se nepřenášejí. PIN nastavíte znovu na cílovém serveru.</p>
+        <form id="transfer-form"><label for="profile">Profil k převodu</label><select id="profile" required></select>
+        <label for="target-email">E-mail nebo UID cílového účtu</label><input id="target-email" type="text" autocomplete="off" maxlength="320" required>
+        <button type="submit">Odeslat žádost o převod</button></form></details>
+      <details class="operation-form"><summary>Sloučit účty</summary><p>Před sloučením synchronizujte profily na obou domácích serverech. Druhý vlastník potvrdí sloučení a vybere profily, které zůstanou zachovány. Spojený účet může obsahovat nejvýše pět profilů.</p>
+        <form id="merge-form"><label for="merge-target">E-mail nebo UID druhého účtu</label><input id="merge-target" type="text" autocomplete="off" maxlength="320" required>
+        <button type="submit">Odeslat žádost o sloučení</button></form></details>
+    </section>
+    <p id="operation-reauth" role="status" hidden>Pro tuto akci je potřeba nové ověření. <a id="operation-reauth-link" href="/login">Přihlaste se znovu</a>.</p>
+    <div class="account-final-actions"><button id="signout" class="secondary">Odhlásit</button><button id="delete-account" class="danger-button" type="button">Smazat účet</button></div>
+    <p id="delete-reauth-help" role="status" hidden>Pro smazání účtu je třeba nové ověření. <a id="delete-reauthenticate" href="/login">Přihlaste se znovu</a>.</p>
     <dialog id="confirm-dialog" class="confirm-dialog" aria-labelledby="confirm-title" aria-describedby="confirm-description"><h2 id="confirm-title"></h2><p id="confirm-description"></p><div class="dialog-actions"><button id="confirm-cancel" class="secondary" type="button">Zrušit</button><button id="confirm-action" class="danger-button" type="button"></button></div></dialog>
+    <dialog id="profiles-dialog" class="confirm-dialog" aria-labelledby="profiles-title" aria-describedby="profiles-description"><h2 id="profiles-title"></h2><p id="profiles-description"></p><div id="profiles-list" class="profile-picks"></div><p id="profiles-count" class="approval-note" role="status"></p><p id="profiles-error" class="selection-error" role="alert" hidden>Vyberte alespoň jeden a nejvýše pět profilů.</p><div class="dialog-actions"><button id="profiles-cancel" class="secondary" type="button">Zrušit</button><button id="profiles-confirm" type="button">Potvrdit výběr</button></div></dialog>
   `;
   return `<!doctype html><html lang="cs"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>StreamerAI — účet</title><link rel="stylesheet" href="/assets/auth.css"><script src="/assets/auth.js" defer></script></head><body data-page="${kind}"><main><div class="brand">STREAMER AI</div>${content}<p id="message" role="status" aria-live="polite"></p><footer>Přihlašovací údaje k mediálním službám zůstávají na domácím serveru.</footer></main></body></html>`;
 }
@@ -104,7 +115,7 @@ export const browserScript = String.raw`
   const errors = {
     unauthorized:'Přihlaste se prosím znovu.',invalid_or_expired_code:'Kód není platný nebo již vypršel.',
     profile_limit:'Cílový účet již má pět profilů.',target_account_unavailable:'Cílový účet není dostupný. Nejprve se na něm přihlaste.',
-    transfer_changed:'Profil se mezitím změnil. Načtěte stránku a opakujte převod.',transfer_not_found:'Převod není dostupný nebo vypršel.',
+    transfer_changed:'Profily se mezitím změnily. Načtěte stránku a zkuste to znovu.',transfer_not_found:'Převod není dostupný nebo vypršel.',merge_not_found:'Žádost o sloučení není dostupná nebo vypršela.',merge_changed:'Účty nebo profily se mezitím změnily. Vytvořte novou žádost.',merge_email_conflict:'Oba účty mají aktivní přihlášení různými e-maily. Toto sloučení zatím není dostupné.',
     rate_limited:'Příliš mnoho pokusů. Zkuste to za chvíli znovu.',browser_sign_in_required:'Pro tuto akci se přihlaste ke svému účtu.',reauth_required:'Pro tuto akci se prosím znovu přihlaste ke svému účtu.',
     email_unavailable:'E-mail se teď nepodařilo odeslat. Zkuste to později nebo použijte Google.',invalid_otp:'Kód není platný nebo již vypršel. Vyžádejte nový kód.',invalid_email:'Zadejte platnou e-mailovou adresu.',
     last_sign_in_method:'Poslední způsob přihlášení nelze odebrat. Nejprve přidejte jiný.',method_not_connected:'Tento způsob přihlášení už není aktivní.'
@@ -121,7 +132,7 @@ export const browserScript = String.raw`
   function button(label, action, secondary = false) {
     const result=document.createElement('button'); result.textContent=label;
     if (secondary) result.className='secondary';
-    result.addEventListener('click',async()=>{result.disabled=true;try{await action();}catch(error){message(error.message);}finally{result.disabled=false;}});
+    result.addEventListener('click',async()=>{result.disabled=true;try{await action();}catch(error){operationError(error);}finally{result.disabled=false;}});
     return result;
   }
   function row(container, text) {const div=document.createElement('div');div.className='row';const p=document.createElement('p');p.textContent=text;div.append(p);container.append(div);return div;}
@@ -130,24 +141,43 @@ export const browserScript = String.raw`
       let confirmed=false;const yes=()=>{confirmed=true;dialog.close();};const no=()=>dialog.close();const finish=()=>{el('confirm-action').removeEventListener('click',yes);el('confirm-cancel').removeEventListener('click',no);dialog.removeEventListener('close',finish);resolve(confirmed);};
       el('confirm-action').addEventListener('click',yes);el('confirm-cancel').addEventListener('click',no);dialog.addEventListener('close',finish);dialog.showModal();el('confirm-cancel').focus();});
   }
+  function chooseProfiles(title, description, profiles, requiredId) {
+    return new Promise(resolve=>{
+      const dialog=el('profiles-dialog');const list=el('profiles-list');list.replaceChildren();el('profiles-title').textContent=title;el('profiles-description').textContent=description;el('profiles-error').hidden=true;
+      profiles.forEach(profile=>{const label=document.createElement('label');label.className='profile-pick';const input=document.createElement('input');input.type='checkbox';input.value=profile.id;input.checked=profiles.length<=5 || profile.id===requiredId;input.disabled=profile.id===requiredId;const name=document.createElement('span');name.textContent=profile.name+(profile.ownerLabel?' · '+profile.ownerLabel:'');label.append(input,name);list.append(label);});
+      const chosen=()=>Array.from(list.querySelectorAll('input:checked')).map(input=>input.value);
+      const update=()=>{el('profiles-count').textContent='Vybráno '+chosen().length+' z nejvýše 5 profilů.';el('profiles-error').hidden=true;};
+      let value=null;const yes=()=>{const ids=chosen();if((profiles.length&&!ids.length)||ids.length>5){el('profiles-error').hidden=false;return;}value=ids;dialog.close();};const no=()=>dialog.close();const finish=()=>{list.removeEventListener('change',update);el('profiles-confirm').removeEventListener('click',yes);el('profiles-cancel').removeEventListener('click',no);dialog.removeEventListener('close',finish);resolve(value);};
+      list.addEventListener('change',update);el('profiles-confirm').addEventListener('click',yes);el('profiles-cancel').addEventListener('click',no);dialog.addEventListener('close',finish);update();dialog.showModal();el('profiles-cancel').focus();
+    });
+  }
   const query=new URLSearchParams(location.search);
   const expectedAccount = query.get('account_id') || '';
   const accountQuery = /^[a-zA-Z0-9_-]{1,160}$/.test(expectedAccount) ? '?account_id='+encodeURIComponent(expectedAccount) : '';
   const rawCode=query.get('user_code') || '';
   const code=rawCode.replace(/[\s-]/g,'').toUpperCase();
   const safeCode=/^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{8}$/.test(code)?code:'';
+  const rawApproval=query.get('approval')||'';
+  const approval=/^(transfer|merge)\.[0-9a-f-]{36}$/i.test(rawApproval)?rawApproval:'';
+  const intent=['accept','decline'].includes(query.get('intent'))?query.get('intent'):'';
+  const approvalQuery=approval?'?approval='+encodeURIComponent(approval)+(intent?'&intent='+intent:''):'';
+  const accountDestination='/account'+(accountQuery&&approvalQuery?accountQuery+'&'+approvalQuery.slice(1):approvalQuery||accountQuery);
+  let approvalOpened=false;
+  let portalAccount=null;
+  function operationError(error){if(error.code==='reauth_required'&&el('operation-reauth')){el('operation-reauth').hidden=false;message('');el('operation-reauth-link').focus();}else message(error.message);}
+  function sentMessage(result){return result.emailStatus==='sent'?'Žádost byla vytvořena a oznámení odesláno e-mailem.':'Žádost byla vytvořena, ale e-mail se nepodařilo odeslat. Druhý vlastník ji najde ve svém účtu.';}
   async function signIn() {
-    const destination = safeCode ? '/device?user_code='+encodeURIComponent(safeCode) : '/account'+accountQuery;
+    const destination = safeCode ? '/device?user_code='+encodeURIComponent(safeCode) : accountDestination;
     const data=await api('/api/auth/sign-in/social',{method:'POST',body:JSON.stringify({provider:'google',callbackURL:location.origin+destination,errorCallbackURL:location.origin+'/login'})});
     if (!data.url || new URL(data.url).origin!=='https://accounts.google.com') throw new Error('Nepodařilo se zahájit přihlášení.');
     location.assign(data.url);
   }
   async function account() {
     try {const data=await api('/v1/account');el('identity').textContent=data.name+' · '+data.email;return data;}
-    catch(error){if(error.code==='unauthorized'){location.replace('/login'+(safeCode?'?user_code='+encodeURIComponent(safeCode):accountQuery));return null;}throw error;}
+    catch(error){if(error.code==='unauthorized'){location.replace('/login'+(safeCode?'?user_code='+encodeURIComponent(safeCode):(approvalQuery||accountQuery)));return null;}throw error;}
   }
   async function refreshPortal() {
-    const [devices,profiles,transfers,pending]=await Promise.all([api('/v1/devices'),api('/v1/profiles'),api('/v1/transfers'),api('/v1/device/pending')]);
+    const [devices,profiles,transfers,pending,merges]=await Promise.all([api('/v1/devices'),api('/v1/profiles'),api('/v1/transfers'),api('/v1/device/pending'),api('/v1/merges')]);
     el('devices').replaceChildren();
     if(!devices.devices.length){const p=document.createElement('p');p.className='empty-state';p.textContent='Zatím nemáte připojená zařízení.';el('devices').append(p);}
     devices.devices.forEach(device=>{
@@ -160,14 +190,18 @@ export const browserScript = String.raw`
     pending.pairings.forEach(pairing=>{const div=document.createElement('div');div.className='pairing-row';const info=document.createElement('div');info.className='pairing-info';const name=document.createElement('strong');name.textContent=pairing.device_name;const detail=document.createElement('p');detail.textContent=(pairing.purpose==='pin-reset'?'Obnovení PINu · ':'Připojení zařízení · ')+'Platí do '+new Date(pairing.expires_at).toLocaleTimeString('cs-CZ',{hour:'2-digit',minute:'2-digit'});info.append(name,detail);const review=document.createElement('a');review.href='/device';review.textContent='Ověřit kód';review.setAttribute('aria-label','Ověřit kód zařízení '+pairing.device_name);div.append(info,review);div.append(button('Zamítnout',async()=>{if(!await confirmAction('Zamítnout žádost?', 'Žádost zařízení „'+pairing.device_name+'“ bude zamítnuta.', 'Zamítnout'))return;await api('/v1/device/pending/'+encodeURIComponent(pairing.id)+'/decision',{method:'POST',body:JSON.stringify({approve:false})});await refreshPortal();},true));el('pairings').append(div);});
     el('profile').replaceChildren();profiles.profiles.forEach(profile=>{const option=document.createElement('option');option.value=profile.id;option.textContent=profile.name;el('profile').append(option);});
     el('transfers').replaceChildren();
-    if(!transfers.transfers.length)row(el('transfers'),'Žádné čekající převody.');
+    if(!transfers.transfers.length&&!merges.merges.length)row(el('transfers'),'Žádné čekající žádosti.');
     transfers.transfers.forEach(transfer=>{
-      const div=row(el('transfers'),transfer.profile_name+' · '+transfer.source_email+' → '+transfer.target_email);
-      if(transfer.incoming)div.append(button('Přijmout profil',async()=>{await api('/v1/transfers/'+encodeURIComponent(transfer.id)+'/accept',{method:'POST',body:'{}'});message('Profil byl převeden. Na domácím serveru spusťte synchronizaci.');await refreshPortal();}));
+      const div=row(el('transfers'),'Převod profilu „'+transfer.profile_name+'“ · '+(transfer.source_email||transfer.source_account_id)+' → '+(transfer.target_email||transfer.target_account_id));div.className='approval-card';const expiry=document.createElement('small');expiry.textContent='Platí do '+new Date(transfer.expires_at).toLocaleString('cs-CZ');div.append(expiry);
+      if(transfer.incoming){const accept=button('Zkontrolovat převod',async()=>{const choices=[...profiles.profiles.map(p=>({...p,ownerLabel:'Váš účet'})),{id:transfer.profile_id,name:transfer.profile_name,ownerLabel:'Převáděný profil'}];const ids=await chooseProfiles('Přijmout profil','Vyberte profily, které zůstanou na vašem účtu. Nevybrané profily budou smazány z cloudu i synchronizovaných instalací.',choices,transfer.profile_id);if(!ids)return;await api('/v1/transfers/'+encodeURIComponent(transfer.id)+'/accept',{method:'POST',body:JSON.stringify({removeProfileIds:profiles.profiles.filter(p=>!ids.includes(p.id)).map(p=>p.id)})});message('Profil byl převeden. Na domácím serveru spusťte synchronizaci.');await refreshPortal();});const decline=button('Zamítnout',async()=>{if(!await confirmAction('Zamítnout převod?','Profil zůstane u původního účtu.','Zamítnout'))return;await api('/v1/transfers/'+encodeURIComponent(transfer.id)+'/decline',{method:'POST',body:'{}'});message('Převod byl zamítnut.');await refreshPortal();},true);div.append(accept,decline);if(!approvalOpened&&approval==='transfer.'+transfer.id){approvalOpened=true;queueMicrotask(()=>{(intent==='decline'?decline:accept).focus();if(intent)(intent==='decline'?decline:accept).click();});}}
     });
+    merges.merges.forEach(merge=>{const div=row(el('transfers'),'Sloučení účtů · '+(merge.source_email||merge.source_account_id)+' → '+(merge.target_email||merge.target_account_id)+' · Zachované UID: '+merge.target_account_id);div.className='approval-card';const expiry=document.createElement('small');expiry.textContent='Platí do '+new Date(merge.expires_at).toLocaleString('cs-CZ');div.append(expiry);if(merge.incoming){const accept=button('Zkontrolovat sloučení',async()=>{const choices=merge.profiles.map(p=>({...p,ownerLabel:p.account_id===merge.target_account_id?'Zachovaný účet':'Druhý účet'}));const ids=await chooseProfiles('Sloučit účty','Vyberte nejvýše pět profilů, které zůstanou po sloučení. Nevybrané profily budou smazány z cloudu i synchronizovaných instalací. Zachované UID: '+merge.target_account_id,choices);if(!ids)return;const result=await api('/v1/merges/'+encodeURIComponent(merge.id)+'/decision',{method:'POST',body:JSON.stringify({approve:true,profileIds:ids,expectedProfileIds:choices.map(p=>p.id)})});if(portalAccount.id!==result.accountId){location.replace('/login?account_id='+encodeURIComponent(result.accountId)+'&merged=1');return;}message('Účty byly sloučeny. Zachované UID: '+result.accountId+'.');await refreshPortal();});const decline=button('Zamítnout',async()=>{if(!await confirmAction('Zamítnout sloučení?','Účty zůstanou oddělené.','Zamítnout'))return;await api('/v1/merges/'+encodeURIComponent(merge.id)+'/decision',{method:'POST',body:JSON.stringify({approve:false})});message('Sloučení bylo zamítnuto.');await refreshPortal();},true);div.append(accept,decline);if(!approvalOpened&&approval==='merge.'+merge.id){approvalOpened=true;queueMicrotask(()=>{(intent==='decline'?decline:accept).focus();if(intent)(intent==='decline'?decline:accept).click();});}}});
+    if(approval&&!approvalOpened){approvalOpened=true;message('Žádost není dostupná, vypršela nebo patří jinému účtu. Zkuste změnit účet.');}
   }
   async function init() {
     if(document.body.dataset.page==='login'){
+      if(query.get('account_deleted')==='1')el('delete-success').hidden=false;
+      if(query.get('merged')==='1')el('merge-success').hidden=false;
       el('google').addEventListener('click',()=>{el('google').disabled=true;signIn().catch(error=>{message(error.message);el('google').disabled=false;});});
       el('email-open')?.addEventListener('click',()=>{el('email-fields').hidden=false;el('email-open').setAttribute('aria-expanded','true');el('email-open').hidden=true;el('login-email').focus();});
       let email='';
@@ -191,14 +225,22 @@ export const browserScript = String.raw`
       el('login-otp')?.addEventListener('input',()=>{updateVerify();if(!busy&&/^\d{8}$/.test(el('login-otp').value))el('otp-form').requestSubmit();});
       el('otp-form')?.addEventListener('submit',async(event)=>{event.preventDefault();const otp=el('login-otp').value;if(busy||!/^\d{8}$/.test(otp))return;setBusy(true);message('','login-feedback');try{
         await api('/api/auth/sign-in/email-otp',{method:'POST',body:JSON.stringify({email,otp})});
-        location.assign(safeCode?'/device?user_code='+encodeURIComponent(safeCode):'/account'+accountQuery);
+        location.assign(safeCode?'/device?user_code='+encodeURIComponent(safeCode):accountDestination);
       }catch(error){message(error.message,'login-feedback');setBusy(false);el('login-otp').focus();}});
       return;
     }
     const currentAccount=await account();if(!currentAccount)return;
     if(expectedAccount && currentAccount.id!==expectedAccount)throw new Error('V prohlížeči je přihlášen jiný účet než v domácí instalaci. Přihlaste se znovu ke stejnému účtu, který chcete propojit.');
     const reauthenticate=el('reauthenticate');if(reauthenticate && /^[a-zA-Z0-9_-]{1,160}$/.test(currentAccount.id))reauthenticate.href='/login?account_id='+encodeURIComponent(currentAccount.id);
+    const deleteReauthenticate=el('delete-reauthenticate');if(deleteReauthenticate && /^[a-zA-Z0-9_-]{1,160}$/.test(currentAccount.id))deleteReauthenticate.href='/login?account_id='+encodeURIComponent(currentAccount.id);
     if(document.body.dataset.page==='account'){
+      portalAccount=currentAccount;
+      el('account-uid').textContent=currentAccount.id;
+      if(approvalQuery)el('login-again').href='/login'+approvalQuery;
+      el('copy-account-uid').addEventListener('click',async()=>{try{await navigator.clipboard.writeText(currentAccount.id);message('UID účtu bylo zkopírováno.');}catch{message('UID můžete označit a zkopírovat ručně.');}});
+      el('operation-reauth-link').href='/login?account_id='+encodeURIComponent(currentAccount.id)+(approvalQuery?'&'+approvalQuery.slice(1):'');
+      el('signout').addEventListener('click',async()=>{try{await api('/api/auth/sign-out',{method:'POST',body:'{}'});location.assign('/login');}catch(error){message(error.message);}});
+      el('delete-account').addEventListener('click',async()=>{if(!await confirmAction('Smazat účet?', 'Tím trvale smažete online účet, připojená zařízení a cloudové profily, knihovnu a historii. Místní data na domácích serverech zůstanou zachována. Akci nelze vrátit zpět.', 'Smazat účet'))return;const target=el('delete-account');target.disabled=true;el('delete-reauth-help').hidden=true;message('');try{await api('/v1/account',{method:'DELETE'});location.replace('/login?account_deleted=1');}catch(error){if(error.code==='reauth_required')el('delete-reauth-help').hidden=false;else message(error.message);target.disabled=false;}});
       function clearMethodFeedback(){el('reauth-help').hidden=true;message('','email-feedback');}
       function methodError(error, fallback){el('reauth-help').hidden=error.code!=='reauth_required';message(error.code==='reauth_required'?'':(fallback||error.message),'email-feedback');}
       async function methods(){const state=await api('/v1/account/email-login');el('email-status').textContent=state.enabled?'Přihlášení je aktivní':state.available?'Přihlášení není aktivní':'Momentálně nedostupné';el('enable-email').hidden=!state.available||state.enabled;el('disable-email').hidden=!state.enabled;el('link-google').hidden=state.googleLinked;el('unlink-google').hidden=!state.googleLinked;el('google-status').textContent=state.googleLinked?'Účet je propojen':'Účet není propojen';}
@@ -207,11 +249,11 @@ export const browserScript = String.raw`
       el('enable-email-form').addEventListener('submit',async(event)=>{event.preventDefault();const target=event.target.querySelector('button');target.disabled=true;clearMethodFeedback();try{await api('/v1/account/email-login/confirm',{method:'POST',body:JSON.stringify({otp:el('enable-email-otp').value.trim()})});el('enable-email-form').hidden=true;el('enable-email-otp').value='';await methods();message('E-mailové přihlášení je aktivní pro tento účet. Vaše profily zůstávají na stejném účtu.','email-feedback');}catch(error){methodError(error);}finally{target.disabled=false;}});
       el('link-google').addEventListener('click',async()=>{el('link-google').disabled=true;clearMethodFeedback();try{const data=await api('/api/auth/link-social',{method:'POST',body:JSON.stringify({provider:'google',callbackURL:location.origin+'/account'+accountQuery})});if(!data.url||new URL(data.url).origin!=='https://accounts.google.com')throw new Error('Propojení se nepodařilo zahájit.');location.assign(data.url);}catch(error){methodError(error);el('link-google').disabled=false;}});
       async function removeMethod(target,path,title,description,success){if(!await confirmAction(title,description,'Odebrat'))return;target.disabled=true;clearMethodFeedback();try{await api(path,{method:'DELETE'});await methods();message(success,'email-feedback');}catch(error){methodError(error,error.code==='email_unavailable'?'E-mailové přihlášení teď není dostupné. Google nelze bezpečně odpojit.':undefined);}finally{target.disabled=false;}}
-      el('unlink-google').addEventListener('click',()=>removeMethod(el('unlink-google'),'/v1/account/google-login','Odpojit Google?', 'K tomuto účtu se už nebudete moci přihlašovat přes Google.','Google byl odpojen.'));
+      el('unlink-google').addEventListener('click',()=>removeMethod(el('unlink-google'),'/v1/account/google-login','Odpojit Google?', 'Odpojíte všechna propojená přihlášení přes Google. K tomuto účtu se už nebudete moci přihlašovat přes Google.','Google byl odpojen.'));
       el('disable-email').addEventListener('click',()=>removeMethod(el('disable-email'),'/v1/account/email-login','Vypnout e-mailové přihlášení?', 'K tomuto účtu se už nebudete moci přihlašovat e-mailovým kódem.','E-mailové přihlášení bylo vypnuto.'));
       await refreshPortal();
-      el('transfer-form').addEventListener('submit',async(event)=>{event.preventDefault();try{await api('/v1/transfers',{method:'POST',body:JSON.stringify({profileId:el('profile').value,targetEmail:el('target-email').value})});message('Požadavek byl vytvořen. Cílový účet jej musí potvrdit do 10 minut.');await refreshPortal();}catch(error){message(error.message);}});
-      el('signout').addEventListener('click',async()=>{try{await api('/api/auth/sign-out',{method:'POST',body:'{}'});location.assign('/login');}catch(error){message(error.message);}});
+      el('transfer-form').addEventListener('submit',async(event)=>{event.preventDefault();const submit=event.target.querySelector('button[type=submit]');submit.disabled=true;el('operation-reauth').hidden=true;try{const result=await api('/v1/transfers',{method:'POST',body:JSON.stringify({profileId:el('profile').value,target:el('target-email').value.trim()})});message(sentMessage(result));event.target.reset();await refreshPortal();}catch(error){operationError(error);}finally{submit.disabled=false;}});
+      el('merge-form').addEventListener('submit',async(event)=>{event.preventDefault();const submit=event.target.querySelector('button[type=submit]');submit.disabled=true;el('operation-reauth').hidden=true;try{const result=await api('/v1/merges',{method:'POST',body:JSON.stringify({target:el('merge-target').value.trim()})});message(sentMessage(result));event.target.reset();await refreshPortal();}catch(error){operationError(error);}finally{submit.disabled=false;}});
       return;
     }
     el('user-code').value=safeCode;

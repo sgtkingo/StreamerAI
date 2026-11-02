@@ -15,6 +15,7 @@ import type { Profile, StreamerDatabase } from "@streamer-ai/database";
 import type { ProviderFetch } from "../integrations/tmdb-api-client.js";
 import {
   D1AccountSyncTransport,
+  SyncAuthenticationError,
   SyncCursorExpiredError,
   type AccountSyncTransport,
   type AccountSyncCredential,
@@ -30,6 +31,16 @@ export interface AccountSyncStatus {
 }
 export interface AccountSyncOptions {
   getCredential(accountId: string): Promise<AccountSyncCredential | null>;
+  prepareSync?(
+    accountId: string,
+    credential: AccountSyncCredential,
+    expectedCloudUserId: string,
+  ): Promise<"ok" | "auth" | "conflict" | "unavailable">;
+  onAuthenticationFailure?(
+    accountId: string,
+    credential: AccountSyncCredential,
+    expectedCloudUserId: string,
+  ): Promise<boolean>;
   random?: () => number;
   transport?: AccountSyncTransport;
   /** Future storage bindings must choose a distinct provider/owner/dataset namespace. */
@@ -45,6 +56,8 @@ interface Ledger {
   initialized: boolean;
   cursor: string | null;
   lastSyncedAt: string | null;
+  pausedProfiles?: string[];
+  deferred?: AccountSyncOperation[];
 }
 interface CursorRecovery {
   remaining: number;
@@ -105,6 +118,7 @@ export function compareAccountSyncOperations(
 export class AccountSyncService {
   readonly #running = new Map<string, Promise<AccountSyncStatus>>();
   readonly #states = new Map<string, AccountSyncStatus>();
+  readonly #generations = new Map<string, number>();
   readonly #transport: AccountSyncTransport;
 
   constructor(
@@ -159,6 +173,152 @@ export class AccountSyncService {
     await this.#running.get(accountId);
     this.#states.delete(accountId);
     return this.status(accountId);
+  }
+
+  profileStatus(accountId: string, profileId: string): { paused: boolean } {
+    const profile = this.database.profiles.get(profileId);
+    if (!profile || profile.accountId !== accountId)
+      throw new Error("Profile unavailable.");
+    return {
+      paused: (this.ledger(accountId).pausedProfiles ?? []).includes(
+        profile.syncId,
+      ),
+    };
+  }
+
+  async setProfilePaused(
+    accountId: string,
+    profileId: string,
+    paused: boolean,
+  ): Promise<{ paused: boolean }> {
+    const profile = this.database.profiles.get(profileId);
+    if (!profile || profile.accountId !== accountId)
+      throw new Error("Profile unavailable.");
+    if (!this.database.accounts.getRequired(accountId).cloudUserId)
+      throw new Error("Connect an online account first.");
+    this.database.transaction(() => {
+      const ledger = this.ledger(accountId);
+      const ids = new Set(ledger.pausedProfiles ?? []);
+      if (paused) ids.add(profile.syncId);
+      else ids.delete(profile.syncId);
+      ledger.pausedProfiles = [...ids];
+      this.save(accountId, ledger);
+    });
+    // A batch already in flight must finish before the pause is acknowledged.
+    await this.#running.get(accountId);
+    if (!paused && this.enabled(accountId)) void this.sync(accountId);
+    return this.profileStatus(accountId, profileId);
+  }
+
+  /** Reset only the deleted cloud namespace; local profile data stays intact. */
+  convertDeletedAccount(
+    accountId: string,
+    expectedCloudUserId: string,
+  ): boolean {
+    const converted = this.database.transaction(() => {
+      if (
+        !this.database.accounts.detachDeletedCloudUser(
+          accountId,
+          expectedCloudUserId,
+        )
+      )
+        return false;
+      this.database.syncOutbox.discardPendingForDevice(
+        outboxScope(accountId, this.options.namespace),
+      );
+      this.database.settings.delete(
+        accountKey(accountId, this.options.namespace),
+      );
+      this.database.settings.delete(`accountSyncPaused.${hash(accountId)}`);
+      this.database.settings.set("account.localEntryUsed", true);
+      const recovered =
+        this.database.settings.get<string[]>("account.recoveredLocal") ?? [];
+      this.database.settings.set("account.recoveredLocal", [
+        ...new Set([...recovered, accountId]),
+      ]);
+      return true;
+    });
+    if (converted) {
+      this.#generations.set(
+        accountId,
+        (this.#generations.get(accountId) ?? 0) + 1,
+      );
+      this.#states.delete(accountId);
+    }
+    return converted;
+  }
+
+  /** Keep the local baseline, outbox and pause state, but fetch the new owner's snapshot. */
+  migrateMergedAccount(
+    accountId: string,
+    oldCloudUserId: string,
+    newCloudUserId: string,
+    identity: { name?: string; email?: string } = {},
+  ): "updated" | "conflict" | "changed" {
+    const result = this.database.transaction(() => {
+      const reassigned = this.database.accounts.reassignMergedCloudUser(
+        accountId,
+        oldCloudUserId,
+        newCloudUserId,
+        identity,
+      );
+      if (reassigned !== "updated") return reassigned;
+      const ledger = this.ledger(accountId);
+      ledger.initialized = false;
+      ledger.cursor = null;
+      this.save(accountId, ledger);
+      return reassigned;
+    });
+    if (result === "updated") {
+      this.#generations.set(
+        accountId,
+        (this.#generations.get(accountId) ?? 0) + 1,
+      );
+      this.#states.delete(accountId);
+    }
+    return result;
+  }
+
+  markMergeConflict(accountId: string): void {
+    this.#states.set(accountId, {
+      configured: true,
+      status: "error",
+      lastSyncedAt: this.ledger(accountId).lastSyncedAt,
+      error: "CLOUD_ACCOUNT_MERGE_CONFLICT",
+    });
+  }
+
+  /** Apply the old account's missed transfer tombstones before acknowledging a merge. */
+  applyMergeTombstones(
+    accountId: string,
+    expectedCloudUserId: string,
+    operations: AccountSyncOperation[],
+  ): boolean {
+    return this.database.transaction(() => {
+      if (
+        this.database.accounts.get(accountId)?.cloudUserId !==
+        expectedCloudUserId
+      )
+        return false;
+      this.capture(accountId);
+      const ledger = this.ledger(accountId);
+      const paused = new Set(ledger.pausedProfiles ?? []);
+      const deferredIds = new Set(
+        (ledger.deferred ?? []).map((operation) => operation.id),
+      );
+      for (const operation of operations) {
+        if (paused.has(operation.profileId)) {
+          if (!deferredIds.has(operation.id)) {
+            (ledger.deferred ??= []).push(operation);
+            deferredIds.add(operation.id);
+          }
+        } else {
+          this.apply(accountId, ledger, operation);
+        }
+      }
+      this.save(accountId, ledger);
+      return true;
+    });
   }
 
   status(accountId: string): AccountSyncStatus {
@@ -371,12 +531,17 @@ export class AccountSyncService {
 
   private async run(accountId: string): Promise<AccountSyncStatus> {
     if (!this.enabled(accountId)) return this.status(accountId);
+    let expectedCloudUserId =
+      this.database.accounts.get(accountId)?.cloudUserId;
+    let generation = this.#generations.get(accountId) ?? 0;
     let credential: AccountSyncCredential | null;
     try {
       credential = await this.options.getCredential(accountId);
     } catch {
       credential = null;
     }
+    if ((this.#generations.get(accountId) ?? 0) !== generation)
+      return this.status(accountId);
     if (credential === null || !this.enabled(accountId)) {
       const state: AccountSyncStatus = {
         configured: false,
@@ -394,11 +559,45 @@ export class AccountSyncService {
       error: null,
     });
     try {
+      if (this.options.prepareSync && expectedCloudUserId) {
+        const ready = await this.options.prepareSync(
+          accountId,
+          credential,
+          expectedCloudUserId,
+        );
+        // A verified merge resets the generation before acknowledgement. If
+        // acknowledgement fails, report the failure against the new local state.
+        if (ready !== "ok" && this.enabled(accountId))
+          generation = this.#generations.get(accountId) ?? 0;
+        if (ready === "auth")
+          throw new SyncAuthenticationError("Cloud credential is unavailable.");
+        if (ready === "conflict") {
+          this.markMergeConflict(accountId);
+          return this.status(accountId);
+        }
+        if (ready !== "ok") throw new Error("Cloud identity is unavailable.");
+        expectedCloudUserId =
+          this.database.accounts.get(accountId)?.cloudUserId;
+        generation = this.#generations.get(accountId) ?? 0;
+        if (!expectedCloudUserId || !this.enabled(accountId))
+          throw new SyncPausedError();
+      }
       // Share the budget across both pulls so a broken endpoint cannot restart
       // snapshots indefinitely, including after the outgoing batch succeeds.
       const recovery: CursorRecovery = { remaining: 2 };
       this.capture(accountId);
-      await this.pull(accountId, credential, recovery);
+      this.database.transaction(() => {
+        const ledger = this.ledger(accountId);
+        const paused = new Set(ledger.pausedProfiles ?? []);
+        const remaining: AccountSyncOperation[] = [];
+        for (const operation of ledger.deferred ?? []) {
+          if (paused.has(operation.profileId)) remaining.push(operation);
+          else this.apply(accountId, ledger, operation);
+        }
+        ledger.deferred = remaining;
+        this.save(accountId, ledger);
+      });
+      await this.pull(accountId, credential, recovery, generation);
       // Account/profile membership may have changed while this installation was offline.
       this.capture(accountId);
       for (let batch = 0; batch < 100; batch++) {
@@ -406,6 +605,7 @@ export class AccountSyncService {
           this.database.syncOutbox.listPendingForDevice<AccountSyncOperation>(
             outboxScope(accountId, this.options.namespace),
             10,
+            this.ledger(accountId).pausedProfiles ?? [],
           );
         if (pending.length === 0) break;
         const operations = pending.map((item) =>
@@ -413,10 +613,15 @@ export class AccountSyncService {
         );
         let response: unknown;
         try {
-          response = await this.request(accountId, credential, {
-            kind: "push",
-            operations,
-          });
+          response = await this.request(
+            accountId,
+            credential,
+            {
+              kind: "push",
+              operations,
+            },
+            generation,
+          );
         } catch (error) {
           if (error instanceof SyncPausedError) throw error;
           for (const item of pending) {
@@ -448,7 +653,7 @@ export class AccountSyncService {
         this.database.syncOutbox.markDelivered(accepted);
         if (accepted.length !== operations.length) break;
       }
-      await this.pull(accountId, credential, recovery);
+      await this.pull(accountId, credential, recovery, generation);
       const ledger = this.ledger(accountId);
       ledger.lastSyncedAt = this.now().toISOString();
       this.save(accountId, ledger);
@@ -466,7 +671,24 @@ export class AccountSyncService {
       this.#states.set(accountId, state);
       return state;
     } catch (error) {
+      if ((this.#generations.get(accountId) ?? 0) !== generation) {
+        this.#states.delete(accountId);
+        return this.status(accountId);
+      }
       if (error instanceof SyncPausedError) {
+        this.#states.delete(accountId);
+        return this.status(accountId);
+      }
+      if (
+        error instanceof SyncAuthenticationError &&
+        (this.#generations.get(accountId) ?? 0) === generation &&
+        expectedCloudUserId &&
+        (await this.options.onAuthenticationFailure?.(
+          accountId,
+          credential,
+          expectedCloudUserId,
+        ))
+      ) {
         this.#states.delete(accountId);
         return this.status(accountId);
       }
@@ -485,10 +707,19 @@ export class AccountSyncService {
     accountId: string,
     credential: AccountSyncCredential,
     operation: SyncExchange,
+    generation: number,
   ): Promise<unknown> {
-    if (!this.enabled(accountId)) throw new SyncPausedError();
+    if (
+      !this.enabled(accountId) ||
+      (this.#generations.get(accountId) ?? 0) !== generation
+    )
+      throw new SyncPausedError();
     const result = await this.#transport.exchange(credential, operation);
-    if (!this.enabled(accountId)) throw new SyncPausedError();
+    if (
+      !this.enabled(accountId) ||
+      (this.#generations.get(accountId) ?? 0) !== generation
+    )
+      throw new SyncPausedError();
     return result;
   }
 
@@ -496,15 +727,21 @@ export class AccountSyncService {
     accountId: string,
     credential: AccountSyncCredential,
     recovery: CursorRecovery,
+    generation: number,
   ): Promise<void> {
     for (let page = 0; page < 1_000; page++) {
       const ledger = this.ledger(accountId);
       let response: unknown;
       try {
-        response = await this.request(accountId, credential, {
-          kind: ledger.initialized ? "delta" : "snapshot",
-          cursor: ledger.cursor,
-        });
+        response = await this.request(
+          accountId,
+          credential,
+          {
+            kind: ledger.initialized ? "delta" : "snapshot",
+            cursor: ledger.cursor,
+          },
+          generation,
+        );
       } catch (error) {
         if (
           !(error instanceof SyncCursorExpiredError) ||
@@ -531,8 +768,14 @@ export class AccountSyncService {
         // hook runs. Journal it before applying remote state in this transaction.
         this.capture(accountId);
         const latest = this.ledger(accountId);
-        for (const operation of result.operations)
-          this.apply(accountId, latest, operation);
+        const paused = new Set(latest.pausedProfiles ?? []);
+        for (const operation of result.operations) {
+          if (paused.has(operation.profileId)) {
+            (latest.deferred ??= []).push(operation);
+          } else {
+            this.apply(accountId, latest, operation);
+          }
+        }
         latest.cursor = result.cursor;
         if (!result.hasMore) latest.initialized = true;
         this.save(accountId, latest);
@@ -683,12 +926,10 @@ export class AccountSyncService {
         // Receiving this profile from the target account's authenticated stream
         // proves the cloud transfer completed. Target sync can beat source sync.
         this.discardBootstrap(accountId, operation.profileId, ledger);
-        profile = this.database.profiles.transfer(profile.id, accountId);
-        // A transfer carries only the same allowlisted preferences as a remote
-        // import, even when both accounts happen to share this home database.
-        profile = this.database.profiles.update(profile.id, {
-          preferences: {},
-        });
+        // The old local ID also names vault keys. Never hand those credentials
+        // to a different owner; import the cloud state using a fresh local ID.
+        this.database.profiles.delete(profile.id);
+        profile = null;
       } else if (!isProfileDeletion) return;
     }
     if (operation.kind === "profile") {
@@ -721,13 +962,8 @@ export class AccountSyncService {
       } else {
         if (profile === null) {
           this.discardBootstrap(accountId, operation.profileId, ledger);
-          const localId =
-            operation.profileId.length <= 120 &&
-            this.database.profiles.get(operation.profileId) === null
-              ? operation.profileId
-              : `sync:${hash(operation.profileId)}`;
           profile = this.database.profiles.create({
-            id: localId,
+            id: `sync:${randomUUID()}`,
             syncId: operation.profileId,
             accountId,
             name: operation.payload.name,

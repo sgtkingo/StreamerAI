@@ -158,6 +158,51 @@ export class AccountsRepository {
     return this.upsert({ id, ...identity });
   }
 
+  /** Only call after the cloud has confirmed a merge from this exact identity. */
+  reassignMergedCloudUser(
+    id: string,
+    expectedCloudUserId: string,
+    newCloudUserId: string,
+    identity: { name?: string; email?: string } = {},
+  ): "updated" | "conflict" | "changed" {
+    const current = this.getRequired(id);
+    if (current.cloudUserId !== expectedCloudUserId) return "changed";
+    const existing = this.getByCloudUserId(newCloudUserId);
+    if (existing && existing.id !== id) return "conflict";
+    const result = this.database
+      .prepare(
+        "UPDATE accounts SET cloud_user_id = ?, name = COALESCE(?, name), email = COALESCE(?, email), updated_at = ? WHERE id = ? AND cloud_user_id = ?",
+      )
+      .run(
+        text(newCloudUserId, "Cloud user id"),
+        identity.name === undefined
+          ? null
+          : text(identity.name, "Account name"),
+        identity.email === undefined
+          ? null
+          : text(identity.email, "Email", 320),
+        this.clock().toISOString(),
+        id,
+        expectedCloudUserId,
+      );
+    return result.changes === 1 ? "updated" : "changed";
+  }
+
+  /** Detach only the identity whose deletion was verified by the cloud. */
+  detachDeletedCloudUser(id: string, expectedCloudUserId: string): boolean {
+    return (
+      this.database
+        .prepare(
+          "UPDATE accounts SET cloud_user_id = NULL, name = 'Local household', email = NULL, updated_at = ? WHERE id = ? AND cloud_user_id = ?",
+        )
+        .run(
+          this.clock().toISOString(),
+          text(id, "Account id"),
+          text(expectedCloudUserId, "Cloud user id"),
+        ).changes > 0
+    );
+  }
+
   /** A verified cloud identity may claim the legacy installation exactly once. */
   ensureCloudAccount(
     identity: {
@@ -326,6 +371,17 @@ export class AccountAuthRepository {
           text(accountId, "Account id"),
           this.clock().toISOString(),
         ) as SessionRow[]
+    ).map(session);
+  }
+
+  /** Includes expired sessions so a home server can learn of later account deletion. */
+  listDeviceHistory(accountId: string): AccountSession[] {
+    return (
+      this.database
+        .prepare(
+          "SELECT * FROM account_sessions WHERE account_id = ? ORDER BY last_seen_at DESC",
+        )
+        .all(text(accountId, "Account id")) as SessionRow[]
     ).map(session);
   }
 

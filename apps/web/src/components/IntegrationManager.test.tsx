@@ -102,6 +102,43 @@ function apiWith(integrations: IntegrationCatalogItem[]) {
 }
 
 describe("integration manager", () => {
+  it("pauses and resumes only the current profile from the Cloud sync card", async () => {
+    const cloud = {
+      id: "cloudflare-sync",
+      name: "Cloud sync",
+      description: "Account sync",
+      category: "sync",
+      planned: false,
+      selected: true,
+      configured: true,
+      status: "connected",
+      setup: { documentationUrl: null, supportsDisconnect: true },
+    } as IntegrationCatalogItem;
+    const api = apiWith([...items, cloud]);
+    api.getAccount = vi.fn().mockResolvedValue({
+      account: { id: "owner", cloudLinked: true },
+      manageUrl: "https://example.com/account",
+      devices: [],
+    });
+    api.getProfileSync = vi.fn().mockResolvedValue({ paused: false });
+    api.setProfileSyncPaused = vi
+      .fn()
+      .mockImplementation(async (_id, paused) => ({ paused }));
+    const user = userEvent.setup();
+    render(
+      <IntegrationManager api={api} context="settings" profileId="viewer" />,
+    );
+    const pause = await screen.findByRole("button", {
+      name: "Pause sync",
+    });
+    expect(pause).toHaveAttribute("title", "Pause sync");
+    await waitFor(() => expect(pause).toBeEnabled());
+    await user.click(pause);
+    expect(api.setProfileSyncPaused).toHaveBeenCalledWith("viewer", true);
+    expect(await screen.findByText("Paused for this profile")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Resume sync" }));
+    expect(api.setProfileSyncPaused).toHaveBeenCalledWith("viewer", false);
+  });
   it("refreshes cloud sync status when returning to settings", async () => {
     const cloud = {
       id: "cloudflare-sync",

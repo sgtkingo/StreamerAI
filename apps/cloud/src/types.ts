@@ -19,6 +19,7 @@ export interface Principal {
   method: "browser" | "device";
   deviceId?: string;
   purpose?: "login" | "pin-reset";
+  mergeAckRequired?: boolean;
   authenticatedAt?: number;
 }
 

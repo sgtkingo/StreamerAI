@@ -519,7 +519,25 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
         accountServiceUrl,
         options.accountFetch ?? fetch,
         now,
-        { getCredential: (accountId) => accountAuth.getCredential(accountId) },
+        {
+          getCredential: (accountId) => accountAuth.getCredential(accountId),
+          prepareSync: (accountId, credential, expectedCloudUserId) =>
+            accountAuth.prepareCloudSync(
+              accountId,
+              credential,
+              expectedCloudUserId,
+            ),
+          onAuthenticationFailure: async (
+            accountId,
+            credential,
+            expectedCloudUserId,
+          ) =>
+            (await accountAuth.confirmDeletedAccount(
+              accountId,
+              credential.token,
+              expectedCloudUserId,
+            )) === "deleted",
+        },
       )
     : undefined;
   const accountAuth: AccountAuthService = new AccountAuthService({
@@ -553,8 +571,20 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
   const accountSyncTimer =
     accountSync && environment !== "test"
       ? setInterval(() => {
-          for (const account of database.accounts.list())
-            if (account.cloudUserId) void accountSync.sync(account.id);
+          for (const account of database.accounts.list()) {
+            if (!account.cloudUserId) continue;
+            if (accountSync.status(account.id).configured)
+              void accountSync.sync(account.id);
+            else
+              void accountAuth
+                .checkDeletedAccount(account.id)
+                .catch(() =>
+                  app.log.warn(
+                    { code: "ACCOUNT_DELETION_CHECK_FAILED" },
+                    "Cloud account status will be checked again",
+                  ),
+                );
+          }
         }, 60_000)
       : null;
   accountSyncTimer?.unref();

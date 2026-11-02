@@ -17,6 +17,38 @@ const grant: DeviceAuthorization = {
 };
 
 describe("device sign-in", () => {
+  it("lets the user choose a recovered local account", async () => {
+    const api = {
+      startLocalSession: vi.fn().mockResolvedValue({
+        account: { id: "recovered", cloudLinked: false },
+      }),
+      startDeviceAuthorization: vi.fn().mockResolvedValue(grant),
+    } as unknown as StreamerApi;
+    render(
+      <AccountLogin
+        api={api}
+        allowLocal
+        recoveredLocalAccounts={[{ id: "recovered" }]}
+        onAuthenticated={vi.fn()}
+      />,
+    );
+    await act(async () =>
+      fireEvent.click(
+        screen.getByRole("button", { name: /Prefer to continue/ }),
+      ),
+    );
+    fireEvent.change(screen.getByLabelText("Local account"), {
+      target: { value: "recovered" },
+    });
+    await act(async () =>
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: /Continue with selected local account/,
+        }),
+      ),
+    );
+    expect(api.startLocalSession).toHaveBeenCalledWith("recovered");
+  });
   it("keeps local access available below automatic pairing", async () => {
     const onAuthenticated = vi.fn();
     const api = {

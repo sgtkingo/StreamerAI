@@ -14,6 +14,10 @@ import {
 } from "@streamer-ai/database";
 import type { ProviderFetch } from "../src/integrations/tmdb-api-client.js";
 import {
+  NonPersistentMemorySecretStore,
+  profileSecretKey,
+} from "../src/stores/secret-store.js";
+import {
   AccountSyncService,
   compareAccountSyncOperations,
 } from "../src/services/account-sync.js";
@@ -164,6 +168,137 @@ function title(db: StreamerDatabase) {
 }
 
 describe("account synchronization", () => {
+  it("discards an old cloud response after account deletion and re-pairing", async () => {
+    const cloud = new Cloud();
+    const { db, service } = installation(cloud);
+    await service.sync("local");
+    const oldProfile = cloud.pushed.find(
+      (operation) => operation.kind === "profile",
+    )!;
+    let release!: () => void;
+    let announce!: () => void;
+    const started = new Promise<void>((resolve) => {
+      announce = resolve;
+    });
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const gated = new AccountSyncService(
+      db,
+      "https://auth.example.com",
+      cloud.fetch,
+      now,
+      {
+        getCredential: async () => ({
+          token: "cloud-token",
+          deviceId: "device",
+        }),
+        transport: {
+          exchange: async () => {
+            announce();
+            await gate;
+            return {
+              cursor: "1",
+              operations: [
+                {
+                  ...oldProfile,
+                  id: randomUUID(),
+                  payload: { ...oldProfile.payload, name: "Old cloud data" },
+                  updatedAt: new Date(milliseconds + 10000).toISOString(),
+                },
+              ],
+              hasMore: false,
+            };
+          },
+        },
+      },
+    );
+    const running = gated.sync("local");
+    await started;
+    expect(gated.convertDeletedAccount("local", "owner")).toBe(true);
+    db.accounts.linkCloudUser("local", { cloudUserId: "new-owner" });
+    release();
+    await running;
+    expect(db.profiles.getRequired("default").name).toBe("Viewer");
+    expect(db.accounts.getRequired("local").cloudUserId).toBe("new-owner");
+  });
+  it("defers both directions for one profile without blocking others and catches up after restart", async () => {
+    const cloud = new Cloud();
+    const { db, service } = installation(cloud);
+    db.profiles.create({ id: "other", name: "Other", locale: "en" });
+    const media = title(db);
+    db.library.upsert({
+      profileId: "other",
+      titleId: media.id,
+      membershipReason: "explicit",
+    });
+    await service.sync("local");
+    const pausedId = db.profiles.getRequired("default").syncId;
+    const otherId = db.profiles.getRequired("other").syncId;
+    const template = cloud.pushed.find(
+      (op) => op.kind === "library" && op.profileId === otherId,
+    )!;
+    expect(template).toBeDefined();
+    await service.setProfilePaused("local", "default", true);
+    for (let n = 0; n < 12; n++) {
+      milliseconds += 1000;
+      db.profiles.update("default", { name: `Local ${n}` });
+      service.capture("local");
+    }
+    cloud.add(
+      AccountSyncOperationSchema.parse({
+        ...template,
+        id: randomUUID(),
+        profileId: pausedId,
+        updatedAt: now().toISOString(),
+      }),
+    );
+    db.profiles.update("other", { name: "Other updated" });
+    const start = cloud.pushed.length;
+    await service.sync("local");
+    expect(db.library.list("default")).toEqual([]);
+    expect(
+      cloud.pushed.slice(start).some((op) => op.profileId === pausedId),
+    ).toBe(false);
+    expect(
+      cloud.pushed
+        .slice(start)
+        .some(
+          (op) =>
+            op.profileId === otherId &&
+            op.kind === "profile" &&
+            op.payload?.name === "Other updated",
+        ),
+    ).toBe(true);
+    const restarted = new AccountSyncService(
+      db,
+      "https://auth.example.com",
+      cloud.fetch,
+      now,
+      {
+        getCredential: async () => ({
+          token: "cloud-token",
+          deviceId: "device",
+        }),
+      },
+    );
+    expect(restarted.profileStatus("local", "default").paused).toBe(true);
+    await restarted.setProfilePaused("local", "default", false);
+    await restarted.sync("local");
+    expect(db.library.list("default").map((entry) => entry.titleId)).toContain(
+      media.id,
+    );
+    expect(
+      cloud.pushed
+        .slice(start)
+        .some(
+          (op) =>
+            op.profileId === pausedId &&
+            op.kind === "profile" &&
+            op.payload?.name === "Local 11",
+        ),
+    ).toBe(true);
+  });
   it("keeps another storage binding's ledger, cursor and outbox separate", async () => {
     const cloud = new Cloud();
     const { db, service } = installation(cloud);
@@ -867,6 +1002,29 @@ describe("account synchronization", () => {
     async (order) => {
       const source = new Cloud();
       const first = installation(source);
+      // Exercise the source-first case where sync ID and the old local ID match.
+      first.db.profiles.delete("default");
+      first.db.profiles.create({
+        id: "default",
+        syncId: "default",
+        name: "Viewer",
+        locale: "en",
+      });
+      first.db.profiles.create({
+        id: "unrelated",
+        accountId: "local",
+        name: "Unrelated",
+        locale: "en",
+      });
+      const secrets = new NonPersistentMemorySecretStore();
+      await secrets.set(
+        profileSecretKey("default", "inference.api.openai"),
+        "source-secret",
+      );
+      await secrets.set(
+        profileSecretKey("unrelated", "inference.api.openai"),
+        "unrelated-secret",
+      );
       const item = title(first.db);
       first.db.profiles.update("default", {
         name: "Alex",
@@ -887,7 +1045,6 @@ describe("account synchronization", () => {
       });
       await first.service.sync("local");
       const original = first.db.profiles.get("default")!;
-      const pinVersion = first.db.profiles.getPinRecord("default").version;
       first.db.accounts.upsert({
         id: "target",
         cloudUserId: "target-cloud-user",
@@ -901,7 +1058,8 @@ describe("account synchronization", () => {
       });
       milliseconds += 10_000;
       const target = new Cloud();
-      for (const operation of source.rows.values())
+      for (const operation of source.rows.values()) {
+        if (operation.profileId !== original.syncId) continue;
         target.add(
           AccountSyncOperationSchema.parse({
             ...operation,
@@ -909,6 +1067,7 @@ describe("account synchronization", () => {
             updatedAt: now().toISOString(),
           }),
         );
+      }
       source.add(
         AccountSyncOperationSchema.parse({
           id: randomUUID(),
@@ -939,7 +1098,9 @@ describe("account synchronization", () => {
         expect((await first.service.sync("local")).status).toBe("idle");
         expect((await targetSync.sync("target")).status).toBe("idle");
       }
-      expect(first.db.profiles.list("local")).toEqual([]);
+      expect(
+        first.db.profiles.list("local").map((profile) => profile.id),
+      ).toEqual(["unrelated"]);
       const moved = first.db.profiles.list("target");
       expect(moved).toHaveLength(1);
       expect(moved[0]).toMatchObject({
@@ -947,6 +1108,23 @@ describe("account synchronization", () => {
         name: "Alex",
         pinEnabled: false,
       });
+      expect(moved[0]!.id).not.toBe(original.id);
+      expect(moved[0]!.id).not.toBe(original.syncId);
+      expect(
+        await secrets.has(
+          profileSecretKey(moved[0]!.id, "inference.api.openai"),
+        ),
+      ).toBe(false);
+      expect(
+        await secrets.get(
+          profileSecretKey(original.id, "inference.api.openai"),
+        ),
+      ).toBe("source-secret");
+      expect(
+        await secrets.get(
+          profileSecretKey("unrelated", "inference.api.openai"),
+        ),
+      ).toBe("unrelated-secret");
       expect(moved[0]!.preferences.prompt).toBeUndefined();
       expect(
         (
@@ -956,13 +1134,10 @@ describe("account synchronization", () => {
         ).audioOutputDeviceId,
       ).toBeNull();
       expect(first.db.library.list(moved[0]!.id)).toHaveLength(1);
-      if (order === "target-first")
-        expect(first.db.profiles.getPinRecord(moved[0]!.id).version).toBe(
-          pinVersion + 1,
-        );
+      expect(first.db.profiles.getPinRecord(moved[0]!.id).hash).toBeNull();
       expect(
         source.pushed.filter((operation) => operation.kind === "profile"),
-      ).toHaveLength(1);
+      ).toHaveLength(2);
     },
   );
 

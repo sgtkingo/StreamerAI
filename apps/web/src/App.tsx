@@ -232,6 +232,7 @@ export function App({ api = apiClient, forceOnboarding = false }: AppProps) {
         <AccountLogin
           api={api}
           allowLocal={auth?.localAvailable ?? true}
+          recoveredLocalAccounts={auth?.recoveredLocalAccounts}
           error={authError}
           onRetry={() => setAuthVersion((value) => value + 1)}
           onAuthenticated={() => {

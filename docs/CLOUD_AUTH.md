@@ -4,17 +4,18 @@ The `apps/cloud` Worker owns Google/e-mail sign-in, device grants, owner-approve
 profile transfers and user-state synchronization. Cloudflare resources remain
 in the owner's account. No media or local provider credentials go to D1.
 
-Configured pilot resources:
+Configured pilot resources (the former Worker remains available at
+`https://streamer-ai.streamer-ai.workers.dev` during the transition):
 
 | Resource | Value |
 | --- | --- |
-| Worker | `streamer-ai` |
-| Origin | `https://streamer-ai.streamer-ai.workers.dev` |
+| Worker | `cloud` |
+| Origin | `https://cloud.streamer-ai.workers.dev` |
 | D1 | `streamer_ai_free` |
 | D1 ID | `17d0928c-029c-4941-a9c9-7c7e4429f277` |
 | D1 jurisdiction | EU |
 | Google project | `streamerai-dev` |
-| Google callback | `https://streamer-ai.streamer-ai.workers.dev/api/auth/callback/google` |
+| Google callback | `https://cloud.streamer-ai.workers.dev/api/auth/callback/google` |
 
 ## Configuration
 
@@ -230,7 +231,7 @@ days. Keep independent local database/vault/key backups.
 
 The six-hour scheduled task expires stale rate-limit buckets, device grants
 and old temporary transfer/device records. Ownership and deletion tombstones
-remain durable. Profile transfers require a Google browser owner session;
+remain durable. Profile transfers require a freshly authenticated browser owner session;
 device credentials cannot initiate or accept them. PIN recovery credentials
 are short-lived and cannot synchronize data. Hosted pages reject foreign
 origins, use external same-origin scripts/styles, disable framing and never
@@ -244,12 +245,39 @@ least one available sign-in method. Removing a device from the account page
 revokes its access and removes its entry; the home device can still revoke its
 own credential when signing out.
 
+The account page can permanently delete the online account after confirmation
+and fresh browser authentication. The D1 deletion cascades through the user's
+identities, sessions, devices, transfers and synchronized data. Verification
+codes and e-mail cooldown for the account are also removed. Local home-server
+data is unaffected; D1 Time Travel and other backups follow their own retention
+periods. The worker retains unrevoked login-device records until account
+deletion and then retains only their one-way token fingerprints without an
+account reference, indefinitely, so even long-offline installations can
+distinguish deletion from revocation and convert to local use. This requires
+migration `0005_deleted_device.sql` and updated home servers. Device records
+already pruned by earlier worker versions cannot be retroactively signalled.
+
 Device pairing requests start without an account association. The account page
 therefore shows only pending requests whose QR code or manual code the owner has
 already opened while signed in. The owner can return to the account page before
 confirming, review or reject the request there, and return to the pairing page
 to confirm its code. Requests that have not yet been associated with an account
 cannot be safely listed by account.
+
+Account merging and transfer approvals require migration `0006_account_merge.sql`
+and updated home installations. Before moving a device to the surviving account,
+the worker marks it as requiring acknowledgement and rejects its sync requests.
+The device verifies the previous UID as a merged alias, updates its local
+association and sync cursor, and acknowledges the current UID before resuming.
+Missed deletion notices for profiles transferred earlier to a third account are
+kept separately for each affected device and processed before acknowledgement;
+they do not grant access to that other account. Earlier notices already lost
+when the third account was deleted before this migration cannot be recovered.
+Approval e-mails contain signed decision capabilities: anyone with the link can
+execute its single pending decision without logging in. The signature binds the
+request, recipient, verified e-mail address and decision; links expire with the
+request. Opening a link executes it, including when a mail scanner opens it. An
+acceptance requiring a profile selection opens the selection form instead.
 
 The owner manages the Cloudflare account, billing, access and recovery. Keep
 Cloudflare and Google recovery methods current and enable MFA. Store the

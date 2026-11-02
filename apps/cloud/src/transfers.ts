@@ -1,4 +1,5 @@
 import { owner } from "./devices.js";
+import { sendApprovalMail } from "./approval-mail.js";
 import {
   body,
   enforceRateLimit,
@@ -10,6 +11,7 @@ import {
   string,
 } from "./http.js";
 import { cursor, databaseError } from "./sync.js";
+import { removeProfileStatements } from "./profile-removal.js";
 import type { Env, Principal } from "./types.js";
 
 interface Transfer {
@@ -52,6 +54,8 @@ export async function createTransfer(
 ): Promise<Response> {
   owner(principal);
   sameOrigin(request, env.AUTH_ORIGIN);
+  if (!principal.authenticatedAt || now - principal.authenticatedAt > 300_000)
+    throw new HttpError(403, "reauth_required");
   await enforceRateLimit(
     env.DB,
     `transfer-create:${principal.account.id}`,
@@ -61,7 +65,7 @@ export async function createTransfer(
   );
   const input = record(await body(request, 2048));
   const profileId = string(input.profileId, 160);
-  const targetEmail = string(input.targetEmail, 320).toLowerCase();
+  const targetIdentifier = string(input.target ?? input.targetEmail, 320);
   const profile = await env.DB.prepare(
     "SELECT ownership_epoch FROM cloud_profile WHERE id = ? AND account_id = ? AND active = 1",
   )
@@ -69,9 +73,9 @@ export async function createTransfer(
     .first<{ ownership_epoch: number }>();
   if (!profile) throw new HttpError(404, "profile_not_found");
   const target = await env.DB.prepare(
-    'SELECT id FROM "user" WHERE lower(email) = ?',
+    'SELECT id FROM "user" WHERE id = ? OR (lower(email) = ? AND "emailVerified" = 1) ORDER BY (id = ?) DESC LIMIT 1',
   )
-    .bind(targetEmail)
+    .bind(targetIdentifier, targetIdentifier.toLowerCase(), targetIdentifier)
     .first<{ id: string }>();
   if (!target || target.id === principal.account.id)
     throw new HttpError(400, "target_account_unavailable");
@@ -90,10 +94,19 @@ export async function createTransfer(
       target.id,
       profile.ownership_epoch,
       now,
-      now + 600_000,
+      now + 86_400_000,
     )
     .run();
-  return json({ id, expires_at: now + 600_000 }, 201);
+  const emailStatus = await sendApprovalMail(
+    env,
+    {
+      targetAccountId: target.id,
+      kind: "transfer",
+      requestId: id,
+    },
+    now,
+  );
+  return json({ id, expires_at: now + 86_400_000, emailStatus }, 201);
 }
 
 export async function listTransfers(
@@ -129,6 +142,10 @@ export async function listTransfers(
   return json({
     transfers: transfers.results.map(({ operation_json, ...row }) => ({
       ...row,
+      target_email:
+        row.target_account_id === principal.account.id
+          ? row.target_email
+          : null,
       profile_name: (
         JSON.parse(operation_json) as { payload: { name: string } }
       ).payload.name,
@@ -146,6 +163,8 @@ export async function acceptTransfer(
 ): Promise<Response> {
   owner(principal);
   sameOrigin(request, env.AUTH_ORIGIN);
+  if (!principal.authenticatedAt || now - principal.authenticatedAt > 300_000)
+    throw new HttpError(403, "reauth_required");
   await enforceRateLimit(
     env.DB,
     `transfer-accept:${principal.account.id}`,
@@ -159,12 +178,24 @@ export async function acceptTransfer(
     .bind(id, principal.account.id, now)
     .first<Transfer>();
   if (!transfer) throw new HttpError(404, "transfer_not_found");
+  const input = record(await body(request, 4096));
+  const removeProfileIds = input.removeProfileIds ?? [];
+  if (
+    !Array.isArray(removeProfileIds) ||
+    removeProfileIds.length > 5 ||
+    removeProfileIds.some(
+      (value) => typeof value !== "string" || !value || value.length > 160,
+    ) ||
+    new Set(removeProfileIds).size !== removeProfileIds.length
+  ) {
+    throw new HttpError(400, "invalid_request");
+  }
   const sourceCursor = Number(await cursor(env, transfer.source_account_id));
   const targetCursor = Number(await cursor(env, transfer.target_account_id));
   const latest = await env.DB.prepare(
-    "SELECT MAX(updated_at) AS updated_at FROM cloud_entity WHERE profile_id = ?",
+    `SELECT MAX(updated_at) AS updated_at FROM cloud_entity WHERE profile_id IN (${[transfer.profile_id, ...removeProfileIds].map(() => "?").join(", ")})`,
   )
-    .bind(transfer.profile_id)
+    .bind(transfer.profile_id, ...removeProfileIds)
     .first<{ updated_at: string | null }>();
   const updatedAt = new Date(
     Math.max(now, latest?.updated_at ? Date.parse(latest.updated_at) : 0) + 1,
@@ -187,7 +218,8 @@ export async function acceptTransfer(
     const result = await env.DB.batch([
       env.DB.prepare(
         `UPDATE cloud_transfer SET accepted_at = ?, accept_nonce = ?, source_cursor = ?, target_cursor = ?
-        WHERE id = ? AND target_account_id = ? AND accepted_at IS NULL AND expires_at > ?`,
+        WHERE id = ? AND target_account_id = ? AND accepted_at IS NULL AND expires_at > ?
+          ${removeProfileIds.length ? `AND (SELECT COUNT(*) FROM cloud_profile WHERE account_id = ? AND active = 1 AND id IN (${removeProfileIds.map(() => "?").join(", ")})) = ?` : ""}`,
       ).bind(
         now,
         nonce,
@@ -196,6 +228,20 @@ export async function acceptTransfer(
         id,
         principal.account.id,
         now,
+        ...(removeProfileIds.length
+          ? [principal.account.id, ...removeProfileIds, removeProfileIds.length]
+          : []),
+      ),
+      ...removeProfileIds.flatMap((profileId: string) =>
+        removeProfileStatements(
+          env,
+          transfer.target_account_id,
+          profileId,
+          updatedAt,
+          now,
+          guarded,
+          guardBindings,
+        ),
       ),
       env.DB.prepare(
         `UPDATE cloud_profile SET account_id = ?, ownership_epoch = ownership_epoch + 1, updated_at = ?
@@ -271,10 +317,40 @@ export async function acceptTransfer(
         ...guardBindings,
       ),
     ]);
-    if (!result[0]?.meta.changes || !result[1]?.meta.changes)
+    if (
+      !result[0]?.meta.changes ||
+      !result[1 + removeProfileIds.length * 4]?.meta.changes
+    )
       throw new HttpError(409, "transfer_changed");
   } catch (error) {
     databaseError(error);
   }
   return json({ ok: true, profileId: transfer.profile_id });
+}
+
+export async function declineTransfer(
+  request: Request,
+  env: Env,
+  principal: Principal,
+  id: string,
+  now: number,
+): Promise<Response> {
+  owner(principal);
+  sameOrigin(request, env.AUTH_ORIGIN);
+  if (!principal.authenticatedAt || now - principal.authenticatedAt > 300_000)
+    throw new HttpError(403, "reauth_required");
+  await enforceRateLimit(
+    env.DB,
+    `transfer-decline:${principal.account.id}`,
+    10,
+    600,
+    now,
+  );
+  const result = await env.DB.prepare(
+    "DELETE FROM cloud_transfer WHERE id = ? AND target_account_id = ? AND accepted_at IS NULL AND expires_at > ?",
+  )
+    .bind(id, principal.account.id, now)
+    .run();
+  if (!result.meta.changes) throw new HttpError(404, "transfer_not_found");
+  return json({ ok: true });
 }
