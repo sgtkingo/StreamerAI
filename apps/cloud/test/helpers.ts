@@ -21,6 +21,8 @@ export function fixture() {
     "0004_email_login.sql",
     "0005_deleted_device.sql",
     "0006_account_merge.sql",
+    "0007_source_feedback.sql",
+    "0008_profile_source_feedback.sql",
   ]) {
     sqlite.exec(
       readFileSync(

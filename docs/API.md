@@ -344,6 +344,23 @@ salt, WST or account identifier.
   browser playback and seek trial remains a release gate; no endpoint accepts a
   caller-supplied WST or returns it to the browser.
 
+## Source correctness feedback
+
+These routes use the normal account ownership and unlocked-profile checks:
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` / `PUT` | `/profiles/:profileId/source-feedback-settings` | Read/save `{ "enabled": true }` for this profile; defaults to enabled. |
+| `GET` | `/profiles/:profileId/titles/:titleId/source-feedback` | Return `{ enabled, items }` from the profile owner's shared account votes. Each item includes the voting profile's sync ID and `isOwn`. Disabled profiles receive no items. |
+| `PUT` | `/profiles/:profileId/titles/:titleId/source-feedback` | Save `{ "sourceId": "…", "vote": "up" }`; vote also accepts `"down"` or `null` to clear it. |
+
+The server resolves provider/file/episode identity from a source currently in
+the validated title cache. Unknown sources return 404; disabled profiles return
+409 on a vote write. Callers cannot submit arbitrary provider IDs or playback
+URLs. Each profile has one vote per source; votes are shared across the account and are separate from provider file
+quality/popularity votes. Sync uses the reserved `$account` scope and
+`source-feedback` operation kind independently of profile lifecycle.
+
 ## Versioning rules
 
 Shared request and response shapes live in `packages/contracts`. Additive

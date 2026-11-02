@@ -22,6 +22,7 @@ import { ComposingDots } from "./ComposingLabel";
 import { DownloadButton } from "./DownloadButton";
 import { useDownloadManager } from "./DownloadManager";
 import { retryPlaybackCheck } from "./retry-playback-check";
+import { useSourceFeedback } from "./SourceFeedback";
 
 interface Props {
   api: StreamerApi;
@@ -117,6 +118,7 @@ export function TitleDetail({
   onAdded,
   onPriorityChanged,
 }: Props) {
+  const sourceFeedback = useSourceFeedback(api, profileId, title.id);
   const [detail, setDetail] = useState<Detail | null>(null);
   const [error, setError] = useState("");
   const { showToast } = useToasts();
@@ -898,9 +900,10 @@ export function TitleDetail({
     )
       return;
     const series = detail.series;
-    const episodes = series?.seasons
-      .filter((season) => season.seasonNumber > 0)
-      .flatMap((season) => season.episodes) ?? [];
+    const episodes =
+      series?.seasons
+        .filter((season) => season.seasonNumber > 0)
+        .flatMap((season) => season.episodes) ?? [];
     if (
       series?.status === "searching" ||
       episodes.some((episode) => episode.availability === "searching")
@@ -1085,11 +1088,12 @@ export function TitleDetail({
     : undefined;
   const selectedHasLocalCopy =
     selectedEpisode !== null &&
-    sourcesFor(selectedEpisode).some((source) => source.providerId === "local-files");
-  const episodePlayable =
-    selectedHasLocalCopy
-      ? true
-      : selectedEpisodeKey !== null &&
+    sourcesFor(selectedEpisode).some(
+      (source) => source.providerId === "local-files",
+    );
+  const episodePlayable = selectedHasLocalCopy
+    ? true
+    : selectedEpisodeKey !== null &&
         (episodeRetryStatuses[selectedEpisodeKey] === "unavailable" ||
           episodeRetryStatuses[selectedEpisodeKey] === "failed")
       ? false
@@ -1293,7 +1297,11 @@ export function TitleDetail({
       type="button"
       aria-label={`${titlePriority === "high" ? "Remove high priority from" : "Set high priority for"} ${current.title}`}
       aria-pressed={titlePriority === "high"}
-      title={titlePriority === "high" ? "High priority" : "Low priority"}
+      title={
+        titlePriority === "high"
+          ? "Favorite. Click to remove."
+          : "Add to favorite"
+      }
       disabled={priorityBusy}
       onClick={() => void togglePriority()}
     >
@@ -1581,6 +1589,7 @@ export function TitleDetail({
                           }
                         />
                       </button>
+                      {sourceFeedback(source)}
                       {isDownloadableSource(source) && (
                         <DownloadButton
                           compact
@@ -1717,6 +1726,7 @@ export function TitleDetail({
                           }
                         />
                       </button>
+                      {sourceFeedback(source)}
                       {isDownloadableSource(source) && (
                         <DownloadButton
                           compact
@@ -1771,23 +1781,23 @@ export function TitleDetail({
               )}
               {detail?.series?.status !== "complete" &&
                 detail?.series?.status !== "searching" && (
-                <button
-                  className="button button--secondary button--compact title-detail__find-episodes"
-                  type="button"
-                  disabled={!playbackEnabled}
-                  onClick={() => {
-                    setError("");
-                    void api
-                      .getTitleDetail(profileId, title.id, true)
-                      .then(setDetail)
-                      .catch(() =>
-                        setError("Episode search could not restart."),
-                      );
-                  }}
-                >
-                  Try to find more episodes
-                </button>
-              )}
+                  <button
+                    className="button button--secondary button--compact title-detail__find-episodes"
+                    type="button"
+                    disabled={!playbackEnabled}
+                    onClick={() => {
+                      setError("");
+                      void api
+                        .getTitleDetail(profileId, title.id, true)
+                        .then(setDetail)
+                        .catch(() =>
+                          setError("Episode search could not restart."),
+                        );
+                    }}
+                  >
+                    Try to find more episodes
+                  </button>
+                )}
             </div>
             {!detail && !error && <p>Loading episode guide…</p>}
             {detail?.series === null && (
@@ -1806,11 +1816,23 @@ export function TitleDetail({
                     <button
                       key={season.seasonNumber}
                       className={`${shownSeason?.seasonNumber === season.seasonNumber ? "is-active" : ""}${season.seasonNumber === 0 ? " is-special" : season.episodes.length === 0 || season.episodes.some((episode) => episode.availability !== "available") ? " is-incomplete" : ""}`}
-                      title={season.seasonNumber === 0 ? "Optional bonus episodes" : season.episodes.length === 0 || season.episodes.some((episode) => episode.availability !== "available") ? "Some episodes are not available yet" : undefined}
+                      title={
+                        season.seasonNumber === 0
+                          ? "Optional bonus episodes"
+                          : season.episodes.length === 0 ||
+                              season.episodes.some(
+                                (episode) =>
+                                  episode.availability !== "available",
+                              )
+                            ? "Some episodes are not available yet"
+                            : undefined
+                      }
                       type="button"
                       onClick={() => setSelectedSeason(season.seasonNumber)}
                     >
-                      {season.seasonNumber === 0 ? "Season 0 · Specials" : `Season ${season.seasonNumber}`}
+                      {season.seasonNumber === 0
+                        ? "Season 0 · Specials"
+                        : `Season ${season.seasonNumber}`}
                     </button>
                   ))}
                 </div>
@@ -1996,6 +2018,7 @@ export function TitleDetail({
                                         }
                                       />
                                     </button>
+                                    {sourceFeedback(source)}
                                     {isDownloadableSource(source) && (
                                       <DownloadButton
                                         compact

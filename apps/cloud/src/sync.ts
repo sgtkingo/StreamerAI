@@ -86,6 +86,46 @@ export function operationStatements(
   `,
     ).bind(accountId, operation.id, operationHash, now),
   ];
+  if (operation.kind === "source-feedback") {
+    statements.push(
+      env.DB.prepare(
+        `
+      INSERT INTO cloud_account_entity (account_id, kind, entity_id, operation_id, action, updated_at, operation_json)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(account_id, kind, entity_id) DO UPDATE SET
+        operation_id = excluded.operation_id, action = excluded.action,
+        updated_at = excluded.updated_at, operation_json = excluded.operation_json
+      WHERE excluded.updated_at > cloud_account_entity.updated_at OR
+        (excluded.updated_at = cloud_account_entity.updated_at AND excluded.operation_id > cloud_account_entity.operation_id)
+    `,
+      ).bind(
+        accountId,
+        operation.kind,
+        operation.entityId,
+        operation.id,
+        operation.action,
+        operation.updatedAt,
+        JSON.stringify(operation),
+      ),
+    );
+    statements.push(
+      env.DB.prepare(
+        `
+      INSERT OR IGNORE INTO cloud_sync_log (account_id, profile_id, kind, action, operation_id, operation_json, created_at)
+      SELECT account_id, ?, kind, action, operation_id, operation_json, ? FROM cloud_account_entity
+      WHERE account_id = ? AND kind = ? AND entity_id = ? AND operation_id = ?
+    `,
+      ).bind(
+        operation.profileId,
+        now,
+        accountId,
+        operation.kind,
+        operation.entityId,
+        operation.id,
+      ),
+    );
+    return statements;
+  }
   if (operation.kind === "profile") {
     statements.push(
       env.DB.prepare(
@@ -214,6 +254,23 @@ export async function push(
     throw new HttpError(400, "future_operation");
   }
   try {
+    for (const operation of operations) {
+      if (operation.kind === "source-feedback" && operation.payload) {
+        const value = operation.payload;
+        const expected = await hash(
+          JSON.stringify([
+            value.profileId,
+            value.titleId,
+            value.providerId,
+            value.candidateId,
+            value.seasonNumber,
+            value.episodeNumber,
+          ]),
+        );
+        if (operation.entityId !== expected)
+          throw new HttpError(400, "invalid_feedback_identity");
+      }
+    }
     const operationHashes = await Promise.all(
       operations.map((operation) => hash(JSON.stringify(operation))),
     );
@@ -255,7 +312,7 @@ export async function pull(
     SELECT l.seq, l.operation_json FROM cloud_sync_log l
     LEFT JOIN cloud_profile p ON p.id = l.profile_id
     WHERE l.account_id = ? AND l.seq > ?
-      AND (p.account_id = ? OR (l.kind = 'profile' AND l.action = 'delete'))
+      AND (p.account_id = ? OR l.kind = 'source-feedback' OR (l.kind = 'profile' AND l.action = 'delete'))
     ORDER BY l.seq LIMIT 101
   `,
     ).bind(principal.account.id, Number(after), principal.account.id),
@@ -286,7 +343,7 @@ export async function snapshot(
   let phase = 0;
   let rowid = 0;
   if (after) {
-    const match = /^snapshot:(\d{1,16}):([01]):(\d{1,16})$/.exec(after);
+    const match = /^snapshot:(\d{1,16}):([012]):(\d{1,16})$/.exec(after);
     if (
       !match?.[1] ||
       !match[2] ||
@@ -302,8 +359,15 @@ export async function snapshot(
   }
   const [metadata, rows] = await env.DB.batch<CursorRow | OperationRow>([
     cursorStatement(env, principal.account.id),
-    env.DB.prepare(
-      `
+    phase === 2
+      ? env.DB.prepare(
+          `
+      SELECT rowid, operation_json FROM cloud_account_entity
+      WHERE account_id = ? AND rowid > ? ORDER BY rowid LIMIT 101
+    `,
+        ).bind(principal.account.id, rowid)
+      : env.DB.prepare(
+          `
     SELECT e.rowid, e.operation_json FROM cloud_entity e
     JOIN cloud_profile p ON p.id = e.profile_id
     WHERE e.account_id = ? AND e.rowid > ?
@@ -311,7 +375,7 @@ export async function snapshot(
       AND (p.account_id = ? OR (e.kind = 'profile' AND e.action = 'delete'))
     ORDER BY e.rowid LIMIT 101
   `,
-    ).bind(principal.account.id, rowid, phase, phase, principal.account.id),
+        ).bind(principal.account.id, rowid, phase, phase, principal.account.id),
   ]);
   const state = metadata?.results[0] as CursorRow;
   // An earlier snapshot page may have missed a later update. If retention has
@@ -322,12 +386,12 @@ export async function snapshot(
   const results = rows?.results as OperationRow[];
   const page = results.slice(0, 100);
   const moreRows = results.length > 100;
-  const hasMore = moreRows || phase === 0;
+  const hasMore = moreRows || phase < 2;
   return json({
     cursor: moreRows
       ? `snapshot:${watermark}:${phase}:${page.at(-1)?.rowid ?? rowid}`
-      : phase === 0
-        ? `snapshot:${watermark}:1:0`
+      : phase < 2
+        ? `snapshot:${watermark}:${phase + 1}:0`
         : watermark,
     operations: page.map((row) =>
       AccountSyncOperationSchema.parse(JSON.parse(row.operation_json)),

@@ -641,7 +641,14 @@ describe("TitleDetail", () => {
       ...offlineApi,
       getTitleDetail: vi.fn().mockResolvedValue(detail),
       forceEpisodeSearch: vi.fn().mockResolvedValue({ detail, sources }),
+      getSourceFeedback: vi
+        .fn()
+        .mockResolvedValue({ enabled: true, items: [] }),
+      saveSourceFeedback: vi
+        .fn()
+        .mockResolvedValue({ enabled: true, items: [] }),
     } as unknown as StreamerApi;
+    const onPlay = vi.fn().mockResolvedValue(undefined);
     render(
       <TitleDetail
         api={api}
@@ -650,7 +657,7 @@ describe("TitleDetail", () => {
         playbackEnabled
         onClose={vi.fn()}
         onOpenRelated={vi.fn()}
-        onPlay={vi.fn().mockResolvedValue(undefined)}
+        onPlay={onPlay}
         onAdded={vi.fn()}
       />,
     );
@@ -683,6 +690,18 @@ describe("TitleDetail", () => {
       "src",
       "/source-icons/local-files.svg",
     );
+    const thumbs = within(menu).getAllByRole("button", {
+      name: "Correct title or episode",
+    });
+    await user.click(thumbs[1]!);
+    expect(api.saveSourceFeedback).toHaveBeenCalledWith(
+      "default",
+      title.id,
+      sources[1]!.id,
+      "up",
+    );
+    expect(onPlay).not.toHaveBeenCalled();
+    expect(menu).toBeInTheDocument();
   });
 
   it("shows movie genres already present in validated metadata", async () => {

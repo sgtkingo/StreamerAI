@@ -251,11 +251,21 @@ describe("sync retention", () => {
     expect(last.operations.map((operation) => operation.kind)).toEqual([
       "library",
     ]);
-    expect(last.hasMore).toBe(false);
-    expect(last.cursor).toBe(await cursor(f.env, accounts.a!.id));
+    expect(last.hasMore).toBe(true);
+    const accountPage = (await (await getSnapshot(last.cursor)).json()) as {
+      cursor: string;
+      hasMore: boolean;
+      operations: AccountSyncOperation[];
+    };
+    expect(accountPage.operations).toEqual([]);
+    expect(accountPage.hasMore).toBe(false);
+    expect(accountPage.cursor).toBe(await cursor(f.env, accounts.a!.id));
     expect(
-      (await f.request("/v1/sync/pull?after=" + last.cursor, { account: "a" }))
-        .status,
+      (
+        await f.request("/v1/sync/pull?after=" + accountPage.cursor, {
+          account: "a",
+        })
+      ).status,
     ).toBe(200);
   });
 

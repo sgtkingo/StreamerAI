@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import BetterSqlite3 from "better-sqlite3";
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -34,6 +35,58 @@ afterEach(() => {
 });
 
 describe("database migrations", () => {
+  it("removes legacy account votes and queued sync operations while retaining other sync state", () => {
+    const legacy = new BetterSqlite3(":memory:");
+    try {
+      for (const migration of MIGRATIONS.filter((item) => item.version < 12))
+        legacy.exec(migration.sql);
+      legacy
+        .prepare("INSERT INTO source_feedback VALUES (?, ?, ?, ?)")
+        .run(
+          "local",
+          "old-vote",
+          JSON.stringify({ vote: "up" }),
+          fixedClock().toISOString(),
+        );
+      const operation = (kind: string) => ({ operation: { kind }, hash: kind });
+      const ledger = {
+        initialized: true,
+        cursor: "42",
+        entries: {
+          old: operation("source-feedback"),
+          keep: operation("profile"),
+        },
+        deferred: [{ kind: "source-feedback" }, { kind: "profile" }],
+      };
+      legacy
+        .prepare("INSERT INTO app_settings VALUES (?, ?, ?)")
+        .run(
+          "accountSync.example",
+          JSON.stringify(ledger),
+          fixedClock().toISOString(),
+        );
+      const insert = legacy.prepare(
+        `INSERT INTO sync_outbox (op_id, device_id, entity_type, entity_id, schema_version, hlc, payload_json, available_at, created_at) VALUES (?, 'device', ?, 'id', 1, 'clock', '{}', 'now', 'now')`,
+      );
+      insert.run("old", "source-feedback");
+      insert.run("keep", "profile");
+      legacy.exec(MIGRATIONS.find((item) => item.version === 12)!.sql);
+      expect(legacy.prepare("SELECT * FROM source_feedback").all()).toEqual([]);
+      expect(legacy.prepare("SELECT op_id FROM sync_outbox").all()).toEqual([
+        { op_id: "keep" },
+      ]);
+      const row = legacy
+        .prepare("SELECT value_json FROM app_settings WHERE key = ?")
+        .get("accountSync.example") as { value_json: string };
+      expect(JSON.parse(row.value_json)).toEqual({
+        ...ledger,
+        entries: { keep: operation("profile") },
+        deferred: [{ kind: "profile" }],
+      });
+    } finally {
+      legacy.close();
+    }
+  });
   it("applies every migration once, enables WAL, and seeds public integration states", () => {
     const { database, filename } = createDatabase();
 

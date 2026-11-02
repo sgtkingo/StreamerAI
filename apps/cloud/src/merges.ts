@@ -328,6 +328,34 @@ export async function decideMerge(
         merge.source_account_id,
         ...bindings,
       ),
+      // Account feedback follows an explicit account merge independently of
+      // the selected profiles. Preserve the latest judgement for each file.
+      env.DB.prepare(
+        `
+        INSERT INTO cloud_account_entity (account_id, kind, entity_id, operation_id, action, updated_at, operation_json)
+        SELECT ?, kind, entity_id, operation_id, action, updated_at, operation_json FROM cloud_account_entity
+        WHERE account_id = ? AND ${guard}
+        ON CONFLICT(account_id, kind, entity_id) DO UPDATE SET
+          operation_id = excluded.operation_id, action = excluded.action,
+          updated_at = excluded.updated_at, operation_json = excluded.operation_json
+        WHERE excluded.updated_at > cloud_account_entity.updated_at OR
+          (excluded.updated_at = cloud_account_entity.updated_at AND excluded.operation_id > cloud_account_entity.operation_id)
+      `,
+      ).bind(merge.target_account_id, merge.source_account_id, ...bindings),
+      env.DB.prepare(
+        `
+        INSERT OR IGNORE INTO cloud_sync_log (account_id, profile_id, kind, action, operation_id, operation_json, created_at)
+        SELECT target.account_id, '$account', target.kind, target.action, target.operation_id, target.operation_json, ?
+        FROM cloud_account_entity target JOIN cloud_account_entity source
+          ON source.account_id = ? AND source.kind = target.kind AND source.entity_id = target.entity_id AND source.operation_id = target.operation_id
+        WHERE target.account_id = ? AND ${guard}
+      `,
+      ).bind(
+        now,
+        merge.source_account_id,
+        merge.target_account_id,
+        ...bindings,
+      ),
       // Preserve the implicit login of a legacy email-only survivor when
       // adding its first Google identity.
       env.DB.prepare(

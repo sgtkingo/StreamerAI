@@ -19,10 +19,14 @@ import type {
   EnvironmentLocationsResponse,
   EnvironmentWeatherResponse,
   MediaSourcePreferences,
+  SourceFeedbackResponse,
+  SourceFeedback,
 } from "@streamer-ai/contracts";
 import {
   AppearancePreferencesSchema,
   MediaSourcePreferencesSchema,
+  SourceFeedbackResponseSchema,
+  SourceFeedbackSettingsSchema,
 } from "@streamer-ai/contracts";
 import { DEFAULT_PLAYBACK_PREFERENCES } from "../playback-preferences";
 
@@ -275,6 +279,21 @@ export interface StreamerApi {
   getMediaSourcePreferences(
     profileId?: string,
   ): Promise<MediaSourcePreferences>;
+  getSourceFeedback?(
+    profileId: string,
+    titleId: string,
+  ): Promise<SourceFeedbackResponse>;
+  saveSourceFeedback?(
+    profileId: string,
+    titleId: string,
+    sourceId: string,
+    vote: SourceFeedback["vote"],
+  ): Promise<SourceFeedbackResponse>;
+  getSourceFeedbackSettings?(profileId: string): Promise<{ enabled: boolean }>;
+  saveSourceFeedbackSettings?(
+    profileId: string,
+    enabled: boolean,
+  ): Promise<{ enabled: boolean }>;
   saveMediaSourcePreferences(
     preferences: MediaSourcePreferences,
     profileId?: string,
@@ -862,6 +881,24 @@ export const apiClient: StreamerApi = {
     request<unknown>(
       `/profiles/${encodeURIComponent(profileId)}/media-source-preferences`,
     ).then((value) => MediaSourcePreferencesSchema.parse(value)),
+  getSourceFeedback: (profileId, titleId) =>
+    request<unknown>(
+      `/profiles/${encodeURIComponent(profileId)}/titles/${encodeURIComponent(titleId)}/source-feedback`,
+    ).then((value) => SourceFeedbackResponseSchema.parse(value)),
+  saveSourceFeedback: (profileId, titleId, sourceId, vote) =>
+    request<unknown>(
+      `/profiles/${encodeURIComponent(profileId)}/titles/${encodeURIComponent(titleId)}/source-feedback`,
+      { method: "PUT", body: JSON.stringify({ sourceId, vote }) },
+    ).then((value) => SourceFeedbackResponseSchema.parse(value)),
+  getSourceFeedbackSettings: (profileId) =>
+    request<unknown>(
+      `/profiles/${encodeURIComponent(profileId)}/source-feedback-settings`,
+    ).then((value) => SourceFeedbackSettingsSchema.parse(value)),
+  saveSourceFeedbackSettings: (profileId, enabled) =>
+    request<unknown>(
+      `/profiles/${encodeURIComponent(profileId)}/source-feedback-settings`,
+      { method: "PUT", body: JSON.stringify({ enabled }) },
+    ).then((value) => SourceFeedbackSettingsSchema.parse(value)),
   saveMediaSourcePreferences: (preferences, profileId = "default") =>
     request<unknown>(
       `/profiles/${encodeURIComponent(profileId)}/media-source-preferences`,

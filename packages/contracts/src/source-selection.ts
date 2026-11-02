@@ -2,6 +2,9 @@ import type { PlaybackPreferences } from "./onboarding.js";
 import type { MediaSourcePreferences } from "./media-source-preferences.js";
 
 export interface SourceSelectionEvidence {
+  candidateId?: string;
+  seasonNumber?: number | null;
+  episodeNumber?: number | null;
   providerId: string;
   releaseName?: string;
   format?: {
@@ -14,6 +17,7 @@ export interface SourceSelectionEvidence {
 }
 
 export interface SourceSelectionContext {
+  correctness?: (source: SourceSelectionEvidence) => number;
   title: string;
   originalTitle?: string | null;
   playback: Pick<
@@ -157,6 +161,9 @@ export function rankPlayableSources<T extends SourceSelectionEvidence>(
     )
     .sort(
       (a, b) =>
+        (context.correctness
+          ? context.correctness(b) - context.correctness(a)
+          : 0) ||
         (preferences.mode === "by-order"
           ? rank(a.providerId) - rank(b.providerId)
           : 0) ||

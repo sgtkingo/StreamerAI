@@ -88,6 +88,40 @@ triggers conversion. If another local household exists, Continue locally lets
 the user select a converted household without merging their data. Devices whose tokens were already removed
 by an older worker's retention task also cannot receive the deletion signal.
 
+## Source correctness feedback
+
+Small thumbs beside a title's individual files record whether that file is
+the correct film or episode. A selected thumb glows green/red; pressing it
+again clears the vote. Each profile has one current vote for each
+title/provider/file/episode assignment. Counts are shared across the account,
+while the glowing thumb shows the current profile's vote. Sources are ranked
+by the sum of positive and negative profile votes. The normal
+compatibility filters and live playback checks still apply.
+
+Settings → Sources → Stream sources includes **Source correctness feedback**,
+enabled by default for each profile. Turning it off hides the thumbs, rejects
+new votes from that profile and ignores account votes in that profile's source
+ranking. Saved account votes remain available to other profiles. This profile
+preference follows normal profile synchronization; account votes follow account
+synchronization independently of profile sync pauses.
+
+Sync sends only the profile's sync ID, canonical title ID, provider ID, opaque file candidate ID,
+season/episode coordinates, vote and conflict-resolution timestamp/operation ID.
+It does not send release names, media links or credentials. Clearing a vote is
+replicated as a neutral record so an offline device cannot restore an older
+thumb. Account votes survive profile deletion and stay with the account when a
+profile is transferred. Explicit account merging combines votes using the same
+latest-change conflict resolution. They are private account data; no community
+lookup or aggregation is implemented.
+
+Deploy D1 migrations `0007_source_feedback.sql` and `0008_profile_source_feedback.sql` and the updated Worker before
+enabling sync on updated home servers. All syncing home servers should use this
+release together: older clients do not understand the new operation kind or
+the third snapshot phase. Local database migration 12 runs at startup. Migration
+12 and D1 migration 0008 discard old account-level feedback because it cannot
+be attributed to a profile; other synchronized state is retained. All syncing
+home servers must be updated to the profile-vote version.
+
 ## E-mail codes and identity linking
 
 The hosted login page sends an eight-digit code through Brevo. It expires after
@@ -163,8 +197,9 @@ Google recovery, so keep the PIN or restore a known database backup.
 ## Synchronized state
 
 The versioned `/v1/sync` protocol allowlists profile display/preferences,
-Library membership, History and playback progress. It includes only small
-title descriptors for titles actually referenced by that data. It excludes
+Library membership, History, playback progress and account source correctness
+feedback. It includes only small title descriptors for titles actually
+referenced by that data, plus opaque provider/file IDs in feedback. It excludes
 provider tokens, PIN verifiers, raw taste/AI prompts, local paths, output
 device IDs, media URLs/files, posters and a complete catalog mirror.
 

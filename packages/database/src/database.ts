@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 
 import { applyMigrations } from "./migrations.js";
+import { SourceFeedbackRepository } from "./source-feedback-repository.js";
 import {
   AccountAuthRepository,
   AccountsRepository,
@@ -29,6 +30,7 @@ export interface OpenStreamerDatabaseOptions {
 }
 
 export class StreamerDatabase {
+  readonly sourceFeedback: SourceFeedbackRepository;
   readonly accounts: AccountsRepository;
   readonly auth: AccountAuthRepository;
   readonly settings: SettingsRepository;
@@ -51,6 +53,7 @@ export class StreamerDatabase {
     readonly migrationBackupPath: string | null = null,
   ) {
     this.accounts = new AccountsRepository(connection, clock);
+    this.sourceFeedback = new SourceFeedbackRepository(connection, clock);
     this.auth = new AccountAuthRepository(connection, clock);
     this.settings = new SettingsRepository(connection, clock);
     this.profiles = new ProfilesRepository(connection, clock);

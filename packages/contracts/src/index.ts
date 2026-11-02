@@ -11,3 +11,4 @@ export * from "./environment.js";
 export * from "./media-source-preferences.js";
 export * from "./source-selection.js";
 export * from "./account-sync.js";
+export * from "./source-feedback.js";

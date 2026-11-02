@@ -2,6 +2,7 @@ import { z } from "zod";
 import { AppearancePreferencesSchema } from "./appearance.js";
 import { SupportedLocaleSchema } from "./locales.js";
 import { PlaybackPreferencesSchema } from "./onboarding.js";
+import { ACCOUNT_SYNC_SCOPE, SourceFeedbackSchema } from "./source-feedback.js";
 
 export const ACCOUNT_SYNC_VERSION = 1 as const;
 const identifier = z.string().min(1).max(160);
@@ -31,6 +32,7 @@ export const AccountSyncProfileSchema = z
     playback: PlaybackPreferencesSchema.omit({ audioOutputDeviceId: true }),
     appearance: AppearancePreferencesSchema,
     onboardingComplete: z.boolean(),
+    sourceFeedbackEnabled: z.boolean().optional(),
   })
   .strict();
 export const AccountSyncLibrarySchema = z
@@ -79,6 +81,14 @@ export const AccountSyncOperationSchema = z
     z
       .object({
         ...operationBase,
+        kind: z.literal("source-feedback"),
+        action: z.enum(["upsert", "delete"]),
+        payload: SourceFeedbackSchema.nullable(),
+      })
+      .strict(),
+    z
+      .object({
+        ...operationBase,
         kind: z.literal("profile"),
         action: z.enum(["upsert", "delete"]),
         payload: AccountSyncProfileSchema.nullable(),
@@ -110,6 +120,16 @@ export const AccountSyncOperationSchema = z
       .strict(),
   ])
   .superRefine((operation, context) => {
+    if (
+      (operation.kind === "source-feedback") !==
+      (operation.profileId === ACCOUNT_SYNC_SCOPE)
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "Account feedback requires the account scope.",
+        path: ["profileId"],
+      });
+    }
     if ((operation.action === "delete") !== (operation.payload === null)) {
       context.addIssue({
         code: "custom",

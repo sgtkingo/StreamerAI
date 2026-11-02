@@ -468,6 +468,53 @@ export const MIGRATIONS: readonly Migration[] = [
         )
         .join(""),
   },
+  {
+    version: 11,
+    name: "account_source_feedback",
+    sql:
+      `
+      CREATE TABLE source_feedback (
+        account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+        entity_id TEXT NOT NULL,
+        payload_json TEXT NOT NULL CHECK(json_valid(payload_json)),
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY(account_id, entity_id)
+      ) STRICT;
+      CREATE INDEX source_feedback_title ON source_feedback(account_id, json_extract(payload_json, '$.titleId'));
+    ` +
+      (["INSERT", "UPDATE", "DELETE"] as const)
+        .map(
+          (event) => `
+      CREATE TRIGGER account_sync_source_feedback_${event.toLowerCase()} AFTER ${event} ON source_feedback BEGIN
+        INSERT INTO account_sync_dirty (account_id, changed_at)
+        VALUES (${event === "DELETE" ? "OLD" : "NEW"}.account_id, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+        ON CONFLICT(account_id) DO UPDATE SET changed_at = excluded.changed_at;
+      END;
+    `,
+        )
+        .join(""),
+  },
+  {
+    version: 12,
+    name: "reset_account_source_feedback_for_profile_votes",
+    sql: `
+      DELETE FROM source_feedback;
+      DELETE FROM sync_outbox WHERE entity_type = 'source-feedback';
+      UPDATE app_settings SET value_json = json_set(
+        value_json,
+        '$.entries', json(COALESCE((
+          SELECT json_group_object(entry.key, json(entry.value))
+          FROM json_each(app_settings.value_json, '$.entries') AS entry
+          WHERE json_extract(entry.value, '$.operation.kind') != 'source-feedback'
+        ), '{}')),
+        '$.deferred', json(COALESCE((
+          SELECT json_group_array(json(item.value))
+          FROM json_each(app_settings.value_json, '$.deferred') AS item
+          WHERE json_extract(item.value, '$.kind') != 'source-feedback'
+        ), '[]'))
+      ) WHERE key GLOB 'accountSync.*';
+    `,
+  },
 ] as const;
 
 export function applyMigrations(

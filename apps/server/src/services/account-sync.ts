@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
   ACCOUNT_SYNC_VERSION,
+  ACCOUNT_SYNC_SCOPE,
   AccountSyncOperationSchema,
   AccountSyncProfileSchema,
   AccountSyncPullSchema,
@@ -11,7 +12,11 @@ import {
   type AccountSyncOperation,
   type AccountSyncTitle,
 } from "@streamer-ai/contracts";
-import type { Profile, StreamerDatabase } from "@streamer-ai/database";
+import {
+  sourceFeedbackId,
+  type Profile,
+  type StreamerDatabase,
+} from "@streamer-ai/database";
 import type { ProviderFetch } from "../integrations/tmdb-api-client.js";
 import {
   D1AccountSyncTransport,
@@ -374,6 +379,15 @@ export class AccountSyncService {
         });
         current.set(entryKey(operation), operation);
       };
+      for (const item of this.database.sourceFeedback.list(accountId)) {
+        collect(
+          "source-feedback",
+          ACCOUNT_SYNC_SCOPE,
+          item.id,
+          item.payload,
+          item.updatedAt,
+        );
+      }
       for (const profile of profiles) {
         collect(
           "profile",
@@ -506,7 +520,11 @@ export class AccountSyncService {
           ).toISOString(),
         });
         // Deleting a profile already deletes its child state in the cloud.
-        if (operation.kind === "profile" || syncIds.has(operation.profileId))
+        if (
+          operation.kind === "profile" ||
+          operation.kind === "source-feedback" ||
+          syncIds.has(operation.profileId)
+        )
           this.enqueue(accountId, operation);
         ledger.entries[key] = {
           ...previous,
@@ -824,6 +842,8 @@ export class AccountSyncService {
         (profile.id === "default" &&
           profile.preferences.onboardingComplete !== false &&
           this.database.settings.get("setup.completed") === true),
+      sourceFeedbackEnabled:
+        profile.preferences.sourceFeedbackEnabled !== false,
     });
   }
 
@@ -920,6 +940,21 @@ export class AccountSyncService {
       compareAccountSyncOperations(operation, previous.operation) <= 0
     )
       return;
+    if (operation.kind === "source-feedback") {
+      if (operation.payload === null)
+        this.database.sourceFeedback.remove(accountId, operation.entityId);
+      else {
+        if (sourceFeedbackId(operation.payload) !== operation.entityId)
+          throw new Error("Invalid source feedback identity.");
+        this.database.sourceFeedback.set(
+          accountId,
+          operation.payload,
+          operation.updatedAt,
+        );
+      }
+      ledger.entries[key] = { operation, hash: contentHash(operation) };
+      return;
+    }
     let profile = this.database.profiles.getBySyncId(operation.profileId);
     if (profile !== null && profile.accountId !== accountId) {
       if (operation.kind === "profile" && operation.payload !== null) {
@@ -987,6 +1022,8 @@ export class AccountSyncService {
             },
             appearance: operation.payload.appearance,
             onboardingComplete: operation.payload.onboardingComplete,
+            sourceFeedbackEnabled:
+              operation.payload.sourceFeedbackEnabled !== false,
           },
         });
       }

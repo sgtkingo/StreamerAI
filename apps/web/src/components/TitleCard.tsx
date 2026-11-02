@@ -581,7 +581,7 @@ export function TitleCard({
               type="button"
               aria-label={`${priority === "high" ? "Remove high priority from" : "Set high priority for"} ${item.title}`}
               aria-pressed={priority === "high"}
-              title={priority === "high" ? "High priority" : "Low priority"}
+              title={priority === "high" ? "Favorite. Click to remove." : "Add to favorite"}
               disabled={priorityBusy}
               onClick={() => {
                 setPriorityError(false);

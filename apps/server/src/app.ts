@@ -35,6 +35,7 @@ import {
   withRequestDisplayHeight,
 } from "./services/request-display.js";
 import { registerMediaSourcePreferenceRoutes } from "./routes/media-source-preferences.js";
+import { registerSourceFeedbackRoutes } from "./routes/source-feedback.js";
 import { OllamaAgentProvider } from "./integrations/ollama-agent-provider.js";
 import { discoverOllamaModels } from "./integrations/ollama-model-catalog.js";
 import { discoveryTierForAgent } from "./integrations/agent-model-catalog.js";
@@ -304,9 +305,37 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
     profileId: string,
     title: string,
     originalTitle?: string | null,
+    titleId?: string,
   ): SourceSelectionContext => ({
     title,
     originalTitle,
+    correctness: (() => {
+      const profile = database.profiles.get(profileId);
+      const items =
+        profile &&
+        titleId &&
+        profile.preferences.sourceFeedbackEnabled !== false
+          ? database.sourceFeedback
+              .list(profile.accountId, titleId)
+              .map((item) => item.payload)
+          : [];
+      return (source) => {
+        return items
+          .filter(
+            (item) =>
+              item.providerId === source.providerId &&
+              item.candidateId === source.candidateId &&
+              (source.seasonNumber === undefined ||
+                (item.seasonNumber === source.seasonNumber &&
+                  item.episodeNumber === source.episodeNumber)),
+          )
+          .reduce(
+            (total, item) =>
+              total + (item.vote === "up" ? 1 : item.vote === "down" ? -1 : 0),
+            0,
+          );
+      };
+    })(),
     playback:
       PlaybackPreferencesSchema.safeParse(
         database.profiles.get(profileId)?.preferences.playback ?? {},
@@ -828,6 +857,7 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
     store: sourcePreferences,
     providerIds: () => media.list().map((provider) => provider.descriptor().id),
   });
+  registerSourceFeedbackRoutes(app, database);
 
   app.addHook("onClose", async () => {
     if (accountSyncTimer) clearInterval(accountSyncTimer);

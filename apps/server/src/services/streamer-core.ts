@@ -124,6 +124,7 @@ export class StreamerCore {
       profileId: string,
       title: string,
       originalTitle?: string | null,
+      titleId?: string,
     ) => SourceSelectionContext,
   ) {
     this.preferredSources = new PreferredSourceStore(database);
@@ -1472,6 +1473,7 @@ export class StreamerCore {
       profileId,
       title.title,
       title.originalTitle,
+      title.id,
     );
     const projected =
       this.contentProvider.mode === "live" && this.sourceEnabled

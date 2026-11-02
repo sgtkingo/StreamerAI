@@ -96,6 +96,157 @@ function title(database: StreamerDatabase, id: string, timestamp: string) {
 }
 
 describe("home client and actual identity Worker retention protocol", () => {
+  it("syncs independent votes from different profiles without overwriting them", async () => {
+    const f = (cloud = fixture());
+    const fetcher: ProviderFetch = async (input, init) =>
+      f.worker.fetch(
+        new Request(input, {
+          method: init.method,
+          headers: init.headers,
+          body: init.body,
+          signal: init.signal,
+        }),
+        f.env,
+      );
+    const credential = await pair(f);
+    const first = installation(f, fetcher, async () => credential);
+    const second = installation(f, fetcher, async () => credential);
+    const a = first.database.profiles.create({
+      id: "a",
+      name: "A",
+      locale: "cs",
+    });
+    const b = first.database.profiles.create({
+      id: "b",
+      name: "B",
+      locale: "cs",
+    });
+    const base = {
+      titleId: "movie",
+      providerId: "webshare",
+      candidateId: "file",
+      seasonNumber: null,
+      episodeNumber: null,
+    };
+    first.database.sourceFeedback.set("local", {
+      ...base,
+      profileId: a.syncId,
+      vote: "up",
+    });
+    first.database.sourceFeedback.set("local", {
+      ...base,
+      profileId: b.syncId,
+      vote: "down",
+    });
+    expect((await first.service.sync("local")).status).toBe("idle");
+    expect((await second.service.sync("local")).status).toBe("idle");
+    expect(
+      second.database.sourceFeedback.list("local").map((item) => item.payload),
+    ).toEqual(
+      expect.arrayContaining([
+        { ...base, profileId: a.syncId, vote: "up" },
+        { ...base, profileId: b.syncId, vote: "down" },
+      ]),
+    );
+    f.advance(1000);
+    second.database.sourceFeedback.set("local", {
+      ...base,
+      profileId: b.syncId,
+      vote: null,
+    });
+    expect((await second.service.sync("local")).status).toBe("idle");
+    expect((await first.service.sync("local")).status).toBe("idle");
+    expect(
+      first.database.sourceFeedback.list("local").map((item) => item.payload),
+    ).toEqual(
+      expect.arrayContaining([
+        { ...base, profileId: a.syncId, vote: "up" },
+        { ...base, profileId: b.syncId, vote: null },
+      ]),
+    );
+  });
+  it("syncs account feedback without profile ownership, resolves offline edits and preserves clear votes", async () => {
+    const f = (cloud = fixture());
+    const fetcher: ProviderFetch = async (input, init) =>
+      f.worker.fetch(
+        new Request(input, {
+          method: init.method,
+          headers: init.headers,
+          body: init.body,
+          signal: init.signal,
+        }),
+        f.env,
+      );
+    const credential = await pair(f);
+    const first = installation(f, fetcher, async () => credential);
+    first.database.profiles.create({
+      id: "rater",
+      name: "Rater",
+      locale: "cs",
+    });
+    const vote = {
+      profileId: first.database.profiles.get("rater")!.syncId,
+      titleId: "sai:tmdb:series:42",
+      providerId: "webshare",
+      candidateId: "file-1",
+      seasonNumber: 1,
+      episodeNumber: 2,
+      vote: "up" as const,
+    };
+    first.database.profiles.create({
+      id: "disabled",
+      name: "Disabled",
+      locale: "cs",
+      preferences: { sourceFeedbackEnabled: false },
+    });
+    first.database.sourceFeedback.set("local", vote);
+    expect((await first.service.sync("local")).status).toBe("idle");
+    first.database.profiles.delete("rater");
+    expect((await first.service.sync("local")).status).toBe("idle");
+    // A fresh snapshot must recover feedback even though its originating profile is gone.
+    const second = installation(f, fetcher, async () => credential);
+    expect((await second.service.sync("local")).status).toBe("idle");
+    expect(second.database.sourceFeedback.list("local")[0]?.payload).toEqual(
+      vote,
+    );
+    expect(
+      second.database.profiles.list()[0]?.preferences.sourceFeedbackEnabled,
+    ).toBe(false);
+    f.advance(1000);
+    second.database.sourceFeedback.set("local", { ...vote, vote: "down" });
+    second.service.capture("local");
+    expect((await second.service.sync("local")).status).toBe("idle");
+    f.advance(1000);
+    first.database.sourceFeedback.set("local", { ...vote, vote: null });
+    first.service.capture("local");
+    expect((await first.service.sync("local")).status).toBe("idle");
+    expect((await second.service.sync("local")).status).toBe("idle");
+    expect(
+      second.database.sourceFeedback.list("local")[0]?.payload.vote,
+    ).toBeNull();
+    const count = Number(
+      (
+        f.sqlite
+          .prepare(
+            "SELECT COUNT(*) AS n FROM cloud_account_entity WHERE account_id = ?",
+          )
+          .get(accounts.a!.id) as { n: number }
+      ).n,
+    );
+    expect(count).toBe(1);
+    const other = await f.request("/v1/sync/pull?after=0", { account: "b" });
+    expect(
+      ((await other.json()) as { operations: unknown[] }).operations,
+    ).toEqual([]);
+    // The payload is only the judgement and opaque identifiers, never release names/URLs/secrets.
+    const row = f.sqlite
+      .prepare("SELECT operation_json FROM cloud_account_entity")
+      .get() as { operation_json: string };
+    expect(JSON.parse(row.operation_json).payload).toEqual({
+      ...vote,
+      vote: null,
+    });
+  });
   it("reconnects after ninety days, retains offline edits and never revives a deleted profile", async () => {
     const f = (cloud = fixture());
     const responses: Array<{ path: string; status: number }> = [];

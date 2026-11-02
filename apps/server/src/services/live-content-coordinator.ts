@@ -203,6 +203,7 @@ export interface LiveContentCoordinatorOptions {
     profileId: string,
     title: string,
     originalTitle?: string | null,
+    titleId?: string,
   ) => SourceSelectionContext;
   integrationStateStore: IntegrationStateStore;
   /** Resolve only opaque vault pointers; adapters fetch their own credentials. */
@@ -3442,7 +3443,7 @@ export class LiveContentCoordinator implements StreamerContentProvider {
   >(
     profileId: string,
     sources: readonly T[],
-    title?: { title: string; originalTitle?: string | null },
+    title?: { id?: string; title: string; originalTitle?: string | null },
   ): T[] {
     if (this.#sourceSelectionContext && title) {
       return rankPlayableSources(
@@ -3457,6 +3458,7 @@ export class LiveContentCoordinator implements StreamerContentProvider {
           profileId,
           title.title,
           title.originalTitle,
+          title.id,
         ),
       ).map((item) => item.source);
     }
@@ -4217,8 +4219,10 @@ export class LiveContentCoordinator implements StreamerContentProvider {
           profileId,
           metadata.title,
           metadata.originalTitle,
+          canonicalTitleId(metadata.ref),
         );
         const sortable = inspected.map((item) => ({
+          candidateId: item.candidate.ref.candidateId,
           providerId: item.candidate.ref.providerId,
           rankingScore: sourceQuality(item.candidate, item.variant),
           releaseName: item.candidate.releaseName,

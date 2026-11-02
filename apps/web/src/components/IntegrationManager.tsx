@@ -10,6 +10,7 @@ import { safeErrorMessage } from "../api/client";
 import { InfoTip } from "./InfoTip";
 import { SourceIcon } from "./SourceIcon";
 import { LocalFolderSettings } from "./LocalFolderSettings";
+import { SourceFeedbackSettings } from "./SourceFeedback";
 import { AgentBackendSettings } from "./AgentBackendSettings";
 
 type SourceCategory = IntegrationCatalogItem["category"];
@@ -837,6 +838,7 @@ export function IntegrationManager({
                       <label>
                         <input
                           type="checkbox"
+                          aria-label="Require seeking"
                           checked={requireSeeking}
                           onChange={(event) =>
                             void saveSourcePreferences(
@@ -846,11 +848,19 @@ export function IntegrationManager({
                             )
                           }
                         />
-                        Require seeking
+                        <span>
+                          Require seeking{" "}
+                          <InfoTip label="About requiring seeking">
+                            Only use sources with confirmed seeking support.
+                            Sources without verified seeking are excluded when
+                            this is enabled.
+                          </InfoTip>
+                        </span>
                       </label>
                       <label>
                         <input
                           type="checkbox"
+                          aria-label="Require direct play"
                           checked={requireDirectPlay}
                           onChange={(event) =>
                             void saveSourcePreferences(
@@ -861,7 +871,14 @@ export function IntegrationManager({
                             )
                           }
                         />
-                        Require direct play
+                        <span>
+                          Require direct play{" "}
+                          <InfoTip label="About requiring direct play">
+                            Only use sources confirmed to support direct
+                            playback. Sources without verified direct playback
+                            are excluded when this is enabled.
+                          </InfoTip>
+                        </span>
                       </label>
                     </fieldset>
                   )}
@@ -876,6 +893,9 @@ export function IntegrationManager({
                     >
                       {orderMessage}
                     </p>
+                  )}
+                  {group.id === "media" && context === "settings" && (
+                    <SourceFeedbackSettings api={api} profileId={profileId} />
                   )}
                 </div>
               )}
