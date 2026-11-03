@@ -480,15 +480,13 @@ export function registerContentRoutes(
           },
         });
       try {
-        return {
-          sourceId: dependencies.core.preferredSourceId(
-            profileId,
-            titleId,
-            seasonNumber === undefined
-              ? undefined
-              : { seasonNumber, episodeNumber: episodeNumber! },
-          ),
-        };
+        return dependencies.core.preferredSourceSelection(
+          profileId,
+          titleId,
+          seasonNumber === undefined
+            ? undefined
+            : { seasonNumber, episodeNumber: episodeNumber! },
+        );
       } catch (error) {
         return sendDomainError(reply, error);
       }

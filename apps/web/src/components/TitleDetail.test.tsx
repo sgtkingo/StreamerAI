@@ -1,9 +1,10 @@
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type {
   CatalogTitle,
   TitleDetail as Detail,
+  SourceAiPickResponse,
 } from "@streamer-ai/contracts";
 import type { StreamerApi } from "../api/client";
 import { TitleDetail } from "./TitleDetail";
@@ -58,6 +59,156 @@ const title = {
   inLibrary: false,
   progressPercent: null,
 } satisfies CatalogTitle;
+
+async function openAiSourceMenu(pick: () => Promise<SourceAiPickResponse>) {
+  const sources = ["a", "b"].map((letter) => ({
+    id: letter.repeat(32),
+    providerId: "webshare",
+    candidateId: letter,
+    releaseName: `Sample.Movie.${letter}.mkv`,
+    sizeBytes: 100,
+    format: title.formats[0]!,
+    seasonNumber: null,
+    episodeNumber: null,
+    checkedAt: "2026-09-29T20:00:00.000Z",
+  }));
+  const movie: CatalogTitle = {
+    ...title,
+    kind: "movie",
+    title: "Sample Movie",
+    availability: "available",
+    seriesCoverage: null,
+    sources,
+  };
+  const detail = { title: movie, related: [], series: null };
+  const api = {
+    ...offlineApi,
+    getTitleDetail: vi.fn().mockResolvedValue(detail),
+    forceTitleSearch: vi.fn().mockResolvedValue({ detail, foundSources: 2 }),
+    pickSourceWithAi: vi.fn(pick),
+    checkPlayback: vi.fn().mockResolvedValue({ ok: true }),
+  } as unknown as StreamerApi;
+  const onPlay = vi.fn().mockResolvedValue(undefined);
+  render(
+    <ToastProvider>
+      <TitleDetail
+        api={api}
+        profileId="default"
+        title={movie}
+        playbackEnabled
+        onClose={vi.fn()}
+        onOpenRelated={vi.fn()}
+        onPlay={onPlay}
+        onAdded={vi.fn()}
+      />
+    </ToastProvider>,
+  );
+  const user = userEvent.setup();
+  await screen.findByRole("dialog", { name: "Details for Sample Movie" });
+  const open = async () => {
+    await user.click(
+      screen.getByRole("button", { name: "Search again for Sample Movie" }),
+    );
+    const menu = screen.getByRole("group", { name: "Search results" });
+    await within(menu).findByText("Sample.Movie.a.mkv");
+    return menu;
+  };
+  return { user, api, sources, movie, menu: await open(), onPlay, open };
+}
+
+describe("AI source pick", () => {
+  it("moves the AI pick first, exposes its explanation and allows a manual override", async () => {
+    const { user, menu, sources, api, onPlay, open } = await openAiSourceMenu(
+      async () => ({
+        sourceId: "b".repeat(32),
+        reason: "Matches the full title.",
+        applied: true,
+      }),
+    );
+    await user.click(
+      within(menu).getByRole("button", { name: "Let AI choose a source" }),
+    );
+    const selected = await within(menu).findByText("AI pick");
+    expect(selected.closest(".title-detail__source-row")).toBe(
+      menu.querySelector(".title-detail__source-row"),
+    );
+    expect(
+      within(menu).getByLabelText(
+        "AI pick explanation: Matches the full title.",
+      ),
+    ).toBeInTheDocument();
+    expect(api.pickSourceWithAi).toHaveBeenCalledWith(
+      "default",
+      title.id,
+      sources,
+      undefined,
+    );
+    await user.click(
+      within(menu).getByRole("button", { name: /Source 2.*Sample.Movie.a/ }),
+    );
+    expect(onPlay.mock.calls[0]![3]).toBe(sources[0]!.id);
+    const reopened = await open();
+    expect(within(reopened).queryByText("AI pick")).toBeNull();
+    expect(
+      reopened.querySelector(".title-detail__source-row"),
+    ).toHaveTextContent("Sample.Movie.a.mkv");
+  });
+  it.each(["error", "no-match"])(
+    "keeps the existing order on %s",
+    async (kind) => {
+      const { user, menu } = await openAiSourceMenu(async () => {
+        if (kind === "error") throw new Error("AI unavailable");
+        return {
+          sourceId: null,
+          reason: "No suitable source.",
+          applied: false,
+        };
+      });
+      await user.click(
+        within(menu).getByRole("button", { name: "Let AI choose a source" }),
+      );
+      await waitFor(() =>
+        expect(
+          within(menu).getByRole("button", { name: "Let AI choose a source" }),
+        ).toBeEnabled(),
+      );
+      expect(menu.querySelector(".title-detail__source-row")).toHaveTextContent(
+        "Sample.Movie.a.mkv",
+      );
+      expect(within(menu).queryByText("AI pick")).toBeNull();
+    },
+  );
+  it("ignores a late AI response after a manual selection", async () => {
+    let complete!: (value: SourceAiPickResponse) => void;
+    const { user, menu, open } = await openAiSourceMenu(
+      () =>
+        new Promise((resolve) => {
+          complete = resolve;
+        }),
+    );
+    await user.click(
+      within(menu).getByRole("button", { name: "Let AI choose a source" }),
+    );
+    expect(
+      within(menu).getByRole("button", { name: "Let AI choose a source" }),
+    ).toBeDisabled();
+    await user.click(
+      within(menu).getByRole("button", { name: /Recommended.*Sample.Movie.a/ }),
+    );
+    await act(async () =>
+      complete({
+        sourceId: "b".repeat(32),
+        reason: "Late response.",
+        applied: true,
+      }),
+    );
+    const reopened = await open();
+    expect(within(reopened).queryByText("AI pick")).toBeNull();
+    expect(
+      reopened.querySelector(".title-detail__source-row"),
+    ).toHaveTextContent("Sample.Movie.a.mkv");
+  });
+});
 
 describe("TitleDetail", () => {
   it("shows a locally saved episode as ready even when its search status is unavailable", async () => {
@@ -803,7 +954,7 @@ describe("TitleDetail", () => {
     const menu = within(dialog).getByRole("group", { name: "Search results" });
     await within(menu).findByRole("button", { name: /Preferred/ });
     expect(
-      within(menu).getAllByRole("button", { name: /Recommended|Preferred/ }),
+      within(menu).getAllByRole("button", { name: /^(Preferred|Source 2)/ }),
     ).toHaveLength(2);
     expect(
       within(menu).getByRole("button", {

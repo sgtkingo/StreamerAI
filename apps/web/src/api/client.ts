@@ -21,12 +21,15 @@ import type {
   MediaSourcePreferences,
   SourceFeedbackResponse,
   SourceFeedback,
+  SourceAiPickResponse,
+  PreferredSourceSelection,
 } from "@streamer-ai/contracts";
 import {
   AppearancePreferencesSchema,
   MediaSourcePreferencesSchema,
   SourceFeedbackResponseSchema,
   SourceFeedbackSettingsSchema,
+  SourceAiPickResponseSchema,
 } from "@streamer-ai/contracts";
 import { DEFAULT_PLAYBACK_PREFERENCES } from "../playback-preferences";
 
@@ -318,7 +321,13 @@ export interface StreamerApi {
     profileId: string,
     titleId: string,
     episode?: EpisodeSelection,
-  ): Promise<{ sourceId: string | null }>;
+  ): Promise<PreferredSourceSelection>;
+  pickSourceWithAi?(
+    profileId: string,
+    titleId: string,
+    sources: TitleSource[],
+    episode?: EpisodeSelection,
+  ): Promise<SourceAiPickResponse>;
   startOfflineDownload(
     profileId: string,
     titleId: string,
@@ -967,10 +976,17 @@ export const apiClient: StreamerApi = {
     const query = episode
       ? `?seasonNumber=${episode.seasonNumber}&episodeNumber=${episode.episodeNumber}`
       : "";
-    return request<{ sourceId: string | null }>(
+    return request<PreferredSourceSelection>(
       `/profiles/${encodeURIComponent(profileId)}/titles/${encodeURIComponent(titleId)}/preferred-source${query}`,
     );
   },
+  pickSourceWithAi: async (profileId, titleId, sources, episode) =>
+    SourceAiPickResponseSchema.parse(
+      await request<SourceAiPickResponse>(
+        `/profiles/${encodeURIComponent(profileId)}/titles/${encodeURIComponent(titleId)}/ai-pick`,
+        { method: "POST", body: JSON.stringify({ sources, episode }) },
+      ),
+    ),
   startOfflineDownload: (
     profileId,
     titleId,

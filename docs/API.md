@@ -363,6 +363,19 @@ quality/popularity votes. Sync uses the reserved `$account` scope and
 
 ## Versioning rules
 
+`POST /api/v1/profiles/:profileId/titles/:titleId/ai-pick` accepts
+`{ sources: TitleSource[], episode?: EpisodeSelection }` from the displayed
+source menu. Series require an exact episode, and all sources must belong to
+that episode (movies require null episode coordinates). It calls the selected
+agent without personal preferences or tools and returns
+`{ sourceId: string | null, reason: string, applied: boolean }`. A successful
+choice becomes the remembered source unless a manual choice changed while
+inference was pending. Concurrent calls for one profile return 409; oversized
+context returns 413; unavailable or invalid agent output returns 503.
+The existing `GET .../preferred-source` response additionally includes optional
+`aiPick: { sourceId, reason }` metadata. Both routes use normal profile access
+checks. Playback continues to revalidate the selected source.
+
 Shared request and response shapes live in `packages/contracts`. Additive
 changes should remain backward compatible inside `/api/v1`. Breaking changes
 require a new versioned route and a migration window for the web client.

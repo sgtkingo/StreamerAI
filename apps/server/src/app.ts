@@ -36,6 +36,7 @@ import {
 } from "./services/request-display.js";
 import { registerMediaSourcePreferenceRoutes } from "./routes/media-source-preferences.js";
 import { registerSourceFeedbackRoutes } from "./routes/source-feedback.js";
+import { registerSourceAiPickRoutes } from "./routes/source-ai-pick.js";
 import { OllamaAgentProvider } from "./integrations/ollama-agent-provider.js";
 import { discoverOllamaModels } from "./integrations/ollama-model-catalog.js";
 import { discoveryTierForAgent } from "./integrations/agent-model-catalog.js";
@@ -858,6 +859,11 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
     providerIds: () => media.list().map((provider) => provider.descriptor().id),
   });
   registerSourceFeedbackRoutes(app, database);
+  registerSourceAiPickRoutes(app, {
+    database,
+    agent,
+    inference: agentInferenceForProfile,
+  });
 
   app.addHook("onClose", async () => {
     if (accountSyncTimer) clearInterval(accountSyncTimer);

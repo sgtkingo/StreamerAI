@@ -201,6 +201,15 @@ export class StreamerCore {
     return this.preferredSources.get(profileId, titleId, episode);
   }
 
+  preferredSourceSelection(
+    profileId: string,
+    titleId: string,
+    episode?: EpisodeSelection,
+  ) {
+    this.preferredSourceId(profileId, titleId, episode);
+    return this.preferredSources.selection(profileId, titleId, episode);
+  }
+
   configureProfile(input: {
     id: string;
     name: string;

@@ -10,6 +10,22 @@ The detail endpoint is `GET /api/v1/profiles/:profileId/titles/:titleId`. If a p
 
 ## Multiple files for one title
 
+The source search menus include a blue/pink lightning button for a manually
+requested AI recommendation. It uses the profile's configured agent backend,
+including a remote provider when selected. Only canonical title metadata and
+the displayed source names and format hints enter the model prompt; taste and
+playback preferences, provider credentials and playback URLs are excluded.
+The model may decline to select. Unknown IDs, incomplete responses and provider
+errors preserve the current choice. Lists exceeding the configured context are
+rejected rather than silently truncated.
+
+A successful AI choice moves to the first row, labelled **AI pick** with a
+multicolour background and a focusable explanation tooltip. It is remembered
+per profile and movie or exact episode, and ordinary Play uses it through the
+existing preferred-source fallback. Playing a different source replaces it;
+playing the same source retains the AI explanation. A manual selection made
+while a model call is pending takes precedence over the late response.
+
 `CatalogTitle.sources` contains a bounded, ranked list of distinct, inspected media files (`TitleSource`). Each source has a stable title-scoped ID, provider reference, release name, size, format hint, inspection timestamp and, for a series, exact season/episode. It contains **no direct playback URL**. The catalogue stores these references in SQLite as part of the canonical title, so a selected source survives a server restart. Duplicate provider references and duplicate release-name/size combinations are removed. The discovery pass inspects at most 12 matching candidates per title; this is a best-candidate shortlist, not an exhaustive scrape of the provider's entire catalogue.
 
 The tile shows a source count and places a vertical three-dot button beside Play. The menu expands inside the tile, rather than opening an overlay that could be clipped or cover neighbouring cards. The same control is available in film details and beside an episode with multiple known files. Source rows show quality and language **hints** from file metadata; these are not promises about verified tracks. The first source is marked Recommended. Audio, subtitles and quality stay bound to the selected file. Escape closes the open menu; the tile menu also closes on an outside click.

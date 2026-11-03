@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useId,
   useRef,
   useState,
 } from "react";
@@ -10,6 +11,7 @@ import type {
   EpisodeSelection,
   TitleSource,
   TitleDetail as Detail,
+  PreferredSourceSelection,
 } from "@streamer-ai/contracts";
 import type { OfflineDownload, StreamerApi } from "../api/client";
 import { safeErrorMessage } from "../api/client";
@@ -50,6 +52,43 @@ const isDownloadableSource = (source: TitleSource) =>
 
 const seriesDownloadLocks = new Map<string, Promise<void>>();
 
+const sourceSelectionKey = (episode?: EpisodeSelection) =>
+  episode ? `${episode.seasonNumber}:${episode.episodeNumber}` : "movie";
+
+function AiSourceButton({
+  busy,
+  disabled,
+  onClick,
+}: {
+  busy: boolean;
+  disabled: boolean;
+  onClick: () => void;
+}) {
+  const gradient = useId();
+  return (
+    <button
+      type="button"
+      className="title-detail__ai-source"
+      aria-label="Let AI choose a source"
+      title="Let AI choose a source"
+      aria-busy={busy}
+      disabled={disabled || busy}
+      onClick={onClick}
+    >
+      <svg width="23" height="23" viewBox="0 0 24 24" aria-hidden="true">
+        <defs>
+          <linearGradient id={gradient} x1="0" y1="0" x2="1" y2="1">
+            <stop stopColor="#59caff" />
+            <stop offset="1" stopColor="#ff69cb" />
+          </linearGradient>
+        </defs>
+        <path fill={`url(#${gradient})`} d="M13.5 1 3 14h7l-1 9L21 9h-8z" />
+      </svg>
+      {busy && <span className="sr-only">Choosing a source…</span>}
+    </button>
+  );
+}
+
 type SeriesDownloadProgress = {
   requestId: number;
   status:
@@ -81,16 +120,30 @@ function PlayActionContent({ label }: { label: string }) {
 function SourceOptionContent({
   source,
   label,
+  aiReason,
 }: {
   source: TitleSource;
   label: string;
+  aiReason?: string;
 }) {
   return (
     <>
       <span className="title-detail__source-option-main">
         <SourceIcon providerId={source.providerId} />
         <span>
-          <span>{label}</span>
+          <span>
+            {label}
+            {aiReason && (
+              <span
+                className="title-detail__ai-info"
+                tabIndex={0}
+                aria-label={`AI pick explanation: ${aiReason}`}
+              >
+                {" "}
+                ⓘ<span role="tooltip">{aiReason}</span>
+              </span>
+            )}
+          </span>
           <small>{sourceName(source.providerId)}</small>
           <small className="title-detail__source-option-filename">
             {source.releaseName}
@@ -146,6 +199,19 @@ export function TitleDetail({
   const [preferredSourceId, setPreferredSourceId] = useState<string | null>(
     null,
   );
+  const [sourceSelections, setSourceSelections] = useState<
+    Record<string, PreferredSourceSelection>
+  >({});
+  const [aiPicking, setAiPicking] = useState<string | null>(null);
+  const manualSelectionVersions = useRef<Record<string, number>>({});
+  const sourceScope = `${profileId}:${title.id}`;
+  const sourceScopeRef = useRef(sourceScope);
+  sourceScopeRef.current = sourceScope;
+  useEffect(() => {
+    setSourceSelections({});
+    setAiPicking(null);
+    manualSelectionVersions.current = {};
+  }, [sourceScope]);
   const [downloadBusy, setDownloadBusy] = useState(false);
   const onAddedRef = useRef(onAdded);
   onAddedRef.current = onAdded;
@@ -246,17 +312,57 @@ export function TitleDetail({
   }, [api, profileId]);
   useEffect(() => {
     let active = true;
+    const selectionKey = sourceSelectionKey(selectedEpisode ?? undefined);
+    const selectionVersion = manualSelectionVersions.current[selectionKey] ?? 0;
     setPreferredSourceId(null);
     void api
       .getPreferredSource?.(profileId, title.id, selectedEpisode ?? undefined)
       .then((value) => {
-        if (active) setPreferredSourceId(value.sourceId);
+        if (
+          active &&
+          selectionVersion ===
+            (manualSelectionVersions.current[selectionKey] ?? 0)
+        ) {
+          setPreferredSourceId(value.sourceId);
+          setSourceSelections((current) => ({
+            ...current,
+            [sourceSelectionKey(selectedEpisode ?? undefined)]: value,
+          }));
+        }
       })
       .catch(() => undefined);
     return () => {
       active = false;
     };
   }, [api, profileId, title.id, selectedEpisode]);
+  useEffect(() => {
+    if (!openSourceFor || openSourceFor === "movie" || !api.getPreferredSource)
+      return;
+    const [seasonNumber, episodeNumber] = openSourceFor.split(":").map(Number);
+    if (!Number.isInteger(seasonNumber) || !Number.isInteger(episodeNumber))
+      return;
+    let active = true;
+    const version = manualSelectionVersions.current[openSourceFor] ?? 0;
+    void api
+      .getPreferredSource(profileId, title.id, {
+        seasonNumber: seasonNumber!,
+        episodeNumber: episodeNumber!,
+      })
+      .then((value) => {
+        if (
+          active &&
+          version === (manualSelectionVersions.current[openSourceFor] ?? 0)
+        )
+          setSourceSelections((current) => ({
+            ...current,
+            [openSourceFor]: value,
+          }));
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [api, profileId, title.id, openSourceFor]);
   useEffect(() => {
     if (!offlineJobs.some((job) => job.state === "downloading")) return;
     const timer = window.setTimeout(() => {
@@ -555,30 +661,123 @@ export function TitleDetail({
           (episode) => episode.episodeNumber === selectedEpisode.episodeNumber,
         )
     : null;
+  const orderSources = (sources: TitleSource[], episode?: EpisodeSelection) => {
+    const selected = sourceSelections[sourceSelectionKey(episode)]?.sourceId;
+    return selected
+      ? [...sources].sort(
+          (a, b) => Number(b.id === selected) - Number(a.id === selected),
+        )
+      : sources;
+  };
+  const aiReasonFor = (source: TitleSource, episode?: EpisodeSelection) => {
+    const selection = sourceSelections[sourceSelectionKey(episode)];
+    return selection?.aiPick?.sourceId === source.id &&
+      selection.sourceId === source.id
+      ? selection.aiPick.reason
+      : undefined;
+  };
+  const sourceOptionLabel = (
+    source: TitleSource,
+    index: number,
+    episode?: EpisodeSelection,
+  ) =>
+    aiReasonFor(source, episode)
+      ? "AI pick"
+      : source.id ===
+          (sourceSelections[sourceSelectionKey(episode)]?.sourceId ??
+            preferredSourceId)
+        ? "Preferred"
+        : index === 0
+          ? "Recommended"
+          : `Source ${index + 1}`;
   const sourcesFor = (episode?: EpisodeSelection) =>
-    [
-      ...new Map(
-        [
-          ...(current.sources ?? []),
-          ...(downloadManager?.details[current.id]?.title.sources ?? []).filter(
-            (source) => source.providerId !== "local-files",
-          ),
-        ].map((source) => [source.id, source]),
-      ).values(),
-    ].filter((source) =>
-      episode
-        ? source.seasonNumber === episode.seasonNumber &&
-          source.episodeNumber === episode.episodeNumber
-        : source.seasonNumber === null && source.episodeNumber === null,
+    orderSources(
+      [
+        ...new Map(
+          [
+            ...(current.sources ?? []),
+            ...(
+              downloadManager?.details[current.id]?.title.sources ?? []
+            ).filter((source) => source.providerId !== "local-files"),
+          ].map((source) => [source.id, source]),
+        ).values(),
+      ].filter((source) =>
+        episode
+          ? source.seasonNumber === episode.seasonNumber &&
+            source.episodeNumber === episode.episodeNumber
+          : source.seasonNumber === null && source.episodeNumber === null,
+      ),
+      episode,
     );
   const sourceChoicesFor = (
     episode: EpisodeSelection,
     searched: TitleSource[],
   ) =>
-    [...sourcesFor(episode), ...searched].filter(
-      (source, index, all) =>
-        all.findIndex((item) => item.id === source.id) === index,
+    orderSources(
+      [...sourcesFor(episode), ...searched].filter(
+        (source, index, all) =>
+          all.findIndex((item) => item.id === source.id) === index,
+      ),
+      episode,
     );
+  const pickWithAi = async (
+    sources: TitleSource[],
+    episode?: EpisodeSelection,
+  ) => {
+    if (!api.pickSourceWithAi || aiPicking) return;
+    const key = sourceSelectionKey(episode);
+    const scope = sourceScope;
+    const version = (manualSelectionVersions.current[key] ?? 0) + 1;
+    manualSelectionVersions.current[key] = version;
+    setAiPicking(key);
+    try {
+      const result = await api.pickSourceWithAi(
+        profileId,
+        current.id,
+        sources,
+        episode,
+      );
+      if (
+        sourceScopeRef.current !== scope ||
+        manualSelectionVersions.current[key] !== version
+      )
+        return;
+      if (
+        result.applied &&
+        result.sourceId &&
+        sources.some((source) => source.id === result.sourceId)
+      ) {
+        setSourceSelections((selections) => ({
+          ...selections,
+          [key]: {
+            sourceId: result.sourceId,
+            aiPick: { sourceId: result.sourceId!, reason: result.reason },
+          },
+        }));
+        setPreferredSourceId(result.sourceId);
+      } else if (result.sourceId === null) showToast(result.reason, "info");
+    } catch (reason) {
+      if (
+        sourceScopeRef.current === scope &&
+        manualSelectionVersions.current[key] === version
+      )
+        showToast(safeErrorMessage(reason), "error");
+    } finally {
+      if (sourceScopeRef.current === scope) setAiPicking(null);
+    }
+  };
+  const aiSourceButton = (
+    sources: TitleSource[],
+    episode?: EpisodeSelection,
+  ) => (
+    <AiSourceButton
+      busy={aiPicking === sourceSelectionKey(episode)}
+      disabled={
+        !api.pickSourceWithAi || Boolean(aiPicking) || sources.length === 0
+      }
+      onClick={() => void pickWithAi(sources, episode)}
+    />
+  );
   const downloadableSourcesFor = (episode?: EpisodeSelection) =>
     sourcesFor(episode).filter(isDownloadableSource);
   const downloadJobsFor = (
@@ -1128,6 +1327,23 @@ export function TitleDetail({
     const key = episode
       ? `${episode.seasonNumber}:${episode.episodeNumber}`
       : "movie";
+    if (sourceId) {
+      manualSelectionVersions.current[key] =
+        (manualSelectionVersions.current[key] ?? 0) + 1;
+      setSourceSelections((selections) => {
+        const previous = selections[key];
+        return {
+          ...selections,
+          [key]: {
+            sourceId,
+            ...(previous?.aiPick?.sourceId === sourceId
+              ? { aiPick: previous.aiPick }
+              : {}),
+          },
+        };
+      });
+      setPreferredSourceId(sourceId);
+    }
     setPlaying(key);
     setError("");
     try {
@@ -1560,6 +1776,10 @@ export function TitleDetail({
                   ×
                 </button>
                 <strong>Search for playable sources</strong>
+                {current.kind === "movie" &&
+                  aiSourceButton(
+                    forceSearch?.status === "done" ? sourcesFor() : [],
+                  )}
                 <small role="status">
                   {forceSearch?.status === "searching"
                     ? "Checking this title again…"
@@ -1572,6 +1792,11 @@ export function TitleDetail({
                     <div className="title-detail__source-row" key={source.id}>
                       <button
                         type="button"
+                        className={
+                          aiReasonFor(source)
+                            ? "title-detail__ai-pick"
+                            : undefined
+                        }
                         title={source.releaseName}
                         onClick={() => {
                           setOpenSourceFor(null);
@@ -1580,13 +1805,8 @@ export function TitleDetail({
                       >
                         <SourceOptionContent
                           source={source}
-                          label={
-                            source.id === preferredSourceId
-                              ? "Preferred"
-                              : index === 0
-                                ? "Recommended"
-                                : `Source ${index + 1}`
-                          }
+                          label={sourceOptionLabel(source, index)}
+                          aiReason={aiReasonFor(source)}
                         />
                       </button>
                       {sourceFeedback(source)}
@@ -1686,6 +1906,15 @@ export function TitleDetail({
                   ×
                 </button>
                 <strong>{episodeCode} sources</strong>
+                {aiSourceButton(
+                  selectedEpisodeSearch?.status === "done"
+                    ? sourceChoicesFor(
+                        selectedEpisode,
+                        selectedEpisodeSearch.sources,
+                      )
+                    : [],
+                  selectedEpisode,
+                )}
                 <small role="status">
                   {selectedEpisodeSearch?.status === "searching"
                     ? "Checking this episode…"
@@ -1705,6 +1934,11 @@ export function TitleDetail({
                     <div className="title-detail__source-row" key={source.id}>
                       <button
                         type="button"
+                        className={
+                          aiReasonFor(source, selectedEpisode)
+                            ? "title-detail__ai-pick"
+                            : undefined
+                        }
                         title={source.releaseName}
                         onClick={() => {
                           setOpenSourceFor(null);
@@ -1717,13 +1951,12 @@ export function TitleDetail({
                       >
                         <SourceOptionContent
                           source={source}
-                          label={
-                            source.id === preferredSourceId
-                              ? "Preferred"
-                              : index === 0
-                                ? "Recommended"
-                                : `Source ${index + 1}`
-                          }
+                          label={sourceOptionLabel(
+                            source,
+                            index,
+                            selectedEpisode,
+                          )}
+                          aiReason={aiReasonFor(source, selectedEpisode)}
                         />
                       </button>
                       {sourceFeedback(source)}
@@ -1977,6 +2210,12 @@ export function TitleDetail({
                             <strong>
                               Episode {episode.episodeNumber} sources
                             </strong>
+                            {aiSourceButton(
+                              search?.status === "done"
+                                ? sourceChoicesFor(selection, search.sources)
+                                : [],
+                              selection,
+                            )}
                             <small role="status">
                               {search?.status === "searching"
                                 ? "Checking this episode…"
@@ -1997,6 +2236,11 @@ export function TitleDetail({
                                   >
                                     <button
                                       type="button"
+                                      className={
+                                        aiReasonFor(source, selection)
+                                          ? "title-detail__ai-pick"
+                                          : undefined
+                                      }
                                       title={source.releaseName}
                                       onClick={() => {
                                         setOpenSourceFor(null);
@@ -2009,13 +2253,15 @@ export function TitleDetail({
                                     >
                                       <SourceOptionContent
                                         source={source}
-                                        label={
-                                          source.id === preferredSourceId
-                                            ? "Preferred"
-                                            : index === 0
-                                              ? "Recommended"
-                                              : `Source ${index + 1}`
-                                        }
+                                        label={sourceOptionLabel(
+                                          source,
+                                          index,
+                                          selection,
+                                        )}
+                                        aiReason={aiReasonFor(
+                                          source,
+                                          selection,
+                                        )}
                                       />
                                     </button>
                                     {sourceFeedback(source)}
