@@ -191,7 +191,6 @@ describe("account access and profile PIN", () => {
     fireEvent.change(screen.getByLabelText("Profile PIN"), {
       target: { value: "1234" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Unlock profile" }));
     expect(api.unlockProfile).toHaveBeenCalledWith("alex", "1234");
     expect(
       screen.queryByRole("heading", { name: "Alex's cinema" }),

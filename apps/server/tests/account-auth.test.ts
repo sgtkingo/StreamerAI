@@ -1133,6 +1133,32 @@ describe("account authentication and profile boundaries", () => {
       ).statusCode,
     ).toBe(429);
   });
+  it("accepts exactly four digits for PIN creation and unlock", async () => {
+    const { app } = local();
+    const owner = cookie(await app.inject("/api/v1/auth/status"));
+    const create = (pin: string, currentPin?: string) =>
+      app.inject({
+        method: "PUT",
+        url: "/api/v1/profiles/default/pin",
+        headers: { cookie: owner },
+        payload: { pin, currentPin },
+      });
+    expect((await create("12345")).statusCode).toBe(400);
+    expect((await create("123")).statusCode).toBe(400);
+    expect((await create("1234")).statusCode).toBe(200);
+    const unlock = await app.inject({
+      method: "POST",
+      url: "/api/v1/profiles/default/unlock",
+      payload: { pin: "123456" },
+    });
+    expect(unlock.statusCode).toBe(400);
+    const valid = await app.inject({
+      method: "POST",
+      url: "/api/v1/profiles/default/unlock",
+      payload: { pin: "1234" },
+    });
+    expect(valid.statusCode).toBe(204);
+  });
   it("relocks on explicit switch and invalidates old unlocks when PIN changes", async () => {
     const { app } = local();
     const owner = cookie(await app.inject("/api/v1/auth/status"));

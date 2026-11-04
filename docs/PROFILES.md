@@ -19,6 +19,11 @@ connections, migrations and transfers are described in [ACCOUNTS.md](ACCOUNTS.md
 The existing trusted local deployment remains available when cloud accounts
 are disabled. Photo uploads remain a placeholder.
 
+New profile PINs contain exactly four digits. Onboarding offers an optional
+PIN with a numeric keypad and confirmation; the profile unlock dialog accepts
+the keypad or a physical keyboard and submits automatically after four digits.
+PINs can be changed or removed in Settings.
+
 Settings saves interface locale, appearance and playback language/subtitle
 preferences per viewer. The player prefers the configured primary audio,
 then secondary audio, then the first track. When automatic subtitles are

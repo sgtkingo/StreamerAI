@@ -55,6 +55,11 @@ export function Onboarding({
   const [webshareState, setWebshareState] =
     useState<ConnectionState>("not-configured");
   const [localAiEnabled, setLocalAiEnabled] = useState(false);
+  const [services, setServices] = useState<string[]>([]);
+  const [pinRequested, setPinRequested] = useState(false);
+  const [pin, setPin] = useState("");
+  const [pinConfirmation, setPinConfirmation] = useState("");
+  const savedPin = useRef<string | null>(null);
   const [isCompleting, setIsCompleting] = useState(false);
   const [finishError, setFinishError] = useState("");
   const [signingIn, setSigningIn] = useState(false);
@@ -86,6 +91,46 @@ export function Onboarding({
   }, [api, profileId]);
 
   useEffect(() => {
+    if (step !== 4) return;
+    let active = true;
+    const loadServices = async () => {
+      const [integrations, account, profileSync] = await Promise.allSettled([
+        api.getIntegrations?.(profileId),
+        api.getAccount?.(),
+        api.getProfileSync?.(profileId),
+      ]);
+      if (!active) return;
+      const names = new Set<string>();
+      if (integrations.status === "fulfilled" && integrations.value) {
+        for (const item of integrations.value.items) {
+          if (
+            item.configured &&
+            !item.planned &&
+            item.category !== "inference" &&
+            item.category !== "sync" &&
+            item.id !== "tmdb" &&
+            item.id !== "webshare"
+          )
+            names.add(item.name);
+        }
+      }
+      if (tmdbState === "connected") names.add("TMDB");
+      if (webshareState === "connected") names.add("Webshare");
+      if (
+        account.status === "fulfilled" &&
+        account.value?.sync?.configured &&
+        !(profileSync.status === "fulfilled" && profileSync.value?.paused)
+      )
+        names.add("Cloud Sync");
+      setServices([...names]);
+    };
+    void loadServices();
+    return () => {
+      active = false;
+    };
+  }, [api, profileId, step, tmdbState, webshareState]);
+
+  useEffect(() => {
     const heading = contentRef.current?.querySelector<HTMLElement>("h1");
     heading?.focus();
   }, [step]);
@@ -100,6 +145,15 @@ export function Onboarding({
     setIsCompleting(true);
     setFinishError("");
     try {
+      const desiredPin = pinRequested ? pin : null;
+      if (api.setProfilePin && desiredPin !== savedPin.current) {
+        await api.setProfilePin(
+          profileId,
+          desiredPin,
+          savedPin.current ?? undefined,
+        );
+        savedPin.current = desiredPin;
+      }
       await api.completeSetup({
         profile: { ...profile, name: profile.name.trim() || "Viewer" },
         localAiEnabled,
@@ -114,7 +168,11 @@ export function Onboarding({
     }
   };
 
-  const canContinue = step !== 1 || Boolean(profile.name.trim());
+  const canContinue =
+    (step !== 1 || Boolean(profile.name.trim())) &&
+    (step !== 4 ||
+      !pinRequested ||
+      (/^\d{4}$/.test(pin) && pin === pinConfirmation));
 
   const returnToSignIn = async () => {
     if (!onSignIn || signingIn) return;
@@ -229,9 +287,17 @@ export function Onboarding({
           {step === 4 && (
             <FinishStep
               profile={profile}
-              tmdbConnected={tmdbState === "connected"}
+              services={services}
               localAiEnabled={localAiEnabled}
               error={finishError}
+              pinAvailable={!!api.setProfilePin && !existingProfile?.pinEnabled}
+              pinRequested={pinRequested}
+              onPinRequestedChange={setPinRequested}
+              pin={pin}
+              onPinChange={setPin}
+              pinConfirmation={pinConfirmation}
+              onPinConfirmationChange={setPinConfirmation}
+              disabled={isCompleting}
             />
           )}
 

@@ -99,6 +99,131 @@ function createApi(completeSetup = vi.fn().mockResolvedValue(undefined)) {
 afterEach(() => vi.restoreAllMocks());
 
 describe("onboarding appearance", () => {
+  it("accepts and confirms a PIN using the on-screen keypad", async () => {
+    const api = createApi();
+    api.setProfilePin = vi.fn().mockResolvedValue({ pinEnabled: true });
+    const onComplete = vi.fn();
+    render(<Flow api={api} onComplete={onComplete} />);
+    fireEvent.click(screen.getByRole("button", { name: "Finish later" }));
+    fireEvent.click(screen.getByLabelText("Add a PIN to this profile"));
+    for (const digit of ["1", "2", "3", "0"]) {
+      fireEvent.click(screen.getByRole("button", { name: digit }));
+    }
+    expect(screen.getByLabelText("Confirm profile PIN")).toHaveValue("");
+    for (const digit of ["1", "2", "3", "9"]) {
+      fireEvent.click(screen.getByRole("button", { name: digit }));
+    }
+    expect(screen.getByText("The PINs do not match. Try again.")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Delete last digit" }));
+    fireEvent.click(screen.getByRole("button", { name: "0" }));
+    expect(screen.getByText("PIN confirmed.")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: /Enter StreamerAI/ }));
+    await waitFor(() => expect(onComplete).toHaveBeenCalled());
+    expect(api.setProfilePin).toHaveBeenCalledWith(
+      "default",
+      "1230",
+      undefined,
+    );
+  });
+  it("summarizes connected services and optionally saves a confirmed profile PIN", async () => {
+    const api = createApi();
+    api.setProfilePin = vi.fn().mockResolvedValue({ pinEnabled: true });
+    api.getSetupStatus = vi.fn().mockResolvedValue({
+      complete: false,
+      tmdb: "connected",
+      webshare: "connected",
+      localAi: "not-configured",
+      playback: true,
+    });
+    api.getIntegrations = vi.fn().mockResolvedValue({ items: [] });
+    api.getAccount = vi.fn().mockResolvedValue({
+      account: { id: "owner", name: "Owner", email: null },
+      manageUrl: null,
+      devices: [],
+      sync: { configured: true, status: "idle" },
+    });
+    const onComplete = vi.fn();
+    render(<Flow api={api} onComplete={onComplete} />);
+    fireEvent.click(screen.getByRole("button", { name: "Finish later" }));
+    expect(await screen.findByText("TMDB, Webshare, Cloud Sync")).toBeVisible();
+    expect(screen.queryByText("Movie metadata")).not.toBeInTheDocument();
+    expect(screen.queryByText(/full-catalog indexing/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText("Add a PIN to this profile"));
+    fireEvent.change(screen.getByLabelText("Choose a 4-digit PIN"), {
+      target: { value: "1234" },
+    });
+    fireEvent.change(screen.getByLabelText("Confirm profile PIN"), {
+      target: { value: "1235" },
+    });
+    expect(
+      screen.getByRole("button", { name: /Enter StreamerAI/ }),
+    ).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Confirm profile PIN"), {
+      target: { value: "1234" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Enter StreamerAI/ }));
+    await waitFor(() => expect(onComplete).toHaveBeenCalled());
+    expect(api.setProfilePin).toHaveBeenCalledWith(
+      "default",
+      "1234",
+      undefined,
+    );
+  });
+
+  it("retries setup after a PIN was saved without requiring it again", async () => {
+    const completeSetup = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("Failed"))
+      .mockResolvedValueOnce(undefined);
+    const api = createApi(completeSetup);
+    api.setProfilePin = vi.fn().mockResolvedValue({ pinEnabled: true });
+    const onComplete = vi.fn();
+    render(<Flow api={api} onComplete={onComplete} />);
+    fireEvent.click(screen.getByRole("button", { name: "Finish later" }));
+    fireEvent.click(screen.getByLabelText("Add a PIN to this profile"));
+    fireEvent.change(screen.getByLabelText("Choose a 4-digit PIN"), {
+      target: { value: "1234" },
+    });
+    fireEvent.change(screen.getByLabelText("Confirm profile PIN"), {
+      target: { value: "1234" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /Enter StreamerAI/ }));
+    expect(await screen.findByRole("alert")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: /Enter StreamerAI/ }));
+    await waitFor(() => expect(onComplete).toHaveBeenCalled());
+    expect(api.setProfilePin).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves an existing profile PIN when onboarding is run again", async () => {
+    const api = createApi();
+    api.setProfilePin = vi.fn().mockResolvedValue({ pinEnabled: true });
+    const existingProfile = ViewerProfileSchema.parse({
+      id: "alex",
+      name: "Alex",
+      locale: "en",
+      pinEnabled: true,
+      onboardingComplete: true,
+      genres: [],
+      prompt: "",
+      playback: DEFAULT_PLAYBACK_PREFERENCES,
+    });
+    const onComplete = vi.fn();
+    render(
+      <Flow
+        api={api}
+        existingProfile={existingProfile}
+        onComplete={onComplete}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Finish later" }));
+    expect(
+      screen.queryByLabelText("Add a PIN to this profile"),
+    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Enter StreamerAI/ }));
+    await waitFor(() => expect(onComplete).toHaveBeenCalled());
+    expect(api.setProfilePin).not.toHaveBeenCalled();
+  });
+
   it("previews the choice immediately and saves it only with successful setup completion", async () => {
     const previous = AppearancePreferencesSchema.parse({
       mode: "cinematic",

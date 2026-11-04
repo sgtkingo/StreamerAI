@@ -27,6 +27,28 @@ const profile = ViewerProfileSchema.parse({
 afterEach(() => vi.useRealTimers());
 
 describe("profile PIN controls", () => {
+  it("unlocks automatically after four keypad digits, without an enter button", async () => {
+    const unlocked = vi.fn();
+    const api = {
+      unlockProfile: vi.fn().mockResolvedValue(undefined),
+    } as unknown as StreamerApi;
+    render(
+      <ProfilePinDialog
+        api={api}
+        profile={profile}
+        onUnlocked={unlocked}
+        onCancel={vi.fn()}
+      />,
+    );
+    for (const digit of ["1", "2", "3", "4"])
+      fireEvent.click(screen.getByRole("button", { name: digit }));
+    await waitFor(() => expect(unlocked).toHaveBeenCalledOnce());
+    expect(api.unlockProfile).toHaveBeenCalledWith("alex", "1234");
+    expect(
+      screen.queryByRole("button", { name: "Unlock profile" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("keeps the profile locked after rejection and clears the entered PIN", async () => {
     const unlocked = vi.fn();
     const api = {
@@ -43,7 +65,6 @@ describe("profile PIN controls", () => {
     fireEvent.change(screen.getByLabelText("Profile PIN"), {
       target: { value: "9876" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Unlock profile" }));
     expect(await screen.findByRole("alert")).toBeVisible();
     expect(unlocked).not.toHaveBeenCalled();
     expect(screen.getByLabelText("Profile PIN")).toHaveValue("");
@@ -65,7 +86,7 @@ describe("profile PIN controls", () => {
     fireEvent.change(screen.getByLabelText("Current PIN"), {
       target: { value: "9876" },
     });
-    fireEvent.change(screen.getByLabelText("New PIN (4–8 digits)"), {
+    fireEvent.change(screen.getByLabelText("New PIN (4 digits)"), {
       target: { value: "1234" },
     });
     fireEvent.change(screen.getByLabelText("Confirm new PIN"), {
@@ -81,7 +102,7 @@ describe("profile PIN controls", () => {
       expect(updated).toHaveBeenCalledWith({ ...profile, pinEnabled: true }),
     );
     expect(api.setProfilePin).toHaveBeenCalledWith("alex", "1234", "9876");
-    expect(screen.getByLabelText("New PIN (4–8 digits)")).toHaveValue("");
+    expect(screen.getByLabelText("New PIN (4 digits)")).toHaveValue("");
     expect(screen.getByRole("status")).toHaveTextContent("Profile PIN saved.");
   });
 

@@ -678,8 +678,7 @@ export class AccountAuthService {
     )
       return "locked";
     if (this.pinJobs.has(profileId)) return "busy";
-    if (typeof value !== "string" || !/^\d{4,8}$/.test(value))
-      return "incorrect";
+    if (typeof value !== "string" || !/^\d{4}$/.test(value)) return "incorrect";
     this.pinJobs.add(profileId);
     try {
       const [salt, expected] = record.hash.split(":");
@@ -1505,12 +1504,12 @@ export class AccountAuthService {
         let context = this.context(request)!;
         const id = request.params.profileId;
         const pin = object(request.body).pin;
-        if (typeof pin !== "string" || !/^\d{4,8}$/.test(pin))
+        if (typeof pin !== "string" || !/^\d{4}$/.test(pin))
           return error(
             reply,
             400,
             "INVALID_PIN",
-            "Enter a PIN containing 4 to 8 digits.",
+            "Enter a PIN containing exactly 4 digits.",
           );
         const result = await this.checkPin(id, pin);
         if (result === "locked" || result === "busy")
@@ -1548,12 +1547,12 @@ export class AccountAuthService {
         let context = this.context(request)!;
         const id = request.params.profileId;
         const pin = object(request.body).pin;
-        if (pin !== null && (typeof pin !== "string" || !/^\d{4,8}$/.test(pin)))
+        if (pin !== null && (typeof pin !== "string" || !/^\d{4}$/.test(pin)))
           return error(
             reply,
             400,
             "INVALID_PIN",
-            "Use a PIN containing 4 to 8 digits.",
+            "Use a PIN containing exactly 4 digits.",
           );
         if (!this.consumeAttempt(`pin:${context.account.id}`, 20))
           return error(

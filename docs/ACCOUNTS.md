@@ -90,6 +90,9 @@ by an older worker's retention task also cannot receive the deletion signal.
 
 ## Source correctness feedback
 
+For the proposed next steps toward shared community feedback, see
+[Community database plan](COMMUNITY_DB_PLAN.md).
+
 Small thumbs beside a title's individual files record whether that file is
 the correct film or episode. A selected thumb glows green/red; pressing it
 again clears the vote. Each profile has one current vote for each

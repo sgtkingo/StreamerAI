@@ -1,0 +1,213 @@
+.pin-pad {
+  width: min(100%, 264px);
+  display: grid;
+  gap: 14px;
+}
+
+.pin-pad__label {
+  color: var(--slate);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.pin-pad__entry {
+  position: relative;
+  border-radius: 12px;
+}
+
+.pin-pad__entry:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+}
+
+.pin-pad__slots {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 9px;
+}
+
+.pin-pad__slot {
+  height: 52px;
+  display: grid;
+  place-items: center;
+  color: var(--white);
+  font-size: 14px;
+  background: rgb(255 255 255 / 5%);
+  border: 1px solid rgb(255 255 255 / 14%);
+  border-radius: 10px;
+}
+
+.pin-pad__slot.is-filled {
+  background: rgb(255 255 255 / 10%);
+  border-color: rgb(255 255 255 / 35%);
+}
+
+.pin-pad__input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: text;
+}
+
+.pin-pad__keys {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.pin-pad__keys button {
+  min-height: 45px;
+  padding: 0;
+  color: var(--white);
+  font: inherit;
+  font-size: 17px;
+  font-weight: 500;
+  background: rgb(255 255 255 / 6%);
+  border: 1px solid rgb(255 255 255 / 8%);
+  border-radius: 10px;
+  cursor: pointer;
+  transition:
+    background 140ms ease,
+    border-color 140ms ease;
+}
+
+.pin-pad__keys button:hover:not(:disabled) {
+  background: rgb(255 255 255 / 14%);
+  border-color: rgb(255 255 255 / 26%);
+}
+
+.pin-pad__keys button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.pin-pad__keys button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.pin-pad__keys .pin-pad__backspace {
+  color: var(--slate);
+  background: transparent;
+  border-color: transparent;
+}
+
+.pin-setup {
+  margin-top: 24px;
+  padding: clamp(20px, 3vw, 28px);
+  border: 1px solid rgb(255 255 255 / 12%);
+  border-radius: 16px;
+  background: linear-gradient(
+    135deg,
+    rgb(255 255 255 / 6%),
+    rgb(255 255 255 / 2%)
+  );
+}
+
+.pin-setup h2 {
+  margin: 0 0 8px;
+  font-size: 21px;
+  letter-spacing: -0.025em;
+}
+
+.pin-setup > p {
+  margin: 0 0 16px;
+  color: var(--slate);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.pin-setup__choice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 18px;
+}
+
+.pin-setup__choice input {
+  accent-color: var(--accent);
+}
+.pin-setup .pin-pad {
+  margin-inline: auto;
+}
+.pin-setup .pin-pad__label {
+  text-align: center;
+}
+.pin-setup__feedback {
+  margin-top: 14px;
+  font-size: 13px;
+  color: var(--slate);
+}
+.pin-setup__feedback.is-error {
+  color: var(--error);
+}
+.pin-setup__feedback.is-success {
+  color: var(--success);
+}
+
+.profile-pin-card {
+  width: min(100%, 390px);
+  max-height: calc(100dvh - 32px);
+  overflow: auto;
+  padding: clamp(24px, 5vw, 36px);
+  border: 1px solid rgb(255 255 255 / 17%);
+  border-radius: 20px;
+  background: linear-gradient(150deg, #222225, #111113);
+  box-shadow: 0 24px 80px rgb(0 0 0 / 50%);
+}
+
+.profile-pin-card__eyebrow {
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.profile-pin-card h2 {
+  margin: 0 0 8px;
+  font-size: 27px;
+  letter-spacing: -0.04em;
+}
+.profile-pin-card__intro {
+  margin: 0 0 24px;
+  color: var(--slate);
+  line-height: 1.5;
+}
+.profile-pin-card .pin-pad {
+  margin-inline: auto;
+}
+.profile-pin-card__footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 20px;
+}
+.profile-pin-card__footer .text-button {
+  text-align: left;
+}
+.profile-pin-card__error {
+  margin: 14px 0 0;
+  color: var(--error);
+}
+
+@media (max-height: 700px) {
+  .profile-pin-card {
+    padding-block: 20px;
+  }
+  .profile-pin-card__intro {
+    margin-bottom: 14px;
+  }
+  .pin-pad {
+    gap: 9px;
+  }
+  .pin-pad__keys button {
+    min-height: 40px;
+  }
+}

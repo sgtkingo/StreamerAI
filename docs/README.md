@@ -7,6 +7,7 @@ and approved future decisions remain authoritative in [`../instructions`](../ins
 
 - [`DEVELOPMENT.md`](DEVELOPMENT.md) - install, run, test and debug the workspace.
 - [`DEPLOYMENT.md`](DEPLOYMENT.md) - portable Docker profile, encrypted secrets and host Ollama.
+- [`DEPLOY_PLAN.md`](DEPLOY_PLAN.md) - proposed Windows/Linux server-client distribution, LAN pairing, automatic updates, bug reporting and public website; documentation only.
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) - boundaries, data flow and invariants.
 - [`API.md`](API.md) - currently implemented HTTP endpoints.
 - [`ACCOUNTS.md`](ACCOUNTS.md) - Google login, TV pairing, account/profile migration, PINs and sync.

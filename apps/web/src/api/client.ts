@@ -533,7 +533,7 @@ const domainErrorMessages: Record<string, string> = {
   AUTH_REQUIRED: "Sign in to your StreamerAI account to continue.",
   PROFILE_LOCKED: "Unlock this profile with its PIN to continue.",
   PIN_INVALID: "That PIN was not accepted. Please try again.",
-  INVALID_PIN: "Use a PIN containing 4 to 8 digits.",
+  INVALID_PIN: "Use a PIN containing exactly 4 digits.",
   PIN_INCORRECT: "That PIN was not accepted. Please try again.",
   PIN_RATE_LIMITED: "Too many PIN attempts. Wait a moment and try again.",
   AUTH_UNAVAILABLE: "Sign-in is temporarily unavailable. Please try again.",

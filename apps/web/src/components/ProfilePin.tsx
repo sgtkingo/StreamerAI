@@ -3,6 +3,7 @@ import type { ViewerProfile } from "@streamer-ai/contracts";
 import type { StreamerApi } from "../api/client";
 import { safeErrorMessage } from "../api/client";
 import { AccountLogin } from "./AccountLogin";
+import { PinPad } from "./PinPad";
 
 function useOwnerReset(api: StreamerApi) {
   const [supported, setSupported] = useState(false);
@@ -114,6 +115,7 @@ export function ProfilePinDialog({
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const [recovering, setRecovering] = useState(false);
+  const submitting = useRef(false);
   const supportsOwnerReset = useOwnerReset(api);
   const formRef = useRef<HTMLFormElement>(null);
   useEffect(() => {
@@ -123,18 +125,23 @@ export function ProfilePinDialog({
       if (previous instanceof HTMLElement) previous.focus();
     };
   }, []);
-  const unlock = async (event: React.FormEvent) => {
-    event.preventDefault();
-    if (pending || !api.unlockProfile || !/^\d{4,8}$/.test(pin)) return;
+  useEffect(() => {
+    if (error && !pending) formRef.current?.querySelector("input")?.focus();
+  }, [error, pending]);
+  const unlock = async (value: string) => {
+    if (submitting.current || !api.unlockProfile || !/^\d{4}$/.test(value))
+      return;
+    submitting.current = true;
     setPending(true);
     setError("");
     try {
-      await api.unlockProfile(profile.id, pin);
+      await api.unlockProfile(profile.id, value);
       await onUnlocked();
     } catch (reason) {
       setError(safeErrorMessage(reason));
       setPin("");
       setPending(false);
+      submitting.current = false;
       formRef.current?.querySelector("input")?.focus();
     }
   };
@@ -153,11 +160,11 @@ export function ProfilePinDialog({
     <div className="profile-chooser__overlay">
       <form
         ref={formRef}
-        className="profile-chooser__form"
+        className="profile-pin-card"
         role="dialog"
         aria-modal="true"
         aria-labelledby="profile-pin-title"
-        onSubmit={(event) => void unlock(event)}
+        onSubmit={(event) => event.preventDefault()}
         onKeyDown={(event) => {
           if (event.key === "Escape" && !pending) onCancel();
           if (event.key === "Tab") {
@@ -179,40 +186,39 @@ export function ProfilePinDialog({
           }
         }}
       >
-        <h2 id="profile-pin-title">Unlock {profile.name}</h2>
-        <label className="field">
-          <span>Profile PIN</span>
-          <input
-            type="password"
-            inputMode="numeric"
-            autoComplete="off"
-            minLength={4}
-            maxLength={8}
-            pattern="[0-9]{4,8}"
-            value={pin}
-            onChange={(event) => setPin(event.target.value.replace(/\D/g, ""))}
-          />
-        </label>
+        <p className="profile-pin-card__eyebrow">Profile protected</p>
+        <h2 id="profile-pin-title">Welcome back, {profile.name}</h2>
+        <p className="profile-pin-card__intro">
+          Enter your profile PIN to continue.
+        </p>
+        <PinPad
+          label="Profile PIN"
+          value={pin}
+          disabled={pending}
+          onChange={(value) => {
+            setError("");
+            setPin(value);
+            if (value.length === 4) void unlock(value);
+          }}
+        />
         {error && (
-          <p className="account-inline-error" role="alert">
+          <p className="profile-pin-card__error" role="alert">
             {error}
           </p>
         )}
-        <div className="profile-chooser__actions">
+        {pending && (
+          <p className="pin-setup__feedback" role="status">
+            Unlocking…
+          </p>
+        )}
+        <div className="profile-pin-card__footer">
           <button
-            className="button button--ghost"
+            className="text-button"
             type="button"
             disabled={pending}
             onClick={onCancel}
           >
             Cancel
-          </button>
-          <button
-            className="button button--primary"
-            type="submit"
-            disabled={pending || !/^\d{4,8}$/.test(pin)}
-          >
-            {pending ? "Unlocking…" : "Unlock profile"}
           </button>
         </div>
         {supportsOwnerReset && (
@@ -251,7 +257,7 @@ export function ProfilePinSettings({
     if (
       !api.setProfilePin ||
       pending ||
-      (profile.pinEnabled && !/^\d{4,8}$/.test(currentPin))
+      (profile.pinEnabled && !/^\d{4}$/.test(currentPin))
     )
       return;
     setPending(true);
@@ -285,7 +291,7 @@ export function ProfilePinSettings({
           : "Add an optional PIN to protect this profile."}{" "}
         {profile.pinEnabled
           ? "Enter the current PIN to change or remove it."
-          : "Choose 4 to 8 digits."}
+          : "Choose 4 digits."}
       </p>
       <form
         className="form-stack"
@@ -301,8 +307,8 @@ export function ProfilePinSettings({
               type="password"
               inputMode="numeric"
               autoComplete="off"
-              pattern="[0-9]{4,8}"
-              maxLength={8}
+              pattern="[0-9]{4}"
+              maxLength={4}
               value={currentPin}
               onChange={(event) =>
                 setCurrentPin(event.target.value.replace(/\D/g, ""))
@@ -311,14 +317,14 @@ export function ProfilePinSettings({
           </label>
         )}
         <label className="field field--compact">
-          <span>New PIN (4–8 digits)</span>
+          <span>New PIN (4 digits)</span>
           <input
             type="password"
             inputMode="numeric"
             autoComplete="new-password"
-            pattern="[0-9]{4,8}"
+            pattern="[0-9]{4}"
             minLength={4}
-            maxLength={8}
+            maxLength={4}
             value={pin}
             onChange={(event) => setPin(event.target.value.replace(/\D/g, ""))}
           />
@@ -329,7 +335,7 @@ export function ProfilePinSettings({
             type="password"
             inputMode="numeric"
             autoComplete="new-password"
-            maxLength={8}
+            maxLength={4}
             value={confirmation}
             onChange={(event) =>
               setConfirmation(event.target.value.replace(/\D/g, ""))
@@ -351,9 +357,9 @@ export function ProfilePinSettings({
             type="submit"
             disabled={
               pending ||
-              !/^\d{4,8}$/.test(pin) ||
+              !/^\d{4}$/.test(pin) ||
               confirmation !== pin ||
-              (!!profile.pinEnabled && !/^\d{4,8}$/.test(currentPin))
+              (!!profile.pinEnabled && !/^\d{4}$/.test(currentPin))
             }
           >
             {pending ? "Saving…" : "Save PIN"}
@@ -362,7 +368,7 @@ export function ProfilePinSettings({
             <button
               className="button button--ghost"
               type="button"
-              disabled={pending || !/^\d{4,8}$/.test(currentPin)}
+              disabled={pending || !/^\d{4}$/.test(currentPin)}
               onClick={() => void save(null)}
             >
               Remove PIN

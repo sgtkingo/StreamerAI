@@ -43,6 +43,18 @@ it("keeps provider sign-in on the hosted page and explains local access in a qui
   );
 });
 
+it("explains how an account owner can approve a profile PIN reset", () => {
+  const document = new DOMParser().parseFromString(
+    page("account", true),
+    "text/html",
+  );
+  expect(document.body.textContent).toContain("Forgot PIN? Verify account");
+  expect(document.body.textContent).toContain(
+    "PIN se odstraní na tomto serveru",
+  );
+  expect(document.querySelector('a[href="/device"]')).not.toBeNull();
+});
+
 it("reveals the email sign-in form and focuses its input on request", () => {
   login();
   const fields = document.getElementById("email-fields")!;

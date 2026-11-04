@@ -1,5 +1,13 @@
 # Docker deployment
 
+For the proposed Windows/Linux distribution, LAN device approval, automatic
+updates, bug reporting and public website, see [the deployment plan](DEPLOY_PLAN.md).
+That document is a future implementation plan; the steps below describe the
+currently implemented Docker deployment.
+The proposed single-file offline server backup and restore are described in
+[section 5B of the deployment plan](DEPLOY_PLAN.md#5b-offline-záloha-a-obnova-celého-serveru);
+they are not implemented by the current Docker steps.
+
 The primary self-hosted profile is portable Docker Compose. Ollama remains
 host-native for straightforward GPU access; StreamerAI does not expose Ollama
 to the browser or publish its port.

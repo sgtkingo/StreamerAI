@@ -1,5 +1,11 @@
 # Account modes, optional sync and e-mail login preparation
 
+> Future requirement: full end-to-end encrypted profile synchronization and
+> recovery, including portable service credentials, is proposed in
+> [DEPLOY_PLAN.md, section 5A](DEPLOY_PLAN.md#5a-kompletní-šifrovaná-synchronizace-a-obnova-domácnosti).
+> The implementation and Drive proposal below do not yet provide this capability;
+> their existing exclusion rules describe current behavior.
+
 Status: implementation resumed on 2026-11-01. Local entry alongside online
 accounts, sync pause/resume and Brevo e-mail login are implemented. The Worker
 e-mail release is deployed; the owner confirmed actual code delivery and

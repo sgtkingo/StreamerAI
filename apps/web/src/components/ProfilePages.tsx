@@ -190,6 +190,11 @@ export function ProfilePages({
             </p>
           </section>
           <AppearanceSettings api={api} locale={profile.locale} />
+          <ProfilePinSettings
+            api={api}
+            profile={profile}
+            onProfileUpdated={onProfileUpdated}
+          />
           <section className="profile-page__section" id="settings-audio">
             <p className="eyebrow">02 / Audio</p>
             <h2>Playback languages</h2>
