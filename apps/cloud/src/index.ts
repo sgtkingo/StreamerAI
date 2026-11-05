@@ -1,5 +1,9 @@
 import { createAuth } from "./auth.js";
 import {
+  assertLegacySyncAllowed,
+  encryptedCheckpoint,
+} from "./encrypted-sync.js";
+import {
   approveGrant,
   authenticate,
   claimGrant,
@@ -313,8 +317,12 @@ async function route(
   const merge = /^\/v1\/merges\/([^/]+)\/decision$/.exec(path);
   if (method === "POST" && merge?.[1])
     return decideMerge(request, env, principal, merge[1], now);
-  if (method === "POST" && path === "/v1/sync/push")
+  if (path === "/v1/sync/v2/checkpoint")
+    return encryptedCheckpoint(request, env, principal, now);
+  if (method === "POST" && path === "/v1/sync/push") {
+    await assertLegacySyncAllowed(env, principal.account.id);
     return push(request, env, principal, now);
+  }
   if (method === "GET" && path === "/v1/sync/pull")
     return pull(request, env, principal);
   if (method === "GET" && path === "/v1/sync/snapshot")

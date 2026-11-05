@@ -34,7 +34,7 @@ and two-account Google acceptance checks are described in
 
 ## Prerequisites
 
-- Node.js 22.12 or newer (Node.js 24 LTS is the deployment target).
+- Node.js 24.7 or newer, below 26 (Node.js 24 LTS is the deployment target).
 - pnpm 10.
 - FFmpeg and FFprobe for local development (the server Docker image installs both).
 

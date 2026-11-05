@@ -21,6 +21,7 @@ import {
 import { toDataURL } from "qrcode";
 import type { SecretStore } from "../stores/secret-store.js";
 import type { PlaybackTicketStore } from "./playback-ticket-store.js";
+import type { LocalAccessService } from "./local-access.js";
 
 const derive = promisify(scrypt);
 const COOKIE = "streamer_session";
@@ -77,6 +78,7 @@ interface SyncStatus {
   error: string | null;
 }
 export interface AccountAuthOptions {
+  localAccess?: LocalAccessService;
   database: StreamerDatabase;
   secretStore: SecretStore;
   serviceUrl: string | null;
@@ -211,6 +213,11 @@ export class AccountAuthService {
       : this.options.database.accounts.getLocal();
   }
   private context(request: FastifyRequest): Context | null {
+    if (
+      this.options.localAccess?.enabled &&
+      !this.options.localAccess.actor(request)
+    )
+      return null;
     const known = this.contexts.get(request);
     if (known) return known;
     const session = this.session(request);
@@ -552,6 +559,11 @@ export class AccountAuthService {
     }
   }
   private async validateSession(context: Context): Promise<boolean> {
+    if (
+      context.session?.label === "Offline restored household" &&
+      this.options.database.settings.get("server.offlineRestore")
+    )
+      return true;
     const latest = this.options.database.accounts.get(context.account.id);
     if (!latest) return false;
     if (
@@ -710,6 +722,7 @@ export class AccountAuthService {
     app.addHook("preValidation", async (request, reply) => {
       const path = request.url.split("?", 1)[0]!;
       if (!path.startsWith("/api/v1/")) return;
+      if (path.startsWith("/api/v1/installation/")) return;
       if (
         !["GET", "HEAD", "OPTIONS"].includes(request.method) &&
         !this.allowedOrigin(request)
@@ -859,17 +872,34 @@ export class AccountAuthService {
     });
     app.get("/api/v1/auth/status", async (request, reply) => {
       let context = this.context(request);
+      const restoredOwnerNeedsSelection =
+        this.options.localAccess?.isOwner(request) &&
+        !!this.options.database.settings.get("server.offlineRestore") &&
+        !context?.session;
+      if (restoredOwnerNeedsSelection) context = null;
       if (context && !this.enabled && !context.session)
         context = this.createSession(request, reply, context.account);
       if (context && !(await this.validateSession(context))) context = null;
       reply.header("cache-control", "no-store");
       return {
-        enabled: this.enabled,
+        enabled: this.enabled || this.options.localAccess?.enabled === true,
         cloudConfigured: this.enabled,
-        localAvailable: true,
-        recoveredLocalAccounts: this.recoveredLocalAccounts().map(
-          (account) => ({ id: sha(account.id) }),
-        ),
+        localAvailable:
+          !this.options.localAccess?.enabled ||
+          this.options.localAccess.actor(request) !== null,
+        recoveredLocalAccounts: (this.options.localAccess?.enabled &&
+        !this.options.localAccess.actor(request)
+          ? []
+          : this.options.localAccess?.isOwner(request) &&
+              this.options.database.settings.get("server.offlineRestore")
+            ? this.options.database.accounts
+                .list()
+                .filter(
+                  (account) =>
+                    account.id !== "local" || account.cloudUserId !== null,
+                )
+            : this.recoveredLocalAccounts()
+        ).map((account) => ({ id: sha(account.id) })),
         authenticated: context !== null,
         account: context ? publicAccount(context.account) : null,
       };
@@ -891,7 +921,12 @@ export class AccountAuthService {
           "Sign out of the online account before entering the local household.",
         );
       const selectedId = object(request.body).recoveredAccountId;
-      const recovered = this.recoveredLocalAccounts();
+      const restoring =
+        this.options.localAccess?.isOwner(request) &&
+        !!this.options.database.settings.get("server.offlineRestore");
+      const recovered = restoring
+        ? this.options.database.accounts.list()
+        : this.recoveredLocalAccounts();
       const account =
         typeof selectedId === "string"
           ? recovered.find((item) => sha(item.id) === selectedId)
@@ -912,7 +947,13 @@ export class AccountAuthService {
           locale: "en",
           preferences: { onboardingComplete: false },
         });
-      this.createSession(request, reply, account);
+      this.createSession(
+        request,
+        reply,
+        account,
+        undefined,
+        restoring ? "Offline restored household" : "Local browser",
+      );
       reply.header("cache-control", "no-store");
       return { account: publicAccount(account) };
     });

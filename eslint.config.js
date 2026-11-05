@@ -10,6 +10,8 @@ export default tseslint.config(
       "**/coverage/**",
       "**/node_modules/**",
       ".flight/**",
+      "tmp/**",
+      "tmp/**",
       "apps/web/public/**",
     ],
   },

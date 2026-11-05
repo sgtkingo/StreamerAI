@@ -54,6 +54,11 @@ export function registerPlaybackRoutes(
   const externalTracks = new Map<string, Promise<ExternalSubtitleTrack[]>>();
   const externalAbort = new Map<string, AbortController>();
   let activeMedia: { grantId: string; stop: () => void } | null = null;
+  const unsubscribeRevocation = ticketStore.onRevoke?.(() => {
+    activeMedia?.stop();
+    activeMedia = null;
+    for (const controller of externalAbort.values()) controller.abort();
+  });
   const sources = new Map<string, { url: string; validUntil: number }>();
   const sourceFor = async (
     ticket: PlaybackTicketRecord,
@@ -82,6 +87,7 @@ export function registerPlaybackRoutes(
     return engineSource;
   };
   app.addHook("onClose", async () => {
+    unsubscribeRevocation?.();
     activeMedia?.stop();
     for (const controller of externalAbort.values()) controller.abort();
     subtitleService.close();

@@ -1,10 +1,13 @@
 # Plán distribuce a nasazení StreamerAI
 
-Datum: 2026-11-03. Stav: návrh k následné implementaci.
+Datum návrhu: 2026-11-03. Implementace zahájena: 2026-11-04, aktualizace 2026-11-05.
 
-Rozsah tohoto kroku je pouze plán. Instalátory, aktualizační služba, párování
-v LAN, bug reporting ani veřejný web tímto dokumentem nejsou implementovány
-nebo publikovány. Stávající integrační adaptéry a cloudové účty se nemění.
+Tento dokument popisuje cílový rozsah. Implementace nyní obsahuje produkční
+runtime a distribuční prototyp, volitelné párování klientů, offline zálohu CLI,
+šifrovanou obnovu domácnosti a opaque cloud checkpoint protokol, diagnostiku,
+řízené PWA aktualizace a statický veřejný web. Podrobný stav a zbývající brány
+jsou v [DEPLOY_IMPLEMENTATION.md](DEPLOY_IMPLEMENTATION.md). Nic z toho samo
+neznamená nasazení do cloudu či publikování podepsaného stabilního vydání.
 Plán navazuje na [schválenou architekturu](../instructions/DEPLOY.md);
 případné nové produktové volby jsou zde doporučení, nikoli již schválené změny.
 

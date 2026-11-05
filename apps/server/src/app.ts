@@ -96,8 +96,14 @@ import { readRuntimeConfig, type RuntimeConfig } from "./runtime-config.js";
 import { AccountScopedSecretStore } from "./stores/account-integrations.js";
 import { AccountAuthService } from "./services/account-auth.js";
 import { AccountSyncService } from "./services/account-sync.js";
+import { registerDeploymentRoutes } from "./routes/deployment.js";
+import { LocalAccessService } from "./services/local-access.js";
+import { EncryptedHouseholdService } from "./services/encrypted-household.js";
+import { EncryptedCheckpointTransport } from "./services/encrypted-sync-transport.js";
+import { registerEncryptedHouseholdRoutes } from "./routes/encrypted-household.js";
 
 export interface CreateAppOptions {
+  installationBootstrapToken?: string;
   accountServiceUrl?: string | null;
   accountFetch?: typeof fetch;
   environment?: string;
@@ -543,6 +549,15 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
     options.accountServiceUrl !== undefined
       ? options.accountServiceUrl
       : (runtimeConfig.accounts?.serviceUrl ?? null);
+  const localAccess = new LocalAccessService(database, {
+    enabled: runtimeConfig.deployment?.accessMode === "paired",
+    dataDirectory: runtimeConfig.server.dataDir,
+    origin: runtimeConfig.accounts?.webOrigin ?? "http://localhost:5173",
+    bootstrapToken: options.installationBootstrapToken,
+    now,
+    onRevoke: () => playbackTicketStore.revokeActive(),
+  });
+  localAccess.register(app);
   const accountSync: AccountSyncService | undefined = accountServiceUrl
     ? new AccountSyncService(
         database,
@@ -580,8 +595,42 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
     internalToken: internalAccountToken,
     tickets: playbackTicketStore,
     sync: accountSync,
+    localAccess,
   });
   accountAuth.register(app);
+  registerDeploymentRoutes(app);
+  const encryptedHousehold = new EncryptedHouseholdService(
+    database,
+    stores.secretStore,
+    now,
+    {
+      beforeEnable: async (accountId) => {
+        await accountSync?.setEnabled(accountId, false);
+      },
+    },
+  );
+  registerEncryptedHouseholdRoutes(app, {
+    service: encryptedHousehold,
+    accountId: (request) => accountAuth.account(request).id,
+    requireOwner: (request, reply) => {
+      if (localAccess.enabled && localAccess.isOwner(request)) return true;
+      reply.code(403).send({
+        error: {
+          code: "INSTALLATION_OWNER_REQUIRED",
+          message:
+            "Enable paired server access and sign in as its owner before managing encrypted recovery.",
+        },
+      });
+      return false;
+    },
+    getCredential: (accountId) => accountAuth.getCredential(accountId),
+    cloud: accountServiceUrl
+      ? new EncryptedCheckpointTransport(
+          accountServiceUrl,
+          options.accountFetch ?? fetch,
+        )
+      : undefined,
+  });
   app.addHook("onResponse", async (request, reply) => {
     if (
       !accountSync ||

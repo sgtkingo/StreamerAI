@@ -1,0 +1,399 @@
+:root {
+  font-family: Inter, "Segoe UI", sans-serif;
+  color: #f1eee8;
+  background: #101117;
+  font-synthesis: none;
+  --muted: #aaa9b4;
+  --accent: #f68d67;
+}
+* {
+  box-sizing: border-box;
+}
+html {
+  scroll-behavior: smooth;
+  scroll-padding-top: 3rem;
+}
+body {
+  margin: 0;
+}
+a {
+  color: inherit;
+  text-underline-offset: 5px;
+}
+a:focus-visible,
+button:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 5px;
+}
+header,
+main,
+footer {
+  max-width: 1260px;
+  margin: auto;
+  padding-inline: 56px;
+}
+header {
+  min-height: 105px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 28px;
+}
+.brand {
+  font-size: 22px;
+  font-weight: 800;
+  text-decoration: none;
+  letter-spacing: -1px;
+}
+.brand span {
+  color: var(--accent);
+  font-weight: 400;
+}
+nav {
+  display: flex;
+  gap: 30px;
+  font-size: 13px;
+}
+nav a {
+  text-decoration: none;
+  color: #c3c0cc;
+}
+section {
+  padding-block: 85px;
+  border-bottom: 1px solid #ffffff13;
+}
+.hero {
+  padding-block: 70px 110px;
+  min-height: 650px;
+  display: grid;
+  grid-template-columns: 1.1fr 1fr;
+  align-items: center;
+  gap: 45px;
+}
+.eyebrow {
+  font-size: 10px;
+  letter-spacing: 2.5px;
+  color: var(--accent);
+  font-weight: 700;
+  margin: 0 0 24px;
+}
+h1 {
+  font-size: clamp(42px, 4.9vw, 68px);
+  line-height: 1.08;
+  letter-spacing: -3px;
+  margin: 0 0 30px;
+  font-weight: 550;
+}
+h1 em {
+  font-style: normal;
+  color: var(--accent);
+}
+.lead {
+  font-size: 17px;
+  line-height: 1.8;
+  color: var(--muted);
+  max-width: 520px;
+}
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  flex-wrap: wrap;
+  margin-top: 35px;
+}
+.button {
+  display: inline-block;
+  padding: 15px 20px;
+  background: #f38b65;
+  color: #171116;
+  font-size: 12px;
+  font-weight: 750;
+  text-decoration: none;
+  border-radius: 5px;
+}
+.secondary {
+  font-size: 11px;
+  color: #d6d0d2;
+  text-decoration: none;
+}
+.note,
+small {
+  font-size: 11px;
+  color: #a5a0ae;
+  line-height: 1.8;
+}
+.note {
+  margin-top: 18px;
+}
+.cinema {
+  position: relative;
+  min-height: 430px;
+  isolation: isolate;
+}
+.orb {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: radial-gradient(
+    ellipse,
+    #a3504e55 0%,
+    #71416522 44%,
+    transparent 70%
+  );
+  filter: blur(8px);
+  z-index: -1;
+}
+.film {
+  position: absolute;
+  width: 230px;
+  height: 300px;
+  padding: 25px;
+  border: 1px solid #ffffff22;
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  justify-content: end;
+  overflow: hidden;
+  box-shadow: 0 30px 60px #0008;
+}
+.film span {
+  font-size: 8px;
+  letter-spacing: 1.8px;
+  margin-bottom: 22px;
+  color: #eecec4;
+}
+.film strong {
+  font-size: 25px;
+  line-height: 1.2;
+  letter-spacing: -0.7px;
+}
+.film i {
+  font-size: 9px;
+  font-style: normal;
+  color: #e5cbca;
+  margin-top: 18px;
+}
+.film-one {
+  left: 10px;
+  top: 30px;
+  transform: rotate(-8deg);
+  background:
+    radial-gradient(ellipse at 60% 5%, #d3a794 0%, transparent 40%),
+    linear-gradient(160deg, #a77775, #64404e 48%, #302539);
+}
+.film-two {
+  right: 0;
+  top: 90px;
+  transform: rotate(8deg);
+  background:
+    radial-gradient(ellipse at 90% 0%, #a6b4b1 0%, transparent 45%),
+    linear-gradient(150deg, #41616b, #26354a 60%, #1b2235);
+}
+.progress {
+  height: 3px;
+  background: linear-gradient(90deg, #f89b75 46%, #ffffff25 46%);
+  margin-top: 20px;
+}
+.server {
+  position: absolute;
+  bottom: 0;
+  left: 20%;
+  background: #1a1b24;
+  border: 1px solid #ffffff1a;
+  padding: 13px 20px;
+  border-radius: 30px;
+  font-size: 10px;
+  box-shadow: 0 10px 30px #0005;
+}
+.light {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #a6c697;
+  margin-right: 7px;
+}
+h2 {
+  font-size: 40px;
+  font-weight: 500;
+  line-height: 1.2;
+  letter-spacing: -1.5px;
+  margin: 0 0 45px;
+}
+.grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 55px;
+}
+article p,
+.install p,
+li p {
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.9;
+}
+article h3 {
+  font-size: 18px;
+  font-weight: 550;
+}
+.number {
+  color: #81737b;
+  font-size: 12px;
+  font-family: monospace;
+}
+article a {
+  font-size: 12px;
+  color: var(--accent);
+}
+.install {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 100px;
+}
+.install h2 {
+  margin-bottom: 25px;
+}
+.install .button {
+  margin-top: 20px;
+}
+.install ol {
+  margin: 0;
+  padding: 0 0 0 25px;
+}
+.install li {
+  padding-left: 14px;
+  margin-bottom: 28px;
+}
+.install li::marker {
+  color: var(--accent);
+  font-size: 13px;
+}
+.install strong {
+  font-weight: 500;
+  font-size: 16px;
+}
+footer {
+  padding-block: 45px 40px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 25px;
+  flex-wrap: wrap;
+}
+footer p {
+  font-size: 12px;
+  color: var(--muted);
+}
+footer small {
+  flex-basis: 100%;
+}
+section:target {
+  outline: none;
+}
+@media (max-width: 900px) {
+  header,
+  main,
+  footer {
+    padding-inline: 28px;
+  }
+  .hero {
+    gap: 15px;
+    grid-template-columns: 1fr;
+  }
+  .hero > div:first-child {
+    max-width: 680px;
+  }
+  .cinema {
+    max-width: 500px;
+    width: 100%;
+    margin: 15px auto 0;
+  }
+  .hero {
+    padding-top: 30px;
+    padding-bottom: 70px;
+  }
+  .install {
+    gap: 35px;
+  }
+  .grid {
+    gap: 25px;
+  }
+  nav {
+    gap: 18px;
+  }
+  h1 {
+    font-size: 58px;
+  }
+}
+@media (max-width: 560px) {
+  header {
+    min-height: 85px;
+    align-items: flex-start;
+    padding-top: 25px;
+  }
+  nav {
+    gap: 14px;
+    flex-wrap: wrap;
+    justify-content: end;
+    font-size: 11px;
+    max-width: 210px;
+  }
+  .brand {
+    font-size: 19px;
+  }
+  .hero {
+    padding-top: 25px;
+  }
+  .hero h1 {
+    font-size: 43px;
+    letter-spacing: -2px;
+  }
+  .lead {
+    font-size: 15px;
+  }
+  .cinema {
+    min-height: 370px;
+  }
+  .film {
+    width: 190px;
+    height: 255px;
+    padding: 20px;
+  }
+  .film-one {
+    left: 0;
+  }
+  .film-two {
+    right: 0;
+    top: 80px;
+  }
+  .film strong {
+    font-size: 22px;
+  }
+  .server {
+    left: 8%;
+    bottom: 5px;
+  }
+  .grid,
+  .install {
+    grid-template-columns: 1fr;
+    gap: 25px;
+  }
+  section {
+    padding-block: 55px;
+  }
+  h2 {
+    font-size: 32px;
+    margin-bottom: 30px;
+  }
+  .install ol {
+    margin-top: 25px;
+  }
+  footer {
+    padding-block: 30px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+}

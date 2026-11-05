@@ -1,0 +1,24 @@
+[Unit]
+Description=StreamerAI local HTTPS gateway
+After=network.target streamerai-server.service
+Requires=streamerai-server.service
+
+[Service]
+Type=simple
+User=streamerai
+Group=streamerai
+Environment=STREAMERAI_STATE_ROOT=/var/lib/streamerai
+Environment=STREAMERAI_RELEASE_ROOT=/opt/streamerai/current
+WorkingDirectory=/var/lib/streamerai
+ExecStart=/opt/streamerai/current/bin/caddy run --config /opt/streamerai/current/service/Caddyfile --adapter caddyfile
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/streamerai
+
+[Install]
+WantedBy=multi-user.target

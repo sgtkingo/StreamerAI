@@ -193,3 +193,5 @@ No reasoning" a "High reasoning", v Setting ale posuvník umožnuje u téhož mo
 
 - U Onboarding shrnutí nepiš "Movie metadata
 TMDB connected" spíše piš něco ve stylu "Services  TMDB, Webshare, Cloud Sync", informace "There is no full-catalog indexing. Metadata is fetched and validated only when it is useful." sem nepatří
+
+- Verify account v Rest PINs form otevře pairing kartu - to je špatně. Učet už má přihlášený sync - stačí tedy poslat request na přihlášený účet, pokud nemá sync pak PIN smazat nepůjde a uživatel tuto možnost ani neuvidí - uvidí jen šddou hlášku že PIN nelze bez uživatelského účtu resetovat. Případně je možnost použít alternativu - Master PIN který bude povinný i pro šifrování lokálních záloh. 

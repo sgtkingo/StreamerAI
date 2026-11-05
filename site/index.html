@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="cs">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="StreamerAI — domácí server pro objevování filmů a seriálů. Vaše knihovna, profily a přehrávání pod vaší kontrolou."
+    />
+    <meta name="theme-color" content="#101117" />
+    <title>StreamerAI — domácí kino po vašem</title>
+    <link rel="stylesheet" href="./style.css" />
+    <link rel="icon" href="./icon.svg" type="image/svg+xml" />
+  </head>
+  <body>
+    <header>
+      <a class="brand" href="#">STREAMER<span>AI</span></a>
+      <nav aria-label="Hlavní navigace">
+        <a href="#princip">Jak funguje</a><a href="#instalace">Instalace</a
+        ><a href="#podpora">Podpora</a
+        ><a href="https://github.com/sgtkingo/StreamerAI">GitHub ↗</a>
+      </nav>
+    </header>
+    <main>
+      <section class="hero">
+        <div>
+          <p class="eyebrow">VAŠE DOMÁCNOST. VAŠE KNIHOVNA.</p>
+          <h1>Dnes večer<br />něco <em>přesně pro vás.</em></h1>
+          <p class="lead">
+            Popište náladu. Objevte film. Pokračujte tam, kde jste skončili.
+            StreamerAI běží na vašem domácím serveru a spojuje vaše profily,
+            knihovnu a připojené zdroje.
+          </p>
+          <div class="actions">
+            <a
+              class="button"
+              href="https://github.com/sgtkingo/StreamerAI/releases"
+              >Vydání a soubory ke stažení ↗</a
+            ><a class="secondary" href="#instalace"
+              >Začít s domácím serverem ↓</a
+            >
+          </div>
+          <p class="note">
+            Vývojová verze · Nativní distribuce pro Windows/Linux se připravuje.
+          </p>
+        </div>
+        <div
+          class="cinema"
+          role="img"
+          aria-label="Ilustrace domácí knihovny filmů: propojené profily a soukromý domácí server"
+        >
+          <div class="orb"></div>
+          <div class="film film-one">
+            <span>VAŠE DALŠÍ DOBRODRUŽSTVÍ</span
+            ><strong>Za hranicí<br />všedního večera.</strong
+            ><i>Objevování podle nálady</i>
+          </div>
+          <div class="film film-two">
+            <span>ROZKOUKÁNO</span><strong>Pokračovat<br />v příběhu.</strong>
+            <div class="progress"></div>
+            <i>Vaše pozice. Váš profil.</i>
+          </div>
+          <div class="server">
+            <span class="light"></span> Jeden domácí server · Více klientů
+          </div>
+        </div>
+      </section>
+      <section id="princip">
+        <p class="eyebrow">JEDNODUCHÝ PRINCIP</p>
+        <h2>Jeden server.<br />Celá domácnost.</h2>
+        <div class="grid">
+          <article>
+            <span class="number">01</span>
+            <h3>Server doma</h3>
+            <p>
+              StreamerAI spravuje knihovnu, připojené služby a přehrávání na
+              vašem počítači. Server musí být během používání zapnutý.
+            </p>
+          </article>
+          <article>
+            <span class="number">02</span>
+            <h3>Klient v prohlížeči</h3>
+            <p>
+              Na dalším zařízení otevřete adresu domácího serveru. Klient
+              nepotřebuje Node ani FFmpeg. Volitelný režim párování vyžaduje
+              schválení správce.
+            </p>
+          </article>
+          <article>
+            <span class="number">03</span>
+            <h3>Data pod kontrolou</h3>
+            <p>
+              Lokální knihovna funguje bez cloudového účtu. Připojené
+              internetové služby potřebují síť; AI je volitelná.
+            </p>
+          </article>
+        </div>
+      </section>
+      <section class="install" id="instalace">
+        <div>
+          <p class="eyebrow">PRVNÍ INSTALACE</p>
+          <h2>Nejdřív server.<br />Potom váš večer.</h2>
+          <p>
+            Současná instalace používá Docker Compose. Produkční balení pro
+            Windows a Linux, offline záloha a šifrovaná obnova jsou v aktivním
+            vývoji.
+          </p>
+          <a
+            class="button"
+            href="https://github.com/sgtkingo/StreamerAI/blob/main/docs/DEPLOYMENT.md"
+            >Otevřít instalační návod ↗</a
+          >
+        </div>
+        <ol>
+          <li>
+            <strong>Připravte domácí server.</strong>
+            <p>
+              Postupujte podle aktuálního návodu a vytvořte šifrovací klíč
+              instalace. Klíče a přístupy nesdílejte.
+            </p>
+          </li>
+          <li>
+            <strong>Otevřete aplikaci.</strong>
+            <p>
+              Dokončete průvodce, vytvořte profil a připojte své služby. Adresa
+              GitHub Pages slouží jen jako veřejný web.
+            </p>
+          </li>
+          <li>
+            <strong>Připojte další zařízení.</strong>
+            <p>
+              Před zapnutím LAN přístupu připravte důvěryhodné HTTPS a řízení
+              přístupu podle návodu.
+            </p>
+          </li>
+        </ol>
+      </section>
+      <section id="podpora">
+        <p class="eyebrow">PODPORA A SOUKROMÍ</p>
+        <h2>Pokud něco nehraje.</h2>
+        <div class="grid">
+          <article>
+            <h3>Nahlásit problém</h3>
+            <p>
+              V Nastavení připravte diagnostický souhrn, zkontrolujte ho a
+              uložte nebo odešlete přes GitHub. Nic se neodesílá automaticky.
+            </p>
+            <a href="https://github.com/sgtkingo/StreamerAI/issues/new/choose"
+              >Hlášení chyb ↗</a
+            >
+          </article>
+          <article>
+            <h3>Verze a známé problémy</h3>
+            <p>
+              Před aktualizací si přečtěte změny a ověřte dostupné balíčky pro
+              svůj systém.
+            </p>
+            <a href="https://github.com/sgtkingo/StreamerAI/releases"
+              >Poznámky k vydáním ↗</a
+            >
+          </article>
+          <article>
+            <h3>Vaše soukromí</h3>
+            <p>
+              Do veřejných hlášení nedávejte hesla, klíče, zálohy ani historii
+              sledování. Cloudová synchronizace a šifrování mají vlastní popsané
+              podmínky.
+            </p>
+            <a
+              href="https://github.com/sgtkingo/StreamerAI/blob/main/docs/DEPLOY_PLAN.md"
+              >Stav distribuce a obnovy ↗</a
+            >
+          </article>
+        </div>
+      </section>
+    </main>
+    <footer>
+      <a class="brand" href="#">STREAMER<span>AI</span></a>
+      <p>
+        Domácí kino po vašem.
+        <a href="https://github.com/sgtkingo/StreamerAI">Zdrojový repozitář</a>
+      </p>
+      <small
+        >Tento web nepřistupuje k domácí síti a neobsahuje přihlašování. Bez
+        vlastní analytiky; hosting GitHub může uchovávat provozní
+        záznamy.</small
+      >
+    </footer>
+  </body>
+</html>

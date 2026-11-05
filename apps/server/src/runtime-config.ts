@@ -7,6 +7,9 @@ const DEFAULT_OLLAMA_BASE_URL = "http://127.0.0.1:11434";
 const DEFAULT_OLLAMA_MODEL = "qwen3.5:4b";
 
 export interface RuntimeConfig {
+  readonly deployment?: {
+    readonly accessMode: "paired" | "trusted-local";
+  };
   readonly accounts?: {
     readonly serviceUrl: string | null;
     readonly webOrigin: string;
@@ -226,6 +229,16 @@ export function readRuntimeConfig(
     );
 
   return {
+    deployment: {
+      accessMode: (() => {
+        const mode = env.STREAMERAI_ACCESS_MODE?.trim() || "trusted-local";
+        if (mode !== "paired" && mode !== "trusted-local")
+          throw new Error(
+            "STREAMERAI_ACCESS_MODE must be paired or trusted-local.",
+          );
+        return mode;
+      })(),
+    },
     accounts: {
       serviceUrl: accountServiceUrl,
       webOrigin: env.STREAMERAI_WEB_ORIGIN?.trim() || "http://localhost:5173",

@@ -14,26 +14,43 @@ concurrency:
 
 jobs:
   verify:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Install pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 10.17.1
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Install Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
-          cache: pnpm
+
+      - name: Install pinned pnpm
+        run: npm install --global pnpm@10.17.1
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
       - name: Verify workspace
         run: pnpm check
+
+      - name: Verify portable runtime and signed-update staging
+        run: pnpm distribution:test
+
+      - name: Build runtime prototype archive
+        run: pnpm distribution:bundle --runtime-only --archive
+
+      - name: Preserve platform runtime prototype
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: runtime-prototype-${{ runner.os }}-x64
+          path: |
+            dist/distribution/*.zip
+            dist/distribution/*.tar.gz
+            dist/distribution/*.sha256
+          if-no-files-found: error

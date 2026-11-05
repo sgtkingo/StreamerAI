@@ -1,0 +1,31 @@
+name: Bug report
+description: Report a reproducible StreamerAI problem.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Do not attach server backups, keys, passwords, provider links or viewing history. Review diagnostics before sharing.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected result
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Reviewed diagnostic summary
+      description: Prepare the safe summary in Settings → Report a problem. Do not include raw logs or credentials.
+      render: json

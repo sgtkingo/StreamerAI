@@ -27,6 +27,7 @@ export interface PlaybackTicketStore {
   markStarted(grantId: string): boolean;
   revoke(grantId: string): boolean;
   revokeActive(): void;
+  onRevoke?(listener: () => void): () => void;
 }
 
 /** Validate server-only source URLs when issued and after every refresh. */
@@ -67,6 +68,14 @@ export function validatePlaybackSourceUrl(
  */
 export class InMemoryPlaybackTicketStore implements PlaybackTicketStore {
   #active: PlaybackTicketRecord | null = null;
+  private readonly revokeListeners = new Set<() => void>();
+
+  onRevoke(listener: () => void): () => void {
+    this.revokeListeners.add(listener);
+    return () => {
+      this.revokeListeners.delete(listener);
+    };
+  }
 
   constructor(private readonly now: () => Date = () => new Date()) {}
 
@@ -114,10 +123,12 @@ export class InMemoryPlaybackTicketStore implements PlaybackTicketStore {
   revoke(grantId: string): boolean {
     if (this.#active?.grantId !== grantId) return false;
     this.#active = null;
+    for (const listener of this.revokeListeners) listener();
     return true;
   }
 
   revokeActive(): void {
     this.#active = null;
+    for (const listener of this.revokeListeners) listener();
   }
 }

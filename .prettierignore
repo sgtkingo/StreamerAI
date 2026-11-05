@@ -9,3 +9,4 @@ Dockerfile*
 deploy/nginx.conf
 docs
 instructions
+tmp

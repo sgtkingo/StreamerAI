@@ -23,6 +23,7 @@ export function fixture() {
     "0006_account_merge.sql",
     "0007_source_feedback.sql",
     "0008_profile_source_feedback.sql",
+    "0009_encrypted_checkpoint.sql",
   ]) {
     sqlite.exec(
       readFileSync(

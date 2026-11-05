@@ -248,6 +248,9 @@ export interface AccountConnections {
 }
 
 export interface StreamerApi {
+  getInstallationStatus?(): Promise<
+    import("../components/InstallationAccess").InstallationStatus
+  >;
   getAccountConnections?(): Promise<AccountConnections>;
   startLocalSession?(
     recoveredAccountId?: string,
@@ -843,6 +846,7 @@ export const apiClient: StreamerApi = {
       body: JSON.stringify({ enabled }),
     }),
   getAuthStatus: () => request<AuthStatus>("/auth/status"),
+  getInstallationStatus: () => request("/installation/status"),
   startDeviceAuthorization: (input) =>
     request<DeviceAuthorization>("/auth/device", {
       method: "POST",

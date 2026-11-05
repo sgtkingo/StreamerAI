@@ -1,5 +1,15 @@
 # StreamerAI integration architecture
 
+> Owner-approved recovery extension (2026-11-05): the explicit portable
+> credential allowlist may be exported through the separately versioned E2EE
+> household format and full encrypted offline server backups described in
+> [DEPLOY_PLAN.md](../docs/DEPLOY_PLAN.md), sections 5A/5B. Only authorized local
+> servers may decrypt those records; the cloud stores authenticated ciphertext.
+> This exception does not allow secrets in legacy sync, model input, public
+> API responses, diagnostics or profile transfers to another account. Provider
+> expiry/device-binding constraints still apply. Current implementation and
+> omissions are documented in [ENCRYPTED_HOUSEHOLD.md](../docs/ENCRYPTED_HOUSEHOLD.md).
+
 This document is a mandatory developer contract. StreamerAI must support adding
 metadata databases, media/streaming services, subtitle sources, web-search
 providers, inference runtimes and sync backends without rewriting domain or UI

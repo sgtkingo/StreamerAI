@@ -15,6 +15,11 @@ import { safeErrorMessage } from "./api/client";
 import { ThemeProvider } from "./theme/ThemeProvider";
 import { AccountLogin } from "./components/AccountLogin";
 import { ProfilePinDialog } from "./components/ProfilePin";
+import {
+  InstallationAccess,
+  type InstallationStatus,
+} from "./components/InstallationAccess";
+import { EncryptedRecovery } from "./components/EncryptedRecovery";
 
 export interface AppProps {
   api?: StreamerApi;
@@ -34,6 +39,9 @@ export function App({ api = apiClient, forceOnboarding = false }: AppProps) {
   const [rerunProfile, setRerunProfile] = useState<ViewerProfile | null>(null);
   const [profilesError, setProfilesError] = useState("");
   const [auth, setAuth] = useState<AuthStatus | null>(null);
+  const [installation, setInstallation] = useState<InstallationStatus | null>(
+    null,
+  );
   const [authError, setAuthError] = useState("");
   const [authVersion, setAuthVersion] = useState(0);
   const [lockedProfile, setLockedProfile] = useState<ViewerProfile | null>(
@@ -90,6 +98,20 @@ export function App({ api = apiClient, forceOnboarding = false }: AppProps) {
     let active = true;
     const initialize = async () => {
       setAuthError("");
+      if (api.getInstallationStatus) {
+        try {
+          const status = await api.getInstallationStatus();
+          if (!active) return;
+          setInstallation(status);
+          if (status.enabled && !status.paired) return;
+        } catch {
+          if (active)
+            setAuthError(
+              "The home server cannot be reached. Check its address and try again.",
+            );
+          return;
+        }
+      }
       let accountEnabled = false;
       if (api.getAuthStatus) {
         try {
@@ -224,6 +246,16 @@ export function App({ api = apiClient, forceOnboarding = false }: AppProps) {
   };
 
   const renderScreen = () => {
+    if (!forceOnboarding && installation?.enabled && !installation.paired)
+      return (
+        <InstallationAccess
+          status={installation}
+          onConnected={() => {
+            setInstallation(null);
+            setAuthVersion((version) => version + 1);
+          }}
+        />
+      );
     if (
       !forceOnboarding &&
       (authError || (auth?.enabled && !auth.authenticated))
@@ -365,6 +397,14 @@ export function App({ api = apiClient, forceOnboarding = false }: AppProps) {
       profile={activeProfile}
       onProfileUpdated={updateProfile}
     >
+      {installation?.role === "owner" && setupState === "required" && (
+        <details className="installation-screen">
+          <summary>
+            Restore an encrypted household instead of starting over
+          </summary>
+          <EncryptedRecovery />
+        </details>
+      )}
       {renderScreen()}
     </ThemeProvider>
   );

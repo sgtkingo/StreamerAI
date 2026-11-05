@@ -1,0 +1,28 @@
+{
+  admin off
+  auto_https disable_redirects
+  storage file_system {
+    root {$STREAMERAI_STATE_ROOT}/gateway
+  }
+}
+
+# Local bootstrap only. LAN HTTPS requires explicit owner setup and CA trust.
+https://localhost:8443 {
+  bind 127.0.0.1 ::1
+  tls internal
+  header {
+    X-Content-Type-Options nosniff
+    Referrer-Policy no-referrer
+  }
+  handle /api/* {
+    reverse_proxy 127.0.0.1:4400 {
+      flush_interval -1
+    }
+  }
+  handle {
+    root * {$STREAMERAI_RELEASE_ROOT}/app/web
+    try_files {path} /index.html
+    header /index.html Cache-Control "no-store"
+    file_server
+  }
+}

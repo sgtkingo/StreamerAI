@@ -1,5 +1,18 @@
 # StreamerAI deployment architecture
 
+> Owner-approved extension (2026-11-05): encrypted household recovery and full
+> offline server backups follow [DEPLOY_PLAN.md](../docs/DEPLOY_PLAN.md), sections
+> 5A/5B. The legacy sync exclusions below remain its default rules. A separately
+> versioned, explicitly enabled E2EE transport may carry allowlisted portable
+> provider credentials and PIN verification records only as client-encrypted
+> authenticated ciphertext; the Worker must not receive their decryption keys.
+> New installations require their own vault keys and device pairing. Full
+> encrypted offline server backups may include the installation master key
+> inside the encrypted archive for offline restoration. See the implemented
+> limits in [encrypted recovery](../docs/ENCRYPTED_HOUSEHOLD.md) and
+> [offline backup](../docs/OFFLINE_BACKUP.md). Plaintext credentials remain
+> prohibited in legacy sync, logs, prompts and public diagnostics.
+
 > **Status:** ACTIVE DIRECTION — revised by owner for on-demand discovery on 2026-09-27
 > **Scope:** home self-hosted MVP, up to 5 profiles, thousands of titles, one concurrent stream
 > **Last research check:** 2026-09-27

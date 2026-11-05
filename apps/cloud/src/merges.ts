@@ -13,6 +13,7 @@ import { sendApprovalMail } from "./approval-mail.js";
 import { removeProfileStatements } from "./profile-removal.js";
 import { cursor, databaseError } from "./sync.js";
 import type { Env, Principal } from "./types.js";
+import { assertEncryptedMergeSupported } from "./encrypted-sync.js";
 
 interface Merge {
   id: string;
@@ -55,6 +56,7 @@ export async function createMerge(
     .first<{ id: string }>();
   if (!other || other.id === principal.account.id)
     throw new HttpError(400, "target_account_unavailable");
+  await assertEncryptedMergeSupported(env, principal.account.id, other.id);
   const enabled = await env.DB.prepare(
     `SELECT id AS user_id FROM "user" u WHERE id IN (?, ?)
       AND (EXISTS(SELECT 1 FROM cloud_email_login e WHERE e.user_id = u.id)
@@ -173,6 +175,11 @@ export async function decideMerge(
     if (!declined.meta.changes) throw new HttpError(409, "merge_changed");
     return json({ ok: true });
   }
+  await assertEncryptedMergeSupported(
+    env,
+    merge.source_account_id,
+    merge.target_account_id,
+  );
   if (
     !Array.isArray(input.profileIds) ||
     input.profileIds.length > 5 ||

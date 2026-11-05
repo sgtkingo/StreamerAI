@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { createApp } from "./app.js";
 import { loadLocalEnvironment, readRuntimeConfig } from "./runtime-config.js";
+import { acquireServerRuntimeLock } from "./services/runtime-lock.js";
 
 function mediaToolVersion(command: string): string | null {
   const result = spawnSync(command, ["-version"], {
@@ -16,8 +17,23 @@ function mediaToolVersion(command: string): string | null {
 
 loadLocalEnvironment();
 const runtimeConfig = readRuntimeConfig();
-
-const app = createApp({ runtimeConfig });
+const runtimeLock = acquireServerRuntimeLock(runtimeConfig.server.dataDir);
+const app = (() => {
+  try {
+    return createApp({ runtimeConfig });
+  } catch (cause) {
+    runtimeLock.release();
+    throw cause;
+  }
+})();
+app.addHook("onClose", async () => runtimeLock.release());
+for (const signal of ["SIGINT", "SIGTERM"] as const) {
+  process.once(signal, () => {
+    void app.close().catch(() => {
+      process.exitCode = 1;
+    });
+  });
+}
 app.log.info(
   {
     code: "MEDIA_TOOLCHAIN_VERSION",
@@ -38,4 +54,5 @@ try {
     "Server failed to start",
   );
   process.exitCode = 1;
+  await app.close();
 }

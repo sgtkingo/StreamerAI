@@ -1,0 +1,80 @@
+.installation-screen {
+  max-width: 620px;
+  margin: 8vh auto;
+  padding: 30px;
+}
+.installation-screen h1 {
+  font-size: clamp(28px, 5vw, 44px);
+}
+.installation-screen p {
+  line-height: 1.7;
+}
+.installation-code {
+  font:
+    700 36px ui-monospace,
+    monospace;
+  letter-spacing: 0.18em;
+}
+.deployment-card {
+  padding: 20px;
+  margin-block: 16px;
+  border: 1px solid #ffffff28;
+  border-radius: 12px;
+}
+.deployment-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-block: 16px;
+}
+.deployment-report {
+  max-height: 300px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  padding: 18px;
+  background: #ffffff08;
+}
+.recovery-key {
+  display: block;
+  overflow-wrap: anywhere;
+  padding-block: 16px;
+  font-size: 16px;
+}
+.deployment-update {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2000;
+  max-width: min(620px, calc(100vw - 30px));
+  width: max-content;
+  background: #1c1c25;
+  color: #f8f4ed;
+  border: 1px solid #f68d6777;
+  border-radius: 12px;
+  padding: 16px 20px;
+  box-shadow: 0 12px 40px #0008;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+}
+.deployment-update button {
+  padding: 8px 12px;
+  border-radius: 7px;
+  border: 0;
+  background: #f68d67;
+  color: #1c1618;
+  cursor: pointer;
+  font: inherit;
+}
+.deployment-update button:focus-visible {
+  outline: 2px solid white;
+  outline-offset: 3px;
+}
+.deployment-update button:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}

@@ -18,6 +18,7 @@ import {
   type StreamerDatabase,
 } from "@streamer-ai/database";
 import type { ProviderFetch } from "../integrations/tmdb-api-client.js";
+import { encryptedHouseholdSettingKey } from "./encrypted-household.js";
 import {
   D1AccountSyncTransport,
   SyncAuthenticationError,
@@ -158,6 +159,8 @@ export class AccountSyncService {
 
   private enabled(accountId: string): boolean {
     return (
+      this.database.settings.get(encryptedHouseholdSettingKey(accountId)) ===
+        null &&
       !!this.database.accounts.get(accountId)?.cloudUserId &&
       this.database.settings.get<boolean>(
         `accountSyncPaused.${hash(accountId)}`,
@@ -356,6 +359,11 @@ export class AccountSyncService {
   /** Persisted capture runs synchronously, so an offline change and its baseline cannot be separated. */
   capture(accountId: string): void {
     this.database.accounts.getRequired(accountId);
+    if (
+      this.database.settings.get(encryptedHouseholdSettingKey(accountId)) !==
+      null
+    )
+      return;
     this.database.transaction(() => {
       const ledger = this.ledger(accountId);
       const current = new Map<string, AccountSyncOperation>();

@@ -1,0 +1,13 @@
+name: Feature request
+description: Describe an improvement to StreamerAI.
+body:
+  - type: textarea
+    id: need
+    attributes:
+      label: What would you like to do?
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: How should it work?

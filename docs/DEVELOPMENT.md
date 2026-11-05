@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Node.js 22.12-25 (Node.js 24 LTS is the deployment target)
+- Node.js 24.7-25 (Node.js 24 LTS is the deployment target; offline backup uses built-in Argon2)
 - pnpm 10.17.1 or another pnpm 10 release
 
 ```sh

@@ -14,6 +14,9 @@ import { AgentBackendSettings } from "./AgentBackendSettings";
 import { AppearanceSettings } from "../theme/AppearanceSettings";
 import { ProfilePinSettings } from "./ProfilePin";
 import { AccountSettings } from "./AccountSettings";
+import { SupportPanel } from "./SupportPanel";
+import { InstallationDevices } from "./InstallationAccess";
+import { EncryptedRecovery } from "./EncryptedRecovery";
 
 export type ProfilePage = "settings" | "preferences" | "account" | "statistics";
 
@@ -168,6 +171,9 @@ export function ProfilePages({
       </h1>
       {page === "settings" && (
         <div className="profile-page__sections">
+          <SupportPanel />
+          <InstallationDevices />
+          <EncryptedRecovery />
           <section className="profile-page__section" id="settings-interface">
             <p className="eyebrow">01 / Interface</p>
             <h2>Language</h2>

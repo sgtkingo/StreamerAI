@@ -6,7 +6,7 @@
   "type": "module",
   "packageManager": "pnpm@10.17.1",
   "engines": {
-    "node": ">=22.12 <26",
+    "node": ">=24.7 <26",
     "pnpm": ">=10 <11"
   },
   "pnpm": {
@@ -25,6 +25,11 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "secrets:init": "node scripts/generate-master-key.mjs",
+    "distribution:runtime": "node scripts/distribution/build-runtime.mjs",
+    "distribution:bundle": "node scripts/distribution/bundle.mjs",
+    "distribution:test": "node --test scripts/distribution/*.test.mjs",
+    "distribution:sign": "node scripts/distribution/create-release.mjs",
+    "distribution:verify": "node scripts/distribution/verify-release.mjs",
     "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build"
   },
   "devDependencies": {

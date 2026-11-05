@@ -2,11 +2,17 @@
 .github
 .agents
 .codex
+.aws
+.flight
+.tools
 .secrets
 node_modules
 **/node_modules
 **/dist
 coverage
+**/coverage
+playwright-report
+test-results
 data
 .env
 .env.*
