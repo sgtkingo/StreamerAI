@@ -1,11 +1,38 @@
 name: streamer-ai
 
 services:
+  data-init:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+    user: "0:0"
+    restart: "no"
+    entrypoint: ["/bin/sh", "-ec"]
+    # Existing volumes retain their original ownership across image rebuilds.
+    # Do not follow links from server-managed data to other container paths.
+    command:
+      - >-
+        test ! -L /app/data &&
+        chown -R -P --no-dereference node:node /app/data &&
+        chmod u+rwx /app/data
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER]
+    security_opt: ["no-new-privileges:true"]
+    volumes:
+      - streamerai_data:/app/data
+    healthcheck:
+      disable: true
+
   server:
     build:
       context: .
       dockerfile: Dockerfile.server
     restart: unless-stopped
+    depends_on:
+      data-init:
+        condition: service_completed_successfully
     environment:
       NODE_ENV: production
       STREAMERAI_LOG_LEVEL: ${STREAMERAI_LOG_LEVEL:-info}

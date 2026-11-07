@@ -24,6 +24,15 @@ The web container is the only published service. It serves the PWA and proxies
 same-origin `/api` calls to the private server container. The server reaches
 Ollama using `host.docker.internal`; Compose supplies the Linux `host-gateway`
 mapping as well.
+
+Before starting the server, Compose runs the short-lived `data-init` container
+to give the image's `node` user ownership of the existing data volume and ensure
+its root directory is writable. It changes ownership without deleting or
+replacing profiles, the database or the vault. Symbolic links are not followed.
+Only this helper runs as root, with no network, a read-only container filesystem
+and the capabilities needed for the ownership repair; the API runs as `node`.
+The helper uses the same Dockerfile and cached layers as the server.
+
 The published web port is bound to host loopback. For local CLI agents and the
 MCP stdio bridge, see [Agent and MCP integration](AGENT_INTEGRATION.md).
 
@@ -52,6 +61,24 @@ and secret deployment are covered in [CLOUD_AUTH.md](CLOUD_AUTH.md).
 The `SecretStore` boundary remains provider-neutral. A future Kubernetes,
 Vault, Bitwarden or cloud-secret adapter can replace the encrypted file store
 without changing TMDB, Webshare or other integration clients.
+
+## Existing volume permission errors
+
+`EACCES: permission denied, open '/app/data/.streamerai-runtime.lock'` means
+the API cannot write to its mounted volume. Changing `/app/data` ownership
+during image build does not update an already existing Docker volume.
+With the current Compose file, restart through the initialization dependency:
+
+```sh
+docker compose stop web server
+docker compose up -d --build
+docker compose ps -a
+```
+
+`data-init` should exit with status 0 and `server` should become healthy.
+If initialization fails, inspect `docker compose logs --tail=120 data-init server`.
+Keep the existing volume and installation master key; recreating either is
+unnecessary for this permission repair.
 
 ## Ollama troubleshooting
 

@@ -24,12 +24,10 @@ describe("onboarding agent step", () => {
         message: "No models.",
       }),
       getLocalAgent: vi.fn().mockResolvedValue({ model: "", baseUrl: "" }),
-      getOllamaConfig: vi
-        .fn()
-        .mockResolvedValue({
-          model: "qwen3.5:4b",
-          baseUrl: "http://127.0.0.1:11434",
-        }),
+      getOllamaConfig: vi.fn().mockResolvedValue({
+        model: "qwen3.5:4b",
+        baseUrl: "http://127.0.0.1:11434",
+      }),
       getCustomLocalAgent: vi
         .fn()
         .mockResolvedValue({ configured: false, baseUrl: "", model: "" }),
@@ -82,12 +80,10 @@ describe("onboarding agent step", () => {
         message: "API key stored.",
       }),
       getLocalAgent: vi.fn().mockResolvedValue({ model: "", baseUrl: "" }),
-      getOllamaConfig: vi
-        .fn()
-        .mockResolvedValue({
-          model: "qwen3.5:4b",
-          baseUrl: "http://127.0.0.1:11434",
-        }),
+      getOllamaConfig: vi.fn().mockResolvedValue({
+        model: "qwen3.5:4b",
+        baseUrl: "http://127.0.0.1:11434",
+      }),
       getCustomLocalAgent: vi
         .fn()
         .mockResolvedValue({ configured: false, baseUrl: "", model: "" }),

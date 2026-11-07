@@ -1,14 +1,68 @@
-# Distribution prototype
+# Server installation and distribution
 
-This implements P0 runtime packaging and an offline verification/staging part of
-P2. It does not publish releases, install services on the development machine,
-enable LAN access, or automatically activate an update. The distribution target
-is `sgtkingo/StreamerAI`.
+The distributed product is a **server setup application** that prepares its
+runtime, services, protected storage and local HTTPS. It detects existing Ollama
+installations and local models, reuses them, and offers missing AI installation
+or model download after explicit user selection. Clients use an ordinary web
+browser and do not install Node, FFmpeg, Ollama or a separate desktop client.
 
-## Build a portable runtime
+Windows has a .NET WinForms setup executable with local AI configuration and
+browser onboarding. Linux has a `.deb` builder and desktop setup/helper sources
+for Debian/Ubuntu. See the [Windows setup application](setup/README.md) and
+[Linux installer](setup/linux/README.md) for user flow, build commands and limits.
+The runtime archives and service scripts below are developer/build inputs.
 
-Use Node 24 LTS, at least 24.7, and the repository's pinned pnpm. Install frozen
-dependencies and build the web client first:
+The current installers are **unsigned previews for controlled acceptance**.
+Complete bundled components do not establish clean-machine, reboot, upgrade,
+GPU or browser acceptance, and the Windows development host does not establish
+Linux installation support. Builds and tests do not install services on the
+development machine, publish releases, enable LAN access or automatically
+activate server updates. The distribution target is `sgtkingo/StreamerAI`.
+
+## Installer candidates and build inputs
+
+The manual [server installer workflow](../.github/workflows/server-installers.yml)
+uses Node **24.22.2 LTS** on Windows/Linux x64, installs locked dependencies,
+checks the workspace, prepares pinned components, and creates `.exe` or `.deb`
+candidate artifacts. Final local installer artifacts and their hash/build
+records belong in `dist/installers`; intermediate bundles, compiler files and
+download caches may be removed after the finished installer is verified.
+
+Build components are prepared by the release builder, not located by the end
+user. [Component preparation](COMPONENTS.md) uses committed per-platform locks,
+immutable upstream release URLs, exact byte lengths/SHA-256 and explicit archive
+members. On the target build host:
+
+```sh
+node scripts/distribution/components.mjs --output dist/installer-components
+```
+
+The resulting `bin/` and `notices/` directories supply the complete server bundle
+for the platform-specific setup builder. They include the real FFmpeg/Caddy and
+Windows service-wrapper files, along with matching component notices. A fresh
+output directory is required; cached downloads are verified before reuse.
+
+Use native dependencies built for the exact target Node ABI. A Node25 development
+binding cannot be copied into the Node24 server. For reproducible Windows
+Node24.22.2 and better-sqlite3 ABI137 inputs, use the committed runtime lock and
+[runtime preparation helper](NODE_RUNTIME.md):
+
+```sh
+node scripts/distribution/node-runtime.mjs --output dist/runtime-inputs/win-x64-node24
+```
+
+The helper prepares the verified Node executable, matching SQLite binding,
+license and provenance record without changing the host installation. When
+building from another supported development Node version, supply both
+`--node <prepared-node.exe>` and `--sqlite-binding <prepared-better_sqlite3.node>`
+to the bundler; its target-runtime SQLite smoke test must still pass. All notices
+must match the actual distributed versions. `releaseReady` stays false until
+signing, source/license review and the acceptance gates are complete.
+
+## Developer runtime archives
+
+Use Node **24.22.2 LTS** and the repository's pinned pnpm for a release build.
+Install frozen dependencies and build the web client first:
 
 ```sh
 pnpm install --frozen-lockfile
@@ -18,9 +72,9 @@ pnpm distribution:bundle --runtime-only --archive
 ```
 
 An explicitly prepared web build can be selected with `--web-directory PATH`.
-For example, a local review build can live in `dist/deploy-review-web` while CI
-uses the default `apps/web/dist`. This changes the source of copied static assets
-only; the bundle inventory and runtime smoke checks still apply.
+CI uses the default `apps/web/dist`. A separate local review build can be selected
+without replacing it. This changes the source of copied static assets only; the
+bundle inventory and runtime smoke checks still apply.
 
 The output in `dist/distribution` is an explicitly incomplete runtime prototype.
 It includes the current Node executable, compiled JavaScript server, compiled
@@ -35,20 +89,26 @@ Linux binaries also require compatible glibc and shared libraries. Ubuntu 24.04
 and Windows Server 2022 CI runners are build/test environments, not a claim of
 Windows 11 or Debian clean-machine acceptance.
 
-For a full component bundle, supply **previously verified** target binaries:
+For a full component bundle, pass the prepared target components to the bundler:
 
 ```sh
-pnpm distribution:bundle --node /trusted/node --ffmpeg /trusted/ffmpeg \
-  --ffprobe /trusted/ffprobe --gateway /trusted/caddy \
-  --notices /trusted/notices --archive
+pnpm distribution:bundle --output dist/installer-build/server-bundle \
+  --ffmpeg dist/installer-components/bin/ffmpeg \
+  --ffprobe dist/installer-components/bin/ffprobe \
+  --gateway dist/installer-components/bin/caddy \
+  --notices dist/installer-components/notices
 ```
 
-On Windows also supply `--service-wrapper C:/trusted/WinSW.exe`. The notices
-directory must contain `NODE.txt`, `FFMPEG.txt`, `CADDY.txt`, and on Windows
-`WINSW.txt`, covering the actual binary builds. Dependency package licenses are
-copied with packages; `app/DEPENDENCIES.json` records versions and license fields.
-The build never downloads third-party binaries. A full component bundle still
-has `releaseReady: false` until signing and acceptance gates are complete.
+On Windows use the `.exe` component names and add
+`--service-wrapper dist/installer-components/bin/streamerai-service.exe`.
+The notices directory must contain `NODE.txt`, `FFMPEG.txt`, `CADDY.txt`, and
+on Windows `WINSW.txt`, covering the actual builds. Dependency package licenses
+are copied with packages; `app/DEPENDENCIES.json` records their versions and
+license fields. The bundle step consumes verified prepared files; downloading
+third-party components belongs to the separate preparation step above.
+Pass the complete bundle to `setup-windows.mjs` or `setup-linux.mjs` as documented
+in their linked setup guides. A full component bundle still has
+`releaseReady: false` until signing and acceptance gates are complete.
 
 `bundle.json` records all distributed file sizes and hashes. This is corruption
 detection, **not** authenticity: use independently verified signed release
@@ -85,7 +145,9 @@ STREAMERAI_STATE_ROOT=/absolute/state ./runtime/node ./service/start.mjs
 ```
 
 This starts only the API. A browser needs the gateway for the bundled web client.
-Ollama and models are optional external components and are not downloaded.
+The normal setup application prepares both services and opens browser onboarding;
+the inspection command does not perform the installer's optional AI setup.
+Ollama and models are detected and downloaded only through explicit setup choices.
 
 The offline backup CLI is bundled at `backup.mjs`. For example, set
 `STREAMERAI_STATE_ROOT` to the state directory and run

@@ -189,9 +189,14 @@ No reasoning" a "High reasoning", v Setting ale posuvník umožnuje u téhož mo
 
 - Připravit deploy: zatím ve formě server-client app, pro Windows/Linux, zajistit automatické aktualizace, report bug systém a webovku (na github io?)
 
--  Onbording by se měl nakonci zeptat zda uživatel nechce zadat PIN k profilu - tento PIN by se měl dát kdykoliv změnit přes Settings, případně odstranit ve správě učtu - pokud klient používá Cloud sync. 
+-  DONE: Onbording by se měl nakonci zeptat zda uživatel nechce zadat PIN k profilu - tento PIN by se měl dát kdykoliv změnit přes Settings, případně odstranit ve správě učtu - pokud klient používá Cloud sync. 
 
-- U Onboarding shrnutí nepiš "Movie metadata
+- PARTLY: U Onboarding shrnutí nepiš "Movie metadata
 TMDB connected" spíše piš něco ve stylu "Services  TMDB, Webshare, Cloud Sync", informace "There is no full-catalog indexing. Metadata is fetched and validated only when it is useful." sem nepatří
 
 - Verify account v Rest PINs form otevře pairing kartu - to je špatně. Učet už má přihlášený sync - stačí tedy poslat request na přihlášený účet, pokud nemá sync pak PIN smazat nepůjde a uživatel tuto možnost ani neuvidí - uvidí jen šddou hlášku že PIN nelze bez uživatelského účtu resetovat. Případně je možnost použít alternativu - Master PIN který bude povinný i pro šifrování lokálních záloh. 
+Navrhuji používat Master PIN (6 nebo 8 digitů (?)), který bude vyžadován při prvním založení lokálního účtu, ale i při prvním vytvoření online účtu (pokud už účet existuje, master PIN se vygeneruje náhodně a uloží do účtu). Master PIN se pak bude automaticky používat jako zamykací fráze pro lokální zálohu, dále to bude alternativní možnost pro odemknutí jakékoliv profilu pod účtem (výchozí metoda). Pro účet se zapnutou synchronizací bude master PIN bezpečně uložen ve vzdálené databázi a přes online správu (https://cloud.streamer-ai.workers.dev/account) půjde resetovat/změnit, pro lokální účet změnit nepůjde protože není možné uživatele spolehlivě auth. 
+
+V Settings sekci "Profile PIN" zobrazuj hlášku "Profile PIN saved" nebo "changed" nebo "removed" přes buildin popup notikace,  Confirm new PIN ukáže zeleným že se piny schodují nebo červeným že ne. 
+
+V Onbordingu by se měl pod blokem "Your viewing data stays at home." v sekci Welcome, objevit i druh blok s importem zálohy. Přesun tam "Restore an encrypted household instead of starting over", .

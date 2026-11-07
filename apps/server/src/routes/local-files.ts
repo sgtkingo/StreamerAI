@@ -36,23 +36,19 @@ export function registerLocalFilesRoutes(
     "/api/v1/integrations/local-files/select-folder",
     async (request, reply) => {
       if (!["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(request.ip))
-        return reply
-          .code(403)
-          .send({
-            error: {
-              code: "FOLDER_PICKER_LOCAL_ONLY",
-              message: "Open StreamerAI on the server to select a folder.",
-            },
-          });
+        return reply.code(403).send({
+          error: {
+            code: "FOLDER_PICKER_LOCAL_ONLY",
+            message: "Open StreamerAI on the server to select a folder.",
+          },
+        });
       if (selectingFolder)
-        return reply
-          .code(409)
-          .send({
-            error: {
-              code: "FOLDER_PICKER_BUSY",
-              message: "A folder picker is already open.",
-            },
-          });
+        return reply.code(409).send({
+          error: {
+            code: "FOLDER_PICKER_BUSY",
+            message: "A folder picker is already open.",
+          },
+        });
       selectingFolder = true;
       try {
         const path = await selectFolder();
@@ -61,17 +57,15 @@ export function registerLocalFilesRoutes(
         await updateState();
         return reply.code(201).send(config());
       } catch (error) {
-        return reply
-          .code(400)
-          .send({
-            error: {
-              code: "FOLDER_PICKER_FAILED",
-              message:
-                error instanceof Error
-                  ? error.message
-                  : "The folder could not be selected.",
-            },
-          });
+        return reply.code(400).send({
+          error: {
+            code: "FOLDER_PICKER_FAILED",
+            message:
+              error instanceof Error
+                ? error.message
+                : "The folder could not be selected.",
+          },
+        });
       } finally {
         selectingFolder = false;
       }

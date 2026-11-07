@@ -1,0 +1,7 @@
+{
+  "url": "https://github.com/ollama/ollama/releases/download/v0.40.14/OllamaSetup.exe",
+  "sha256": "e069c7cc7d4808f77684e81efa0b1f853a5190b4b8f070bc8fd63041180e3eba",
+  "bytes": 1675999728,
+  "source": "https://api.github.com/repos/ollama/ollama/releases/latest",
+  "checkedOn": "2026-11-05"
+}

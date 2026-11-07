@@ -13,10 +13,11 @@ případné nové produktové volby jsou zde doporučení, nikoli již schválen
 
 ## 1. Doporučená podoba první distribuované verze
 
-Jeden domácí server pro Windows nebo Linux, více tenkých klientů ve stejné síti.
-Klientem je současná React aplikace v prohlížeči, případně nainstalovaná PWA.
-Server a klient mohou běžet i na jednom počítači. Samostatný Electron/Tauri
-klient není pro první vydání potřebný; případný budoucí klient použije stejné API.
+Jeden domácí server pro Windows nebo Linux, více klientů v běžném webovém
+prohlížeči ve stejné síti. Server je samostatná aplikace s jednoduchým
+instalátorem, který připraví provozní prostředí a po dokončení otevře prohlížeč.
+Server a klient mohou běžet i na jednom počítači. Instalace PWA ani samostatného
+Electron/Tauri klienta není pro tuto verzi vyžadována.
 
 Server spravuje SQLite, profily, přístup ke zdrojům, tajné údaje, vyhledávání,
 AI a FFmpeg. Klienti používají společná data přímo z tohoto serveru.
@@ -66,16 +67,19 @@ Podklady: [compose.yaml](../compose.yaml), [Dockerfile.server](../Dockerfile.ser
 
 ## 3. Balíčky pro Windows a Linux
 
-Výchozí produktová cesta: nativně instalovaný server jako služba a webový klient.
-Docker zůstane podporovanou cestou pro pokročilé uživatele a prvním pilotním
-prostředím; Windows instalace bez Dockeru nesmí skrytě vyžadovat WSL.
+Výchozí produktová cesta: serverová aplikace s jednoduchým grafickým průvodcem,
+službou na pozadí a zástupcem pro otevření správy v prohlížeči. Uživatel nemá
+ručně instalovat Node, FFmpeg, gateway nebo service wrapper, psát konfigurační
+soubory, hledat bootstrap klíč ani spouštět příkazy v terminálu. Tyto kroky
+připraví instalátor. Docker zůstane cestou pro pokročilé uživatele;
+Windows instalace bez Dockeru nesmí vyžadovat WSL.
 
 | Cíl | Navržený artefakt | Běh a data |
 | --- | --- | --- |
 | Windows x64 | Podepsaný `StreamerAI-Server-<verze>-win-x64-setup.exe` | Služba pod omezeným účtem, launcher pro otevření UI a stav služby; data v `%ProgramData%\StreamerAI`. |
-| Linux x64 | `streamerai-server-<verze>-linux-x64.tar.xz` a ověřující instalátor | Pro první vydání vybrané podporované Ubuntu/Debian se systemd; omezený účet, `/var/lib/streamerai`, runtime v `/opt/streamerai/releases/<verze>`. |
+| Linux x64 | Instalační aplikace/balíček pro podporované Ubuntu/Debian; archiv pro pokročilé | systemd služba, omezený účet, `/var/lib/streamerai`, runtime v `/opt/streamerai/releases/<verze>`; zástupce otevře prohlížeč. |
 | Docker Linux/Windows host | Verze obrazů v GHCR + vydávaný Compose balíček | Existující volume; na Windows výslovně vyžaduje Docker Desktop s Linux kontejnery. |
-| Klient Windows/Linux | Webový klient přibalený ke stejné verzi serveru | Prohlížeč/PWA, bez Node, pnpm, FFmpeg a provider klíčů na klientovi. |
+| Klient Windows/Linux | Webový klient přibalený ke stejné verzi serveru | Pouze běžný prohlížeč, bez instalace klientské aplikace, Node, pnpm, FFmpeg a provider klíčů. |
 
 První release zacílí na Windows 11 x64 a konkrétní otestované LTS verze
 Ubuntu/Debian; přesná matice se uzavře po instalačním prototypu. ARM64, jiné
@@ -85,8 +89,41 @@ Balíček obsahuje Node runtime, zkompilovaný server, web, nativní závislosti
 FFmpeg/FFprobe a gateway. `better-sqlite3` se sestaví nebo získá pro konkrétní
 OS/architekturu/Node ABI; nelze kopírovat vývojové `node_modules` mezi OS.
 Před vydáním připravit licence a notices pro skutečně distribuované sestavení
-FFmpeg i ostatní komponenty. Ollama a model zatím zůstávají volitelné externí
-komponenty s průvodcem a preflightem, bez tichého stahování či aktualizování.
+FFmpeg i ostatní komponenty. Ollama a lokální model jsou volitelné komponenty,
+jejichž přípravu zajišťuje tentýž instalační průvodce po výslovném výběru.
+
+### Jednoduchý instalační průvodce serveru
+
+1. Prověřit platformu, volné místo, oprávnění, porty a existující instalaci.
+   Ponechat uživatelská data a dříve zadané přístupy. Nová instalace i obnova
+   ze souboru mají srozumitelnou volbu na prvním spuštění.
+2. Z ověřeného distribučního balíku automaticky připravit runtime, FFmpeg/FFprobe,
+   web, gateway, služby a zabezpečené úložiště dat/klíčů. Chybějící binární
+   součást kompletního vydání je chyba sestavení, nikoli úkol pro koncového
+   uživatele. Automatické získání a kontrola těchto vstupů patří do release buildu.
+3. Automaticky zjistit běžící Ollamu, její lokální instalaci a dostupné modely.
+   Rozlišovat chybějící runtime, nainstalovaný ale neběžící runtime a chybějící
+   model. Funkční existující instalaci ani uživatelem zvolený model nepřepisovat.
+4. Pokud chybí lokální AI, nabídnout „Připravit lokální AI“ se souhlasem se
+   stažením a přehledem potřebného místa. Průvodce zajistí ověřené získání
+   instalátoru Ollamy, jeho spuštění v odpovídajícím uživatelském kontextu,
+   kontrolu dosažitelnosti API a stažení doporučeného `qwen3.5:4b`, pokud chybí.
+   Existující ale zastavenou Ollamu nabídnout spustit; již dostupný model znovu
+   nestahovat. Výběr jiného již nakonfigurovaného modelu zachovat a ověřit.
+5. Zobrazit stav a průběh stahování, umožnit pokračování bez AI a opakování po
+   výpadku. Neinstalovat automaticky GPU ovladače ani tiše měnit AI backend.
+   Samotná přítomnost procesu/modelu nenahrazuje předepsaný preflight.
+6. Připravit lokální HTTPS a vysvětlit instalaci instance CA. Převzetí správce
+   provést jednorázovým předáním klíče z instalátoru do prohlížeče bez opisování
+   nebo hledání souboru. Tajný údaj se nepřenáší v HTTP query, logu ani trvalém
+   browser storage. Na konci otevřít aplikaci a vytvořit zástupce pro další spuštění.
+
+Windows Ollama instalátor běžně instaluje pro právě přihlášeného uživatele a
+nepotřebuje administrátora; jeho spuštění pod jiným účtem kvůli UAC není totéž
+jako instalace pro vlastníka. Instalátor StreamerAI oddělí vlastní privilegovanou
+instalaci služby od této uživatelské instalace. Viz [Ollama Windows](https://docs.ollama.com/windows)
+a [Ollama Linux](https://docs.ollama.com/linux). Binárky a modely se na tento
+vývojový počítač kvůli implementaci průvodce neinstalují.
 
 Instalátor vytvoří službu, adresáře a oprávnění; po instalaci otevře lokální
 průvodce. Program, aktualizační staging a uživatelská data musí být oddělené.

@@ -101,6 +101,8 @@ import { LocalAccessService } from "./services/local-access.js";
 import { EncryptedHouseholdService } from "./services/encrypted-household.js";
 import { EncryptedCheckpointTransport } from "./services/encrypted-sync-transport.js";
 import { registerEncryptedHouseholdRoutes } from "./routes/encrypted-household.js";
+import { registerServerAiSetupRoutes } from "./routes/ollama-setup.js";
+import { ServerAiSetupService } from "./services/ollama-setup.js";
 
 export interface CreateAppOptions {
   installationBootstrapToken?: string;
@@ -599,6 +601,22 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
   });
   accountAuth.register(app);
   registerDeploymentRoutes(app);
+  registerServerAiSetupRoutes(app, {
+    service: new ServerAiSetupService({
+      dataDirectory: runtimeConfig.server.dataDir,
+    }),
+    requireOwner: (request, reply) => {
+      if (localAccess.enabled && localAccess.isOwner(request)) return true;
+      reply.code(403).send({
+        error: {
+          code: "INSTALLATION_OWNER_REQUIRED",
+          message:
+            "Open server setup as its owner before configuring local AI.",
+        },
+      });
+      return false;
+    },
+  });
   const encryptedHousehold = new EncryptedHouseholdService(
     database,
     stores.secretStore,

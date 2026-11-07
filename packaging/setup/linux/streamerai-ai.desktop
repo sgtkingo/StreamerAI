@@ -1,0 +1,10 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=StreamerAI Local AI Setup
+Comment=Reuse or prepare Ollama and the recommended local model
+Exec=/usr/bin/streamerai-launch --ai
+Icon=streamerai
+Terminal=false
+Categories=AudioVideo;Settings;
+StartupNotify=true

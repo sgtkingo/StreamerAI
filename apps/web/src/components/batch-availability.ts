@@ -17,11 +17,10 @@ export async function refreshMissingEpisodesForDownload(
   let detail = initial;
   const missing =
     detail.series?.seasons
-      .filter(
-        (season) =>
-          seasonNumber === undefined
-            ? season.seasonNumber > 0
-            : season.seasonNumber === seasonNumber,
+      .filter((season) =>
+        seasonNumber === undefined
+          ? season.seasonNumber > 0
+          : season.seasonNumber === seasonNumber,
       )
       .flatMap((season) => season.episodes)
       .filter((episode) => episode.availability === "unavailable") ?? [];

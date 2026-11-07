@@ -17,11 +17,7 @@ export function InfoTip({
       aria-describedby={tooltipId}
     >
       i
-      <span
-        className="info-tip__tooltip"
-        id={tooltipId}
-        role="tooltip"
-      >
+      <span className="info-tip__tooltip" id={tooltipId} role="tooltip">
         {children}
       </span>
     </span>

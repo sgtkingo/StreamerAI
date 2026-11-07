@@ -1,0 +1,55 @@
+name: Server setup application candidates
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: server-installers-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  installer:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24.22.2
+      - name: Install pinned build tooling
+        run: npm install --global pnpm@10.17.1
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Verify workspace
+        run: pnpm check
+      - name: Verify browser client production assets
+        run: >-
+          node --input-type=module -e "import {existsSync} from 'node:fs'; for (const file of ['index.html','manifest.webmanifest','sw.js']) if (!existsSync('apps/web/dist/'+file)) throw new Error('Missing browser production asset '+file);"
+      - name: Verify distribution tooling
+        run: pnpm distribution:test
+      - name: Prepare pinned runtime components
+        run: node scripts/distribution/components.mjs --output dist/installer-components
+      - name: Prepare Windows server application
+        if: runner.os == 'Windows'
+        run: node scripts/distribution/bundle.mjs --output dist/installer-bundle --ffmpeg dist/installer-components/bin/ffmpeg.exe --ffprobe dist/installer-components/bin/ffprobe.exe --gateway dist/installer-components/bin/caddy.exe --service-wrapper dist/installer-components/bin/streamerai-service.exe --notices dist/installer-components/notices
+      - name: Build Windows setup application
+        if: runner.os == 'Windows'
+        run: node scripts/distribution/setup-windows.mjs --bundle dist/installer-bundle --output dist/installers --ollama-descriptor packaging/setup/ollama-windows.pinned.json
+      - name: Prepare Linux server application
+        if: runner.os == 'Linux'
+        run: node scripts/distribution/bundle.mjs --output dist/installer-bundle --ffmpeg dist/installer-components/bin/ffmpeg --ffprobe dist/installer-components/bin/ffprobe --gateway dist/installer-components/bin/caddy --notices dist/installer-components/notices
+      - name: Build Debian/Ubuntu installer
+        if: runner.os == 'Linux'
+        run: node scripts/distribution/setup-linux.mjs --bundle dist/installer-bundle --output dist/installers
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: server-setup-${{ runner.os }}-x64
+          path: |
+            dist/installers/*.exe
+            dist/installers/*.deb
+            dist/installers/*.sha256
+            dist/installers/*build.json
+          if-no-files-found: error

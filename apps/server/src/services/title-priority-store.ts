@@ -114,7 +114,10 @@ export class TitlePriorityStore {
   claimDue(profileId: string, title: CatalogTitle): boolean {
     const state = this.state(profileId, title.id);
     const now = this.now().getTime();
-    if ((state.manualHigh || state.autoHigh) && state.highChecks === undefined) {
+    if (
+      (state.manualHigh || state.autoHigh) &&
+      state.highChecks === undefined
+    ) {
       state.highChecks = 0;
       state.nextCheckAt = now;
     }

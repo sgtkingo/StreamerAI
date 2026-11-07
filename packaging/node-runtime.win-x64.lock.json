@@ -1,0 +1,29 @@
+{
+  "format": "streamerai-node-runtime/v1",
+  "platform": "win-x64",
+  "nodeVersion": "v24.22.2",
+  "nodeAbi": "137",
+  "sqliteVersion": "12.11.1",
+  "nodeLicense": {
+    "id": "node24-license",
+    "url": "https://raw.githubusercontent.com/nodejs/node/v24.22.2/LICENSE",
+    "bytes": 157609,
+    "sha256": "5888dbb9a1d2b18f2c3e6c5f6af1b39de658372b402a0577b002777f14c62ace",
+    "provenance": "https://github.com/nodejs/node/tree/v24.22.2 ; exact upstream license SHA-256 pinned in the core component lock"
+  },
+  "node": {
+    "id": "node-win-x64",
+    "url": "https://nodejs.org/dist/v24.22.2/win-x64/node.exe",
+    "bytes": 93922624,
+    "sha256": "1c331340fa6cac5e4294725959070a143fa0507195a78ad77eed7943f719aac9",
+    "provenance": "https://nodejs.org/dist/v24.22.2/SHASUMS256.txt"
+  },
+  "sqlite": {
+    "id": "better-sqlite3-node137-win-x64",
+    "url": "https://github.com/WiseLibs/better-sqlite3/releases/download/v12.11.1/better-sqlite3-v12.11.1-node-v137-win32-x64.tar.gz",
+    "bytes": 1039428,
+    "sha256": "4ee5e653174d6ddd301605d351798cdae2613da06c4f37ecdce263021fcf1255",
+    "member": "build/Release/better_sqlite3.node",
+    "provenance": "https://api.github.com/repos/WiseLibs/better-sqlite3/releases/tags/v12.11.1 ; official GitHub asset digest SHA-256"
+  }
+}

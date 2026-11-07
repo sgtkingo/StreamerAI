@@ -20,6 +20,7 @@ const { values } = parseArgs({
     output: { type: "string" },
     "web-directory": { type: "string" },
     node: { type: "string", default: process.execPath },
+    "sqlite-binding": { type: "string" },
     ffmpeg: { type: "string" },
     ffprobe: { type: "string" },
     gateway: { type: "string" },
@@ -91,6 +92,17 @@ buildRuntime(path.join(output, "app"), {
   includeWeb: true,
   webDirectory: values["web-directory"],
 });
+// Cross-ABI review builds may supply a separately pinned target binding. Only
+// the isolated output changes; the mandatory target-runtime smoke test follows.
+if (values["sqlite-binding"]) {
+  const destination = path.join(
+    output,
+    "app/node_modules/better-sqlite3/build/Release/better_sqlite3.node",
+  );
+  if (!existsSync(destination))
+    throw new Error("The staged SQLite native binding is missing.");
+  copyFileSync(path.resolve(values["sqlite-binding"]), destination);
+}
 const smoke = spawnSync(
   nodeExecutable,
   [

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=StreamerAI
+Comment=Open your local StreamerAI server in a browser
+Exec=/usr/bin/streamerai-launch --open
+Icon=streamerai
+Terminal=false
+Categories=AudioVideo;Video;
+StartupNotify=true

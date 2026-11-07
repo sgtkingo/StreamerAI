@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 export interface InstallationStatus {
   enabled: boolean;
@@ -40,6 +40,55 @@ export function InstallationAccess({
   } | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const setupHandoff = useRef<{ token: string; job?: Promise<unknown> } | null>(
+    null,
+  );
+  useEffect(() => {
+    if (status.claimed) return;
+    if (!setupHandoff.current) {
+      const fragment = new URLSearchParams(window.location.hash.slice(1));
+      const setup = fragment.get("setup");
+      if (setup === null) return;
+      fragment.delete("setup");
+      const rest = fragment.toString();
+      window.history.replaceState(
+        window.history.state,
+        "",
+        `${window.location.pathname}${window.location.search}${rest ? `#${rest}` : ""}`,
+      );
+      if (!/^[a-f0-9]{64}$/.test(setup)) {
+        setError(
+          "The installation setup link is invalid. Reopen StreamerAI from its installer.",
+        );
+        return;
+      }
+      setupHandoff.current = { token: setup };
+    }
+    const handoff = setupHandoff.current;
+    if (!handoff) return;
+    // The ref also deduplicates React StrictMode's effect replay. Nothing is
+    // stored in browser storage, query parameters, or logging.
+    handoff.job ??= call("claim", { token: handoff.token });
+    handoff.token = "";
+    setBusy(true);
+    let active = true;
+    void handoff.job
+      .then(() => {
+        if (active) onConnected();
+      })
+      .catch(() => {
+        if (active)
+          setError(
+            "Server setup could not be completed. Reopen StreamerAI from its installer or enter your one-time key.",
+          );
+      })
+      .finally(() => {
+        if (active) setBusy(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [status.claimed, onConnected]);
   useEffect(() => {
     if (!request) return;
     let active = true;
@@ -91,7 +140,7 @@ export function InstallationAccess({
       <p>
         {status.claimed
           ? "Request access, then ask the server owner to compare your code and approve this device in Settings."
-          : "Enter the one-time setup key from installation-bootstrap.key in the server data directory. Keep this key private."}
+          : "The StreamerAI installer prepares your owner access automatically. You can also enter a one-time setup key from your server administrator."}
       </p>
       {!request && (
         <form

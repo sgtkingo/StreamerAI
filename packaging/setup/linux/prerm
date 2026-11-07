@@ -1,0 +1,10 @@
+#!/bin/sh
+set -eu
+case "${1:-}" in
+  remove|deconfigure)
+    if [ -d /run/systemd/system ]; then
+      systemctl stop streamerai-gateway.service streamerai-server.service || true
+      systemctl disable streamerai-gateway.service streamerai-server.service || true
+    fi
+    ;;
+esac

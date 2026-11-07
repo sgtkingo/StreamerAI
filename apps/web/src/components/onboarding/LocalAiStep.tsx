@@ -1,6 +1,7 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import type { StreamerApi } from "../../api/client";
 import { AgentBackendSettings } from "../AgentBackendSettings";
+import { ServerAiSetup } from "../ServerAiSetup";
 
 interface LocalAiStepProps {
   api: StreamerApi;
@@ -16,6 +17,20 @@ export function LocalAiStep({
   enabled,
   onEnabledChange,
 }: LocalAiStepProps) {
+  const [configuredModel, setConfiguredModel] = useState<string>();
+  useEffect(() => {
+    let mounted = true;
+    if (!api.getOllamaConfig) return;
+    void Promise.resolve()
+      .then(() => api.getOllamaConfig(profileId))
+      .then((config) => {
+        if (mounted && config?.model) setConfiguredModel(config.model);
+      })
+      .catch(() => undefined);
+    return () => {
+      mounted = false;
+    };
+  }, [api, profileId]);
   useEffect(() => {
     let mounted = true;
     void api
@@ -48,6 +63,25 @@ export function LocalAiStep({
         later in Settings. Local tools keep their own sign-in. API providers
         receive the discovery requests you send to StreamerAI.
       </p>
+      <ServerAiSetup
+        configuredModel={configuredModel}
+        onUseLocalModel={async (model) => {
+          const result = await api.connectLocalAgent({
+            profileId,
+            baseUrl: "http://127.0.0.1:11434",
+            model,
+          });
+          if (!result.ok) throw new Error(result.message);
+          await api.setAgentSelection({
+            profileId,
+            mode: "api",
+            provider: "ollama",
+            model,
+            reasoningEffort: "low",
+          });
+          onEnabledChange(true);
+        }}
+      />
       <AgentBackendSettings
         api={api}
         profileId={profileId}

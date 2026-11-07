@@ -1,0 +1,34 @@
+#!/bin/sh
+set -eu
+if [ "${1:-}" != configure ]; then exit 0; fi
+if [ ! -d /run/systemd/system ]; then
+  echo 'StreamerAI server requires a running systemd installation.' >&2
+  exit 1
+fi
+if ! getent passwd streamerai >/dev/null; then
+  adduser --system --group --home /var/lib/streamerai --no-create-home streamerai
+fi
+for managed in /var/lib/streamerai /var/lib/streamerai/data /var/lib/streamerai/keys /var/lib/streamerai/gateway /var/lib/streamerai/logs; do
+  if [ -L "$managed" ]; then echo 'Refusing a symlink in the server state layout.' >&2; exit 1; fi
+  install -d -m 0700 -o streamerai -g streamerai "$managed"
+done
+key=/var/lib/streamerai/keys/master.key
+if [ -L "$key" ]; then echo 'Refusing a symlink master key.' >&2; exit 1; fi
+if [ ! -e "$key" ]; then
+  /opt/streamerai/releases/@VERSION@/runtime/node -e 'const fs=require("node:fs");fs.writeFileSync(process.argv[1],require("node:crypto").randomBytes(32).toString("base64")+"\n",{flag:"wx",mode:0o600})' "$key"
+fi
+for private in "$key" /var/lib/streamerai/data/streamer-ai.db /var/lib/streamerai/data/streamer-ai.db-wal /var/lib/streamerai/data/streamer-ai.db-shm /var/lib/streamerai/data/secrets.vault /var/lib/streamerai/runtime.env /var/lib/streamerai/server.env; do
+  if [ -L "$private" ]; then echo 'Refusing a symlink in server data.' >&2; exit 1; fi
+  if [ -f "$private" ]; then chown streamerai:streamerai "$private"; chmod 0600 "$private"; fi
+done
+if [ -L /opt/streamerai/current ]; then
+  [ "$(readlink /opt/streamerai/current)" = 'releases/@VERSION@' ] || exit 1
+elif [ -e /opt/streamerai/current ]; then
+  echo 'Existing server path must be reviewed before installation.' >&2
+  exit 1
+else
+  ln -s releases/@VERSION@ /opt/streamerai/current
+fi
+systemctl daemon-reload
+systemctl enable --now streamerai-server.service streamerai-gateway.service
+echo 'StreamerAI is installed. Open StreamerAI from your applications menu to finish setup and optionally prepare local AI.'

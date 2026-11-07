@@ -38,7 +38,13 @@ describe("refreshMissingEpisodesForDownload", () => {
           {
             seasonNumber: 0,
             title: "Specials",
-            episodes: [{ seasonNumber: 0, episodeNumber: 1, availability: "unavailable" as const }],
+            episodes: [
+              {
+                seasonNumber: 0,
+                episodeNumber: 1,
+                availability: "unavailable" as const,
+              },
+            ],
           },
           ...detail.series!.seasons,
         ],
@@ -51,12 +57,15 @@ describe("refreshMissingEpisodesForDownload", () => {
 
     await refreshMissingEpisodesForDownload(api, "profile-1", withSpecials);
     expect(api.checkPlayback).not.toHaveBeenCalledWith(
-      "profile-1", "series-1", { seasonNumber: 0, episodeNumber: 1 },
+      "profile-1",
+      "series-1",
+      { seasonNumber: 0, episodeNumber: 1 },
     );
     await refreshMissingEpisodesForDownload(api, "profile-1", withSpecials, 0);
-    expect(api.checkPlayback).toHaveBeenCalledWith(
-      "profile-1", "series-1", { seasonNumber: 0, episodeNumber: 1 },
-    );
+    expect(api.checkPlayback).toHaveBeenCalledWith("profile-1", "series-1", {
+      seasonNumber: 0,
+      episodeNumber: 1,
+    });
   });
 
   it("checks a missing episode and includes a newly found download source", async () => {

@@ -1,0 +1,11 @@
+#!/bin/sh
+set -eu
+case "${1:-}" in
+  remove|purge)
+    if [ -L /opt/streamerai/current ] && [ "$(readlink /opt/streamerai/current)" = 'releases/@VERSION@' ]; then
+      rm -f /opt/streamerai/current
+    fi
+    if [ -d /run/systemd/system ]; then systemctl daemon-reload || true; fi
+    echo 'Server program removed. Profiles, vault, encryption keys, local CA and Ollama models are retained.'
+    ;;
+esac

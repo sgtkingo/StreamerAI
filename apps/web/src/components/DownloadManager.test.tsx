@@ -1,7 +1,11 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
-import type { CatalogTitle, TitleDetail, TitleSource } from "@streamer-ai/contracts";
+import type {
+  CatalogTitle,
+  TitleDetail,
+  TitleSource,
+} from "@streamer-ai/contracts";
 import type { OfflineDownload, StreamerApi } from "../api/client";
 import { DownloadProvider, useDownloadManager } from "./DownloadManager";
 import { ToastProvider } from "./ToastProvider";
@@ -62,29 +66,39 @@ const detail: TitleDetail = {
   related: [],
   series: {
     status: "complete",
-    seasons: [{
-      seasonNumber: 1,
-      title: "Season One",
-      episodes: [1, 2].map((episodeNumber) => ({
+    seasons: [
+      {
         seasonNumber: 1,
-        episodeNumber,
-        title: `Episode ${episodeNumber}`,
-        airDate: null,
-        availability: "available" as const,
-      })),
-    }],
+        title: "Season One",
+        episodes: [1, 2].map((episodeNumber) => ({
+          seasonNumber: 1,
+          episodeNumber,
+          title: `Episode ${episodeNumber}`,
+          airDate: null,
+          availability: "available" as const,
+        })),
+      },
+    ],
   },
 };
 
 function Controls() {
   const manager = useDownloadManager()!;
-  return <>
-    <button onClick={() => manager.activateBatch(title)}>Start series</button>
-    <button onClick={() => manager.activateBatch(title, 1)}>Start season</button>
-    <button onClick={() => manager.stopBatch(title.id)}>Stop series</button>
-    <span data-testid="season-status">{manager.batches[`${title.id}:1`]?.status}</span>
-    <span data-testid="regular-available">{manager.batchFor(title).available}</span>
-  </>;
+  return (
+    <>
+      <button onClick={() => manager.activateBatch(title)}>Start series</button>
+      <button onClick={() => manager.activateBatch(title, 1)}>
+        Start season
+      </button>
+      <button onClick={() => manager.stopBatch(title.id)}>Stop series</button>
+      <span data-testid="season-status">
+        {manager.batches[`${title.id}:1`]?.status}
+      </span>
+      <span data-testid="regular-available">
+        {manager.batchFor(title).available}
+      </span>
+    </>
+  );
 }
 
 describe("DownloadProvider", () => {
@@ -105,13 +119,15 @@ describe("DownloadProvider", () => {
           {
             seasonNumber: 0,
             title: "Specials",
-            episodes: [{
-              seasonNumber: 0,
-              episodeNumber: 1,
-              title: "Bonus",
-              airDate: null,
-              availability: "unavailable",
-            }],
+            episodes: [
+              {
+                seasonNumber: 0,
+                episodeNumber: 1,
+                title: "Bonus",
+                airDate: null,
+                availability: "unavailable",
+              },
+            ],
           },
           ...detail.series!.seasons,
         ],
@@ -120,13 +136,23 @@ describe("DownloadProvider", () => {
     const api = {
       getTitleDetail: vi.fn().mockResolvedValue(withSpecials),
       getOfflineDownloads: vi.fn().mockResolvedValue({ items: [] }),
-      getLocalFolders: vi.fn().mockResolvedValue({ roots: [{ id: "root-1", path: "D:\\Downloads" }] }),
+      getLocalFolders: vi.fn().mockResolvedValue({
+        roots: [{ id: "root-1", path: "D:\\Downloads" }],
+      }),
       checkPlayback: vi.fn(),
     } as unknown as StreamerApi;
-    render(<ToastProvider><DownloadProvider api={api} profileId="default"><Controls /></DownloadProvider></ToastProvider>);
+    render(
+      <ToastProvider>
+        <DownloadProvider api={api} profileId="default">
+          <Controls />
+        </DownloadProvider>
+      </ToastProvider>,
+    );
 
     await user.click(screen.getByRole("button", { name: "Start series" }));
-    expect(await screen.findByRole("button", { name: "Download 2 files" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", { name: "Download 2 files" }),
+    ).toBeInTheDocument();
     expect(screen.getByTestId("regular-available")).toHaveTextContent("2");
     expect(api.checkPlayback).not.toHaveBeenCalled();
   });
@@ -149,7 +175,11 @@ describe("DownloadProvider", () => {
     const api = {
       getTitleDetail: vi.fn().mockResolvedValue(detail),
       getOfflineDownloads: vi.fn().mockImplementation(async () => ({
-        items: !started ? [] : cancelled ? [{ ...job, state: "cancelled" }] : [job],
+        items: !started
+          ? []
+          : cancelled
+            ? [{ ...job, state: "cancelled" }]
+            : [job],
       })),
       getLocalFolders: vi.fn().mockResolvedValue({
         roots: [{ id: "root-1", path: "D:\\Downloads" }],
@@ -162,15 +192,29 @@ describe("DownloadProvider", () => {
         cancelled = true;
       }),
     } as unknown as StreamerApi;
-    render(<ToastProvider><DownloadProvider api={api} profileId="default"><Controls /></DownloadProvider></ToastProvider>);
+    render(
+      <ToastProvider>
+        <DownloadProvider api={api} profileId="default">
+          <Controls />
+        </DownloadProvider>
+      </ToastProvider>,
+    );
 
     await user.click(screen.getByRole("button", { name: "Start season" }));
-    await user.click(await screen.findByRole("button", { name: "Download 2 files" }));
-    await waitFor(() => expect(api.startOfflineDownload).toHaveBeenCalledTimes(1));
+    await user.click(
+      await screen.findByRole("button", { name: "Download 2 files" }),
+    );
+    await waitFor(() =>
+      expect(api.startOfflineDownload).toHaveBeenCalledTimes(1),
+    );
     await user.click(screen.getByRole("button", { name: "Stop series" }));
 
-    await waitFor(() => expect(api.cancelOfflineDownload).toHaveBeenCalledWith("default", job.id));
-    await waitFor(() => expect(screen.getByTestId("season-status")).toHaveTextContent("stopped"));
+    await waitFor(() =>
+      expect(api.cancelOfflineDownload).toHaveBeenCalledWith("default", job.id),
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("season-status")).toHaveTextContent("stopped"),
+    );
     expect(api.startOfflineDownload).toHaveBeenCalledTimes(1);
   });
 });

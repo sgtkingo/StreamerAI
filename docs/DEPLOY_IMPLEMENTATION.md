@@ -1,13 +1,20 @@
 # Stav implementace distribuce
 
-Aktualizováno 2026-11-05. Cíl popisuje [deploy plán](DEPLOY_PLAN.md).
+Aktualizováno 2026-11-07. Cíl popisuje [deploy plán](DEPLOY_PLAN.md).
 Změny jsou připravené v pracovním stromu; neprovádějí deployment Workeru,
 publikování Pages/Releases ani změnu běžící instalace.
 
+Upřesněný produktový cíl: server se dodává jako aplikace s jednoduchým
+instalátorem, který připraví závislosti, služby, lokální přístup a nabídne
+instalaci chybějící Ollamy/modelu. Archiv runtime je podklad pro sestavení
+instalátoru, nikoli cílový postup pro běžného uživatele. Klientem je nyní jen
+webový prohlížeč; instalace PWA nebo desktopového klienta není podmínkou.
+
 | Oblast | Implementovaný výstup | Co ještě zbývá před stabilním vydáním |
 | --- | --- | --- |
-| Produkční runtime | Zkompilovaný JS server, workspace balíčky a produkční závislosti; bez pnpm/tsx za běhu, Node 24.7+ | Plná ověřená binární sada gateway/FFmpeg a licence, podpisy a čisté Windows/Linux instalace. |
-| Distribuce | Přenositelný balík, kontrola obsahu, prototypy Windows služeb a Linux/systemd, platformní CI | Prototypy služeb nejsou finální podepsané instalátory; viz [packaging](../packaging/README.md). |
+| Produkční runtime | Zkompilovaný JS server a web, produkční závislosti, Node 24.22.2 LTS, ověřené Caddy/FFmpeg/WinSW; bez pnpm/tsx za běhu. Windows sestavení ověřuje také skutečný Node ABI 137 a SQLite binding. | Veřejná distribuce FFmpeg vyžaduje dokončení kontroly licence a odpovídajících zdrojů; podpisy a čisté instalace zůstávají podmínkou vydání. |
+| Distribuce | Skutečný grafický Windows `setup.exe` s vloženým úplným serverem, službami, lokálním HTTPS, zástupci a předáním vlastníka do prohlížeče. Linux má builder `.deb`, GTK průvodce a omezený systémový helper; ruční CI sestavuje obě platformy. | Windows je nepodepsaný Preview. Linuxový `.deb` se na této Windows stanici nesestavoval ani neinstaloval; viz [Windows](../packaging/setup/README.md) a [Linux](../packaging/setup/linux/README.md). |
+| Lokální AI | Průvodce zjistí existující Ollamu a modely, nabídne chybějící runtime a doporučený model, zobrazí velikost a průběh. Stahuje jen po výběru uživatele, kontroluje pinned runtime a zachovává existující konfiguraci. Nastavení serveru umí nabídnout a sledovat stažení modelu. | Skutečná instalace Ollamy, ověření GPU a běh bez přihlášeného uživatele vyžadují acceptance na cílovém systému. Ovladače GPU se automaticky neinstalují. |
 | Aktualizace serveru | Podepsaná metadata, prahové ověření Ed25519, expirace, platforma a ochrana proti replayi; staging | Supervizor s koordinací zálohy, nečinnosti, migrace a rollbacku; automatická aktivace není hotová. Nejde o plnou implementaci TUF. |
 | Přístup zařízení | Volitelný režim `paired`, jednorázové převzetí správce, kód, schválení, cookie, odvolání, uzavření streamu | LAN HTTPS a CA bootstrap na skutečných klientech; mDNS, úplná rotace session a samostatné ověření bezpečnosti. |
 | Offline server backup | Šifrovaný soubor, kontrola, obnova obou režimů identity a zotavení po přerušené obnově | Zatím CLI na zastaveném serveru a limit 256 MiB; grafický průvodce a velké streamované archivy. Viz [návod](OFFLINE_BACKUP.md). |
@@ -22,12 +29,15 @@ publikování Pages/Releases ani změnu běžící instalace.
 Dosavadní výchozí nastavení zůstává `STREAMERAI_ACCESS_MODE=trusted-local`.
 Aktivní instalace se nepřepíná. Pro kontrolovaný test na nové instalaci nastavte
 `STREAMERAI_ACCESS_MODE=paired` a správný `STREAMERAI_WEB_ORIGIN`. Pro LAN je
-vyžadována HTTPS adresa; HTTP je přípustné jen na localhostu. Nové nativní
-prototypy používají `https://localhost:8443` přes interní CA gateway.
+vyžadována HTTPS adresa; HTTP je přípustné jen na localhostu. Nové instalátory
+používají `https://localhost:8443` přes interní CA gateway a režim `paired`.
+Existující explicitní nastavení při obnově respektují; běžící instalaci nemění.
 
 Při prvním startu vznikne v datovém adresáři `installation-bootstrap.key`.
-Vlastník jej přečte přímo na hostiteli a zadá do uvítací obrazovky. Klíč se
-nepíše do logů a po použití se odstraní. Další zařízení žádá o přístup a vlastník
+Instalátor předá jednorázové převzetí správce přímo do prohlížeče; fragment
+`#setup` se před odesláním odstraní z adresy a klíč se neukládá do prohlížeče.
+Při ručním nasazení lze klíč přečíst na hostiteli a zadat do uvítací obrazovky.
+Klíč se nepíše do logů a po použití se odstraní. Další zařízení žádá o přístup a vlastník
 v Nastavení opíše jeho osmiznakový kód. V Nastavení lze jeho přístup odvolat.
 Cloudové přihlášení a oprávnění domácnosti zůstávají další vrstvou.
 
@@ -63,20 +73,37 @@ se po aktivaci nepoužívá. Vlastník musí uložit recovery klíč odděleně 
 ## Distribuční artefakty a ověření
 
 Způsob sestavení a podepsaného stagingu uvádí [packaging README](../packaging/README.md).
-Připravené lokální ZIP soubory s příponou `runtime-prototype` nejsou plné
-instalátory a neobsahují chybějící FFmpeg/Caddy/WinSW binární distribuci.
-Tato pracovní stanice ověřuje Windows; skutečné Linux/systemd, Docker,
-Authenticode a browser/TV acceptance jsou samostatné kroky.
+Finální lokální Windows kandidát je v `dist/installers/`, včetně SHA-256 a
+`setup-build.json`. Obsahuje Node, SQLite, web, server, FFmpeg, Caddy a WinSW;
+Ollama a model jsou samostatné volitelné downloady. Staré runtime prototypy,
+pracovní sestavení a cache se po dokončení odstraní. Zdrojové kódy a data zůstávají.
 
-Ověření tohoto kroku: server 430 testů + samostatný test offline přístupu po
-obnově, web 388, cloud 66, databáze 18, kontrakty 32 a distribuce 10; celkem
-945 úspěšných testů. Dalších 13 integračních testů vyžaduje skutečný FFmpeg
-nebo Ollama runtime a zůstává vypnutých. Typecheck všech workspace balíčků,
-ESLint a formát změněných souborů prošly. Celorepozitářový formát obsahuje
-starší neshody v nesouvisejících souborech; `docs/TODO.md` má také již existující
-trailing whitespace. Tyto poznámky a nesouvisející implementaci tento krok nepřepisuje.
+Windows setup ověřují testy skutečné kompilace, vloženého archivu, odmítnutí
+pozměněného obsahu, neinstalačního vykreslení průvodce a PowerShell syntaxe/dry-run.
+Linux helper a balíček mají testy sestavení stromu a bezpečných pevných operací.
+Serverové testy zahrnují vlastnická oprávnění lokálního AI nastavení; webové testy
+zahrnují nabídku modelu a jednorázové předání správce v React StrictMode.
+Ověření: server 439, web 393, cloud 66, databáze 18, kontrakty 32 a distribuce 28;
+celkem 976 úspěšných testů. Typecheck workspace balíčků, ESLint a kontrola formátu
+prošly. Přímo v přibaleném Node 24.22.2 / ABI 137 prošlo také vytvoření produkční
+aplikace se SQLite, šifrovaným úložištěm, převzetím správce a kontrolou souhlasu
+pro stažení modelu, bez síťového stahování a bez instalace služeb.
 
-Produkční web byl kvůli zamčenému staršímu `apps/web/dist/sw.js` sestaven
-do nového `dist/deploy-review-web` a balík dostal tuto explicitní cestu přes
-`--web-directory`. Nebyl ověřen v interaktivním prohlížeči: v této relaci není
-dostupný browser execution nástroj; chování UI ověřují komponentové testy.
+Původní Windows Preview bylo na této stanici spuštěno a zanechalo běžící službu
+serveru a zastavenou gateway. Caddy nedokázal načíst neuzavřenou cestu
+`C:\Program Files` v Caddyfile. Nový instalační EXE obsahuje opravený konfigurační
+soubor a při opakování rozpracované instalace ověřuje otisk původního souboru,
+opravuje jen definici gateway a spouští ji. Opravený soubor prošel validací
+instalovaným Caddy a nový EXE self-testem; skutečné dokončení instalace čeká na
+opětovné spuštění průvodce s potvrzením Windows UAC. Linux/systemd, Authenticode
+a instalace, restart i odinstalace na čistých Windows/Linux systémech jsou
+samostatné podmínky veřejného vydání.
+Windows a Linux průvodci nyní používají červenobílou značku aplikace a samostatné
+obrazovky s výsledkem, čitelným popisem, strojovým kódem a akcí pro opakování.
+Windows EXE má vloženou vícerozměrnou ikonu; náhledy voleb, úspěchu a chyby lze
+vykreslit bez instalace.
+13 integračních testů vyžaduje skutečný FFmpeg nebo Ollama runtime a zůstává
+vypnutých. Chování webu ověřují komponentové testy; v této relaci není dostupný
+nástroj pro interaktivní browser acceptance. Grafický Windows průvodce lze
+bez instalace vykreslit příkazem `--preview-image` a jeho výstup se kontroluje
+vizuálně. Žádná služba na pracovní stanici se tím nespouští.

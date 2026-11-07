@@ -1,0 +1,10 @@
+#!/bin/sh
+set -eu
+if [ "${1:-}" = upgrade ] || [ -e /opt/streamerai/current ] || [ -L /opt/streamerai/current ]; then
+  echo 'StreamerAI is already installed. This first installer does not perform in-place upgrades; keep the current server and its data.' >&2
+  exit 1
+fi
+if [ -e /opt/streamerai/releases/@VERSION@ ]; then
+  echo 'The target release directory already exists; no files were overwritten.' >&2
+  exit 1
+fi

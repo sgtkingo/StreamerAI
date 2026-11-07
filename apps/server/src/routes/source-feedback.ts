@@ -40,12 +40,10 @@ export function registerSourceFeedbackRoutes(
   ) => ({
     enabled,
     items: enabled
-      ? database.sourceFeedback
-          .list(accountId, titleId)
-          .map((item) => ({
-            ...item.payload,
-            isOwn: item.payload.profileId === profileSyncId,
-          }))
+      ? database.sourceFeedback.list(accountId, titleId).map((item) => ({
+          ...item.payload,
+          isOwn: item.payload.profileId === profileSyncId,
+        }))
       : [],
   });
   app.get(feedbackPath, async (request, reply) => {
