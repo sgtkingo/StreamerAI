@@ -1,4 +1,12 @@
-export function WelcomeStep() {
+import { EncryptedRecovery } from "../EncryptedRecovery";
+
+export function WelcomeStep({
+  allowRestore = false,
+  onRestored,
+}: {
+  allowRestore?: boolean;
+  onRestored?: () => void | Promise<void>;
+}) {
   return (
     <div className="step-copy step-copy--welcome">
       <p className="eyebrow">Private by design</p>
@@ -23,6 +31,14 @@ export function WelcomeStep() {
           </p>
         </div>
       </div>
+      {allowRestore && (
+        <details className="trust-note welcome-restore">
+          <summary>
+            Restore an encrypted household instead of starting over
+          </summary>
+          <EncryptedRecovery restoreOnly onRestored={onRestored} />
+        </details>
+      )}
     </div>
   );
 }

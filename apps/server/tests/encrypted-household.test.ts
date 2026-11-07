@@ -9,6 +9,9 @@ import { accountSecretKey } from "../src/stores/account-integrations.js";
 import { NonPersistentMemorySecretStore } from "../src/stores/secret-store.js";
 import { EncryptedHouseholdService } from "../src/services/encrypted-household.js";
 import { EncryptedCheckpointTransport } from "../src/services/encrypted-sync-transport.js";
+import { AutomaticHouseholdBackup } from "../src/services/automatic-household-backup.js";
+import { MasterPinService } from "../src/services/master-pin.js";
+import { resolveHouseholdBackup } from "../src/services/master-pin-household-backup.js";
 
 const databases: StreamerDatabase[] = [];
 const now = () => new Date("2026-11-04T12:00:00.000Z");
@@ -122,6 +125,118 @@ async function source() {
 }
 
 describe("encrypted household recovery", () => {
+  it("keeps previous backup files on their original PIN after a PIN change", async () => {
+    const original = await source();
+    const master = new MasterPinService(original.secrets);
+    await master.setupLocal("local", "01234567");
+    const before = await original.service.exportLocalBackup("local");
+    expect(await master.changeLocal("local", "01234567", "87654321")).toBe(true);
+    const after = await original.service.exportLocalBackup("local");
+    const oldFile = await resolveHouseholdBackup(before, "01234567");
+    const newFile = await resolveHouseholdBackup(after, "87654321");
+    expect(original.service.preview(oldFile.envelope, oldFile.recoveryKey).profiles).toHaveLength(1);
+    expect(original.service.preview(newFile.envelope, newFile.recoveryKey).profiles).toHaveLength(1);
+    const wrong = await resolveHouseholdBackup(before, "87654321");
+    expect(() => original.service.preview(wrong.envelope, wrong.recoveryKey)).toThrow("HOUSEHOLD_AUTHENTICATION_FAILED");
+  }, 15_000);
+  it("requires a verified Master PIN for local files and restores them offline", async () => {
+    const original = await source(),
+      destination = installation();
+    await expect(original.service.exportLocalBackup("local")).rejects.toThrow(
+      "MASTER_PIN_REQUIRED",
+    );
+    await new MasterPinService(original.secrets).setupLocal(
+      "local",
+      "01234567",
+    );
+    await new MasterPinService(destination.secrets).setupLocal(
+      "local",
+      "87654321",
+    );
+    const file = await original.service.exportLocalBackup("local");
+    expect(file.format).toBe("streamerai-master-pin-household");
+    for (const secret of [
+      "01234567",
+      "Private Alice",
+      "PRIVATE-TMDB-TOKEN",
+      original.key,
+    ])
+      expect(JSON.stringify(file)).not.toContain(secret);
+    const input = await resolveHouseholdBackup(file, "01234567");
+    expect(
+      destination.service
+        .preview(input.envelope, input.recoveryKey)
+        .profiles.some((profile) => profile.name === "Private Alice"),
+    ).toBe(true);
+    await destination.service.restore(
+      "local",
+      input.envelope,
+      input.recoveryKey,
+      input.cloudRecovery,
+      "01234567",
+    );
+    expect(
+      (await new MasterPinService(destination.secrets).read("local"))?.pin,
+    ).toBe("87654321");
+    const cloud = await destination.service.export("local");
+    expect(
+      destination.service
+        .preview(cloud, original.key)
+        .profiles.some((profile) => profile.name === "Private Alice"),
+    ).toBe(true);
+    const next = await destination.service.exportLocalBackup("local");
+    const reopened = await resolveHouseholdBackup(next, "87654321");
+    expect(
+      destination.service
+        .preview(reopened.envelope, reopened.recoveryKey)
+        .profiles.some((profile) => profile.name === "Private Alice"),
+    ).toBe(true);
+    await expect(
+      resolveHouseholdBackup(original.envelope, original.key),
+    ).rejects.toThrow("INVALID_ENCRYPTED_HOUSEHOLD");
+  }, 15_000);
+  it("rejects the wrong Master PIN and tampered KDF, salt, recovery wrapper or payload before restore", async () => {
+    const original = await source(),
+      destination = installation();
+    await new MasterPinService(original.secrets).setupLocal(
+      "local",
+      "01234567",
+    );
+    const file = await original.service.exportLocalBackup("local");
+    const preview = async (input: unknown, pin = "01234567") => {
+      const resolved = await resolveHouseholdBackup(input, pin);
+      return destination.service.preview(
+        resolved.envelope,
+        resolved.recoveryKey,
+      );
+    };
+    await expect(preview(file, "76543210")).rejects.toThrow(
+      "HOUSEHOLD_AUTHENTICATION_FAILED",
+    );
+    await expect(
+      preview({ ...file, kdf: { ...file.kdf, memory: 1_048_576 } }),
+    ).rejects.toThrow("INVALID_ENCRYPTED_HOUSEHOLD");
+    for (const mutate of [
+      (copy: typeof file) => {
+        copy.kdf.salt = randomBytes(16).toString("base64url");
+      },
+      (copy: typeof file) => {
+        copy.cloudRecovery.nonce = randomBytes(12).toString("base64url");
+      },
+      (copy: typeof file) => {
+        copy.envelope.payload.tag = randomBytes(16).toString("base64url");
+      },
+    ]) {
+      const changed = structuredClone(file);
+      mutate(changed);
+      await expect(preview(changed)).rejects.toThrow(
+        "HOUSEHOLD_AUTHENTICATION_FAILED",
+      );
+    }
+    expect(
+      destination.database.profiles.list().map((profile) => profile.name),
+    ).not.toContain("Private Alice");
+  }, 15_000);
   it("recovers complete registered profile records and portable secrets into a fresh vault without cloud access", async () => {
     const original = await source();
     const destination = installation();
@@ -250,27 +365,6 @@ describe("encrypted household recovery", () => {
     ).toBe(false);
   });
 
-  it("rotates the recovery wrapper, preserves independent old exports and uses fresh nonces", async () => {
-    const original = await source();
-    const changed = await original.service.rotateRecoveryKey("local");
-    const next = await original.service.export("local");
-    expect(next.recoveryVersion).toBe(2);
-    expect(next.payload.nonce).not.toBe(original.envelope.payload.nonce);
-    expect(next.recovery.nonce).not.toBe(original.envelope.recovery.nonce);
-    expect(() => original.service.preview(next, original.key)).toThrow(
-      "HOUSEHOLD_AUTHENTICATION_FAILED",
-    );
-    expect(
-      original.service.preview(next, changed.recoveryKey).profiles,
-    ).toHaveLength(1);
-    expect(
-      original.service.preview(original.envelope, original.key).profiles,
-    ).toHaveLength(1);
-    expect(() =>
-      original.service.preview(original.envelope, changed.recoveryKey),
-    ).toThrow("HOUSEHOLD_AUTHENTICATION_FAILED");
-  });
-
   it("rejects overwrites of existing households and credentials", async () => {
     const original = await source();
     const destination = installation();
@@ -369,6 +463,11 @@ describe("encrypted household recovery", () => {
 describe("opaque checkpoint transport", () => {
   it("sends only encrypted envelopes and a revision, rejects stale acknowledgements and HTTPS downgrades", async () => {
     const original = await source();
+    await new MasterPinService(original.secrets).setupLocal(
+      "local",
+      "01234567",
+    );
+    const backup = await original.service.exportLocalBackup("local");
     let request = "";
     const transport = new EncryptedCheckpointTransport(
       "https://cloud.example.test",
@@ -382,21 +481,67 @@ describe("opaque checkpoint transport", () => {
       await transport.write(
         { token: "cloud-token", deviceId: "server" },
         0,
-        original.envelope,
+        backup,
       ),
     ).toEqual({ revision: 1 });
     expect(request).not.toContain("PRIVATE-TMDB-TOKEN");
     expect(request).not.toContain("Private Alice");
     expect(request).not.toContain(original.key);
     await expect(
-      transport.write(
-        { token: "cloud-token", deviceId: "server" },
-        1,
-        original.envelope,
-      ),
+      transport.write({ token: "cloud-token", deviceId: "server" }, 1, backup),
     ).rejects.toMatchObject({ code: "INVALID_ENCRYPTED_SYNC_RESPONSE" });
     expect(
       () => new EncryptedCheckpointTransport("http://cloud.example.test"),
     ).toThrow("ENCRYPTED_SYNC_REQUIRES_HTTPS");
+  });
+});
+
+describe("automatic Master PIN cloud backup", () => {
+  it("uploads encrypted changes, reports the last save and refuses a changed cloud revision", async () => {
+    const original = await source();
+    await new MasterPinService(original.secrets).setupLocal(
+      "local",
+      "01234567",
+    );
+    let revision = 0;
+    const bodies: string[] = [];
+    const transport = new EncryptedCheckpointTransport(
+      "https://cloud.example.test",
+      async (_url, init) => {
+        if (init?.method === "GET")
+          return Response.json({ revision, envelope: null });
+        bodies.push(String(init?.body));
+        revision++;
+        return Response.json({ revision });
+      },
+    );
+    const backup = new AutomaticHouseholdBackup(
+      original.database,
+      original.service,
+      transport,
+      async () => ({ token: "device-token", deviceId: "server" }),
+      now,
+    );
+    expect(backup.status("local").cloudBackup.status).toBe("pending");
+    await backup.sync("local");
+    expect(backup.status("local").cloudBackup).toMatchObject({
+      status: "current",
+      lastSavedAt: now().toISOString(),
+    });
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]).toContain("streamerai-master-pin-household");
+    expect(bodies[0]).not.toContain("01234567");
+    await backup.sync("local");
+    expect(bodies).toHaveLength(1);
+    backup.markDirty("local");
+    await backup.sync("local");
+    expect(bodies).toHaveLength(2);
+    revision++;
+    backup.markDirty("local");
+    await expect(backup.sync("local")).rejects.toThrow(
+      "changed on another server",
+    );
+    expect(backup.status("local").cloudBackup.status).toBe("error");
+    expect(bodies).toHaveLength(2);
   });
 });

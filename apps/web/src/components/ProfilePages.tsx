@@ -16,9 +16,10 @@ import { ProfilePinSettings } from "./ProfilePin";
 import { AccountSettings } from "./AccountSettings";
 import { SupportPanel } from "./SupportPanel";
 import { InstallationDevices } from "./InstallationAccess";
-import { EncryptedRecovery } from "./EncryptedRecovery";
+import { AccountSecurity } from "./AccountSecurity";
 
-export type ProfilePage = "settings" | "preferences" | "account" | "statistics";
+export type ProfilePage =
+  "settings" | "preferences" | "account" | "profile" | "support" | "statistics";
 
 interface ProfilePagesProps {
   page: ProfilePage;
@@ -167,13 +168,15 @@ export function ProfilePages({
             ? "Preferences"
             : page === "account"
               ? "My account"
-              : "Statistics"}
+              : page === "profile"
+                ? "Profile"
+                : page === "support"
+                  ? "Support"
+                  : "Statistics"}
       </h1>
       {page === "settings" && (
         <div className="profile-page__sections">
-          <SupportPanel />
           <InstallationDevices />
-          <EncryptedRecovery />
           <section className="profile-page__section" id="settings-interface">
             <p className="eyebrow">01 / Interface</p>
             <h2>Language</h2>
@@ -196,11 +199,6 @@ export function ProfilePages({
             </p>
           </section>
           <AppearanceSettings api={api} locale={profile.locale} />
-          <ProfilePinSettings
-            api={api}
-            profile={profile}
-            onProfileUpdated={onProfileUpdated}
-          />
           <section className="profile-page__section" id="settings-audio">
             <p className="eyebrow">02 / Audio</p>
             <h2>Playback languages</h2>
@@ -351,12 +349,35 @@ export function ProfilePages({
 
       {page === "account" && (
         <div className="profile-page__sections">
-          <AccountSettings
-            api={api}
-            profile={profile}
-            onSwitchProfile={onSwitchAccount}
-            onSignOut={onSignOut}
-          />
+          <AccountSettings api={api} profile={profile} onSignOut={onSignOut} />
+          <section className="profile-page__section" id="account-sync-services">
+            <p className="eyebrow">Account services</p>
+            <h2>Cloud synchronization</h2>
+            <IntegrationManager
+              api={api}
+              context="settings"
+              category="sync"
+              profileId={profile.id}
+              onConnectionChange={onIntegrationsChanged}
+            />
+          </section>
+          <AccountSecurity api={api} />
+        </div>
+      )}
+
+      {page === "profile" && (
+        <div className="profile-page__sections">
+          <section className="profile-page__section">
+            <p className="eyebrow">Current profile</p>
+            <h2>{profile.name}</h2>
+            <button
+              className="button button--secondary"
+              type="button"
+              onClick={onSwitchAccount}
+            >
+              Choose another profile
+            </button>
+          </section>
           <ProfilePinSettings
             api={api}
             profile={profile}
@@ -370,6 +391,12 @@ export function ProfilePages({
               initials avatar is used for now.
             </p>
           </section>
+        </div>
+      )}
+
+      {page === "support" && (
+        <div className="profile-page__sections">
+          <SupportPanel />
         </div>
       )}
 

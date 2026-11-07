@@ -1,13 +1,16 @@
-import { useEffect, useState } from "react";
+﻿import { useEffect, useState } from "react";
 import { getInstallationStatus } from "./InstallationAccess";
+import { useToasts } from "./ToastProvider";
+import { DigitSlotsInput } from "./DigitSlotsInput";
+import { InfoTip } from "./InfoTip";
 
 const base = "/api/v1/account/encrypted-household";
 async function call<T>(
-  suffix: string,
+  path: string,
   method = "GET",
   body?: unknown,
 ): Promise<T> {
-  const response = await fetch(base + suffix, {
+  const response = await fetch(base + path, {
     method,
     credentials: "same-origin",
     cache: "no-store",
@@ -21,11 +24,14 @@ async function call<T>(
     } | null;
     const code = data?.error?.code;
     throw new Error(
-      code === "ENCRYPTED_CHECKPOINT_CONFLICT"
-        ? "The cloud copy changed on another server. Check it again before replacing it."
-        : code === "HOUSEHOLD_RESTORE_REQUIRES_EMPTY_ACCOUNT"
-          ? "Restore requires a new household with no existing profile data."
-          : "The operation could not be completed. Check your recovery key, file and server connection.",
+      code === "MASTER_PIN_REQUIRED"
+        ? "Verify your Master PIN in account settings before saving a backup."
+        : code === "HOUSEHOLD_AUTHENTICATION_FAILED" ||
+            code === "INVALID_MASTER_PIN"
+          ? "The backup could not be unlocked. Check its 8-digit Master PIN."
+          : code === "HOUSEHOLD_RESTORE_REQUIRES_EMPTY_ACCOUNT"
+            ? "Restore requires a new household with no existing profile data."
+            : "The operation could not be completed. Check your file and server connection.",
     );
   }
   return response.json() as Promise<T>;
@@ -41,40 +47,87 @@ function download(filename: string, content: string) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 interface Status {
-  enabled: boolean;
   cloudConfigured: boolean;
-  mode: string;
+  cloudBackup?: {
+    status: "pending" | "saving" | "current" | "error";
+    lastSavedAt: string | null;
+    error: string | null;
+  };
 }
 interface Preview {
   profiles: { name: string; pinEnabled?: boolean }[];
   credentials: string[];
   limitations: string[];
 }
-export function EncryptedRecovery() {
+
+function BackupActionIcon({ restore = false }: { restore?: boolean }) {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M4 16v4h16v-4" />
+      {restore ? (
+        <path d="M12 16V4m-5 5 5-5 5 5" />
+      ) : (
+        <path d="M12 4v12m-5-5 5 5 5-5" />
+      )}
+    </svg>
+  );
+}
+
+export function EncryptedRecovery({
+  restoreOnly = false,
+  onRestored,
+}: {
+  restoreOnly?: boolean;
+  onRestored?: () => void | Promise<void>;
+}) {
   const [status, setStatus] = useState<Status | null>(null);
-  const [key, setKey] = useState("");
-  const [newKey, setNewKey] = useState("");
+  const [pin, setPin] = useState("");
   const [envelope, setEnvelope] = useState<unknown>(null);
+  const [cloudRevision, setCloudRevision] = useState<number | null>(null);
   const [preview, setPreview] = useState<Preview | null>(null);
-  const [revision, setRevision] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [confirmed, setConfirmed] = useState(false);
+  const [restoreOpen, setRestoreOpen] = useState(restoreOnly);
+  const { showToast } = useToasts();
   useEffect(() => {
     let active = true;
-    void getInstallationStatus()
-      .then(async (installation) => {
-        if (installation.role !== "owner") return;
+    const refresh = async () => {
+      try {
+        const installation = await getInstallationStatus();
+        if (installation.enabled && installation.role !== "owner") return;
         const result = await call<Status>("");
         if (active) setStatus(result);
-      })
-      .catch(() => undefined);
+      } catch {
+        if (active && restoreOnly)
+          setError(
+            "Backup recovery is temporarily unavailable. Check the home server connection.",
+          );
+      }
+    };
+    void refresh();
+    const timer = restoreOnly
+      ? null
+      : setInterval(() => void refresh(), 30_000);
     return () => {
       active = false;
+      if (timer) clearInterval(timer);
     };
-  }, []);
-  if (!status) return null;
+  }, [restoreOnly]);
+  if (!status)
+    return restoreOnly ? (
+      <p role={error ? "alert" : "status"}>
+        {error || "Loading backup recoveryâ€¦"}
+      </p>
+    ) : null;
   const run = async (operation: () => Promise<void>) => {
     if (busy) return;
     setBusy(true);
@@ -91,269 +144,209 @@ export function EncryptedRecovery() {
     }
   };
   return (
-    <section className="profile-page__section" id="settings-encrypted-recovery">
-      <p className="eyebrow">Encrypted recovery · preview</p>
-      <h2>Profiles and service access</h2>
-      <p>
-        Save an encrypted household file and restore it on a new server. Keep
-        the recovery key separately. Full server backups include additional
-        data; use the offline backup command while the server is stopped.
-      </p>
-      <p className="settings-note">
-        This preview uses encrypted snapshots. Automatic merging between servers
-        and approval without a recovery key are still being developed. Enabling
-        encrypted recovery pauses the older profile synchronization.
-      </p>
-      {!status.enabled && (
-        <button
-          className="button button--secondary"
-          type="button"
-          disabled={busy}
-          onClick={() =>
-            void run(async () => {
-              const result = await call<{
-                recoveryKey: string;
-                status: Status;
-              }>("/activate", "POST", {
-                confirm: "enable-encrypted-household",
-              });
-              setNewKey(result.recoveryKey);
-              setStatus({ ...status, ...result.status });
-            })
-          }
-        >
-          Enable encrypted recovery
-        </button>
-      )}
-      {newKey && (
-        <div className="deployment-card">
-          <h3>Save your recovery key</h3>
+    <section
+      className={
+        restoreOnly ? "profile-page__section" : "account-security__subsection"
+      }
+      id="account-encrypted-recovery"
+    >
+      {!restoreOnly && (
+        <>
+          <h3>Household backups</h3>
           <p>
-            Store it safely and separately from exported files. Anyone with both
-            can read your saved profiles and service credentials.
+            Household files and cloud backups are encrypted automatically with
+            your Master PIN. A saved file can be restored on a new server. Full
+            server backups include additional data; use the offline backup
+            command while the server is stopped.
           </p>
-          <code className="recovery-key">{newKey}</code>
-          <div className="deployment-actions">
-            <button
-              className="button button--secondary"
-              type="button"
-              onClick={() => download("streamerai-recovery-key.txt", newKey)}
+          <div className="deployment-card household-backup-cloud">
+            <h4>Automatic cloud backup</h4>
+            <p
+              role="status"
+              className={
+                status.cloudBackup?.status === "current"
+                  ? "cloud-backup-current"
+                  : undefined
+              }
             >
-              Save key separately
+              {!status.cloudConfigured
+                ? "Connect an online account to enable automatic cloud backups."
+                : status.cloudBackup?.status === "current"
+                  ? `âś“ Encrypted backup is current. Last saved ${new Date(status.cloudBackup.lastSavedAt!).toLocaleString()}.`
+                  : status.cloudBackup?.status === "saving"
+                    ? "Saving encrypted backup to cloudâ€¦"
+                    : status.cloudBackup?.status === "error"
+                      ? `Cloud backup needs attention: ${status.cloudBackup.error}`
+                      : "Encrypted cloud backup is waiting for the first save. Verify your Master PIN in account settings once on this server."}
+            </p>
+          </div>
+          <div className="household-backup-actions">
+            <button
+              className="household-backup-action"
+              type="button"
+              disabled={busy}
+              onClick={() =>
+                void run(async () => {
+                  const data = await call<unknown>("/export", "POST", {});
+                  download("streamerai-household.json", JSON.stringify(data));
+                  showToast("Encrypted file ready to download.", "success");
+                  setNotice("This file is protected with your Master PIN.");
+                })
+              }
+            >
+              <BackupActionIcon />
+              <span>Create</span>
             </button>
             <button
-              className="button button--secondary"
+              className="household-backup-action"
               type="button"
-              onClick={() => setNewKey("")}
+              disabled={busy}
+              aria-expanded={restoreOpen}
+              aria-controls="account-household-restore"
+              onClick={() => setRestoreOpen((open) => !open)}
             >
-              I have saved the key · Hide
+              <BackupActionIcon restore />
+              <span>Restore</span>
             </button>
           </div>
-        </div>
+        </>
       )}
-      {status.enabled && (
-        <div className="deployment-actions">
-          <button
-            className="button button--secondary"
-            type="button"
-            disabled={busy || !!newKey}
-            onClick={() =>
-              void run(async () => {
-                const data = await call<unknown>("/export", "POST", {});
-                download("streamerai-household.json", JSON.stringify(data));
-                setNotice(
-                  "Encrypted file saved. Store your recovery key separately.",
-                );
-              })
-            }
-          >
-            Save encrypted household file
-          </button>
-          <button
-            className="button button--secondary"
-            type="button"
-            disabled={busy || !!newKey}
-            onClick={() => setConfirmed(!confirmed)}
-          >
-            Replace recovery key…
-          </button>
-        </div>
-      )}
-      {confirmed && (
-        <div className="deployment-card">
-          <p>
-            This creates a new recovery key. Previously saved files still need
-            their original key. Save the new key before replacing future cloud
-            copies.
-          </p>
-          <button
-            className="button button--secondary"
-            type="button"
-            disabled={busy}
-            onClick={() =>
-              void run(async () => {
-                const result = await call<{
-                  recoveryKey: string;
-                  status: Status;
-                }>("/rotate-recovery", "POST", {
-                  confirm: "rotate-recovery-key",
-                });
-                setNewKey(result.recoveryKey);
-                setConfirmed(false);
-              })
-            }
-          >
-            Confirm key replacement
-          </button>
-        </div>
-      )}
-      {status.cloudConfigured && (
-        <div className="deployment-card">
-          <h3>Encrypted cloud checkpoint</h3>
-          <p>
-            Check the cloud revision before uploading. A changed revision is a
-            conflict and will not be overwritten silently. This needs the
-            matching cloud service version.
-          </p>
-          <div className="deployment-actions">
+      {restoreOpen && (
+        <div
+          id="account-household-restore"
+          className="household-backup-restore"
+        >
+          {restoreOnly ? (
+            <p>
+              Import your saved household using the Master PIN that protected
+              the backup.{" "}
+              <InfoTip label="What is a Master PIN?">
+                Your 8-digit code unlocks any profile and protects local
+                backups.
+              </InfoTip>
+            </p>
+          ) : (
+            <h3>Restore into an empty household</h3>
+          )}
+          {status.cloudConfigured && (
             <button
               className="button button--secondary"
               type="button"
               disabled={busy}
               onClick={() =>
                 void run(async () => {
-                  const data = await call<{
+                  const copy = await call<{
                     revision: number;
                     envelope: unknown | null;
                   }>("/cloud");
-                  setRevision(data.revision);
-                  if (data.envelope) {
-                    setEnvelope(data.envelope);
-                    setPreview(null);
-                  }
+                  if (!copy.envelope)
+                    throw new Error("There is no cloud backup to restore yet.");
+                  setEnvelope(copy.envelope);
+                  setCloudRevision(copy.revision);
+                  setPreview(null);
+                  setPin("");
                   setNotice(
-                    `Cloud revision ${data.revision}${data.envelope ? " loaded for review." : " has no saved household."}`,
+                    "Encrypted cloud backup loaded. Enter its Master PIN to review it.",
                   );
                 })
               }
             >
-              Check cloud copy
+              Restore from cloud backup
             </button>
-            {status.enabled && revision !== null && (
-              <button
-                className="button button--secondary"
-                type="button"
-                disabled={busy || !!newKey}
-                onClick={() =>
-                  void run(async () => {
-                    const result = await call<{ revision: number }>(
-                      "/cloud",
-                      "PUT",
-                      {
-                        expectedRevision: revision,
-                        confirm: "upload-encrypted-checkpoint",
-                      },
-                    );
-                    setRevision(result.revision);
-                    setNotice("Encrypted checkpoint uploaded.");
-                  })
+          )}
+          <label className="field">
+            <span>Encrypted household file</span>
+            <input
+              type="file"
+              accept=".json,application/json"
+              disabled={busy}
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                setPreview(null);
+                setEnvelope(null);
+                setCloudRevision(null);
+                setPin("");
+                setError("");
+                if (!file) return;
+                if (file.size > 16 * 1024 * 1024) {
+                  setError("The household file is too large.");
+                  return;
                 }
-              >
-                Upload current household
-              </button>
-            )}
-          </div>
-        </div>
-      )}
-      <h3>Restore into an empty household</h3>
-      <label className="field">
-        <span>Encrypted household file</span>
-        <input
-          type="file"
-          accept=".json,application/json"
-          disabled={busy}
-          onChange={(event) => {
-            const file = event.target.files?.[0];
-            setPreview(null);
-            setEnvelope(null);
-            setError("");
-            if (!file) return;
-            if (file.size > 16 * 1024 * 1024) {
-              setError("The household file is too large.");
-              return;
-            }
-            void file
-              .text()
-              .then((text) => setEnvelope(JSON.parse(text) as unknown))
-              .catch(() => setError("This is not a readable household file."));
-          }}
-        />
-      </label>
-      <label className="field">
-        <span>Recovery key for this file</span>
-        <input
-          type="password"
-          autoComplete="off"
-          value={key}
-          onChange={(event) => {
-            setKey(event.target.value);
-            setPreview(null);
-          }}
-        />
-      </label>
-      <button
-        className="button button--secondary"
-        type="button"
-        disabled={busy || !envelope || !key}
-        onClick={() =>
-          void run(async () =>
-            setPreview(
-              await call<Preview>("/preview", "POST", {
-                envelope,
-                recoveryKey: key,
-              }),
-            ),
-          )
-        }
-      >
-        Review contents
-      </button>
-      {preview && (
-        <div className="deployment-card">
-          <h3>Review recovery</h3>
-          <p>
-            Profiles:{" "}
-            {preview.profiles.map((profile) => profile.name).join(", ")}
-          </p>
-          <p>{preview.credentials.length} portable service credentials.</p>
-          <ul>
-            {preview.limitations.map((item) => (
-              <li key={item}>{item}</li>
-            ))}
-          </ul>
-          <p>Existing household data will not be merged or overwritten.</p>
+                void file
+                  .text()
+                  .then((text) => setEnvelope(JSON.parse(text) as unknown))
+                  .catch(() =>
+                    setError("This is not a readable household file."),
+                  );
+              }}
+            />
+          </label>
+          <DigitSlotsInput
+            label="Master PIN for this backup"
+            value={pin}
+            onChange={(value) => {
+              setPin(value);
+              setPreview(null);
+            }}
+          />
           <button
             className="button button--secondary"
             type="button"
-            disabled={busy}
+            disabled={busy || !envelope || !/^\d{8}$/.test(pin)}
             onClick={() =>
-              void run(async () => {
-                await call("/restore", "POST", {
-                  envelope,
-                  recoveryKey: key,
-                  confirm: "restore-into-empty-household",
-                });
-                setKey("");
-                setEnvelope(null);
-                setPreview(null);
-                setNotice(
-                  "Household restored. Reload the application to choose a recovered profile.",
-                );
-              })
+              void run(async () =>
+                setPreview(
+                  await call<Preview>("/preview", "POST", {
+                    envelope,
+                    recoveryKey: pin,
+                  }),
+                ),
+              )
             }
           >
-            Confirm restore into empty household
+            Review contents
           </button>
+          {preview && (
+            <div className="deployment-card">
+              <h3>Review recovery</h3>
+              <p>
+                Profiles:{" "}
+                {preview.profiles.map((profile) => profile.name).join(", ")}
+              </p>
+              <p>{preview.credentials.length} portable service credentials.</p>
+              <ul>
+                {preview.limitations.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+              <p>Existing household data will not be merged or overwritten.</p>
+              <button
+                className="button button--secondary"
+                type="button"
+                disabled={busy}
+                onClick={() =>
+                  void run(async () => {
+                    await call("/restore", "POST", {
+                      envelope,
+                      recoveryKey: pin,
+                      ...(cloudRevision === null ? {} : { cloudRevision }),
+                      confirm: "restore-into-empty-household",
+                    });
+                    setPin("");
+                    setEnvelope(null);
+                    setCloudRevision(null);
+                    setPreview(null);
+                    setNotice(
+                      "Household restored. Reload the application to choose a recovered profile.",
+                    );
+                    await onRestored?.();
+                  })
+                }
+              >
+                Confirm restore into empty household
+              </button>
+            </div>
+          )}
         </div>
       )}
       {error && <p role="alert">{error}</p>}

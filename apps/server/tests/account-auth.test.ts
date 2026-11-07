@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { randomUUID } from "node:crypto";
+import { createHmac, pbkdf2Sync, randomUUID } from "node:crypto";
 import {
   DEFAULT_APPEARANCE_PREFERENCES,
   DEFAULT_PLAYBACK_PREFERENCES,
@@ -12,8 +12,17 @@ import type { FastifyInstance } from "fastify";
 import { createApp } from "../src/app.js";
 import { NonPersistentMemorySecretStore } from "../src/stores/secret-store.js";
 import { remoteApiSecretKey } from "../src/integrations/remote-api-agent.js";
+import { MasterPinService } from "../src/services/master-pin.js";
 import { readRuntimeConfig } from "../src/runtime-config.js";
 
+const masterVerifier = {
+  salt: "1".repeat(32),
+  hash: pbkdf2Sync("87654321", "1".repeat(32), 600_000, 32, "sha256").toString(
+    "hex",
+  ),
+  version: "11111111-1111-4111-8111-111111111111",
+  changeSalt: "2".repeat(32),
+};
 const apps: FastifyInstance[] = [];
 const databases: StreamerDatabase[] = [];
 afterEach(async () => {
@@ -36,6 +45,15 @@ function cloud() {
   let pending = false;
   let now = Date.now();
   const tokens = new Map<string, string>();
+  const resetRequests = new Map<string, { owner: string; status: string }>();
+  let currentMasterVerifier = { ...masterVerifier };
+  let currentChangeHash = pbkdf2Sync(
+    "87654321",
+    masterVerifier.changeSalt,
+    600_000,
+    32,
+    "sha256",
+  ).toString("hex");
   const pushes: {
     owner: string | undefined;
     operations: { kind: string; payload: unknown }[];
@@ -102,6 +120,55 @@ function cloud() {
         },
         device: { id: `device-${identity}-${now}`, name: "Browser" },
       });
+    }
+    if (path === "/v1/account/master-pin" && init?.method === "PUT") {
+      const next = body.verifier as typeof masterVerifier & {
+        changeHash: string;
+      };
+      const message = JSON.stringify([
+        tokens.get(token),
+        currentMasterVerifier.version,
+        next.version,
+        next.salt,
+        next.hash,
+        next.changeSalt,
+        next.changeHash,
+      ]);
+      const proof = createHmac("sha256", Buffer.from(currentChangeHash, "hex"))
+        .update(message)
+        .digest("hex");
+      if (
+        body.expectedVersion !== currentMasterVerifier.version ||
+        body.proof !== proof
+      )
+        return Response.json({ error: "master_pin_changed" }, { status: 409 });
+      currentMasterVerifier = {
+        salt: next.salt,
+        hash: next.hash,
+        version: next.version,
+        changeSalt: next.changeSalt,
+      };
+      currentChangeHash = next.changeHash;
+      return Response.json({ ok: true });
+    }
+    if (path === "/v1/account/master-pin")
+      return Response.json({
+        accountId: tokens.get(token),
+        verifier: currentMasterVerifier,
+      });
+    if (path === "/v1/account/pin-resets") {
+      const id = randomUUID();
+      resetRequests.set(id, { owner: tokens.get(token)!, status: "pending" });
+      return Response.json({ id, expiresAt: now + 300_000 });
+    }
+    const reset = /^\/v1\/account\/pin-resets\/([^/]+)\/consume$/.exec(path);
+    if (reset) {
+      const request = resetRequests.get(reset[1]!);
+      if (!request || request.owner !== tokens.get(token))
+        return Response.json({ error: "forbidden" }, { status: 403 });
+      const status = request.status;
+      if (status === "approved") request.status = "consumed";
+      return Response.json({ status });
     }
     if (path === "/v1/account")
       return revoked || (deleted && tokens.get(token) === "owner-one")
@@ -235,6 +302,27 @@ function cloud() {
     app,
     database,
     secrets,
+    resetRequests,
+    setMasterPin: (pin: string) => {
+      currentMasterVerifier = {
+        ...masterVerifier,
+        hash: pbkdf2Sync(
+          pin,
+          masterVerifier.salt,
+          600_000,
+          32,
+          "sha256",
+        ).toString("hex"),
+        version: randomUUID(),
+      };
+      currentChangeHash = pbkdf2Sync(
+        pin,
+        masterVerifier.changeSalt,
+        600_000,
+        32,
+        "sha256",
+      ).toString("hex");
+    },
     pushes,
     syncRequests,
     acknowledgements,
@@ -774,7 +862,7 @@ describe("account authentication and profile boundaries", () => {
     const local = await app.inject({
       method: "POST",
       url: "/api/v1/auth/local",
-      payload: {},
+      payload: { masterPin: "12345678" },
     });
     const localId = local.json().account.id as string;
     const signed = await login("owner-one");
@@ -800,14 +888,14 @@ describe("account authentication and profile boundaries", () => {
     const recovered = await app.inject({
       method: "POST",
       url: "/api/v1/auth/local",
-      payload: { recoveredAccountId: recoveredId },
+      payload: { recoveredAccountId: recoveredId, masterPin: "12345678" },
     });
     expect(recovered.json().account.id).toBe(original);
     expect(database.profiles.getRequired(profileId).accountId).toBe(original);
     const defaultLocal = await app.inject({
       method: "POST",
       url: "/api/v1/auth/local",
-      payload: {},
+      payload: { masterPin: "12345678" },
     });
     expect(defaultLocal.json().account.id).toBe(localId);
     const invalid = await app.inject({
@@ -853,7 +941,7 @@ describe("account authentication and profile boundaries", () => {
     const localSession = await app.inject({
       method: "POST",
       url: "/api/v1/auth/local",
-      payload: {},
+      payload: { masterPin: "12345678" },
     });
     const localHeaders = { cookie: cookie(localSession) };
     const localProfiles = await app.inject({
@@ -904,6 +992,7 @@ describe("account authentication and profile boundaries", () => {
     expect(response.body).not.toContain("must-not-escape");
     expect(response.body).not.toContain("cloud-private-token");
     const overview = await app.inject({ url: "/api/v1/account", headers });
+    expect(overview.json().account.cloudAccountId).toBe("owner-one");
     expect(
       new URL(overview.json().manageUrl).searchParams.get("account_id"),
     ).toBe("owner-one");
@@ -927,7 +1016,7 @@ describe("account authentication and profile boundaries", () => {
     const entered = await app.inject({
       method: "POST",
       url: "/api/v1/auth/local",
-      payload: {},
+      payload: { masterPin: "12345678" },
     });
     expect(entered.statusCode).toBe(200);
     const account = entered.json().account;
@@ -954,12 +1043,9 @@ describe("account authentication and profile boundaries", () => {
       (
         await app.inject({
           method: "POST",
-          url: "/api/v1/auth/device",
+          url: `/api/v1/profiles/${profiles.json().items[0].id}/pin-reset`,
           headers,
-          payload: {
-            purpose: "pin-reset",
-            profileId: profiles.json().items[0].id,
-          },
+          payload: {},
         })
       ).statusCode,
     ).toBe(403);
@@ -969,7 +1055,7 @@ describe("account authentication and profile boundaries", () => {
           method: "POST",
           url: "/api/v1/auth/local",
           headers: { origin: "https://evil.example" },
-          payload: {},
+          payload: { masterPin: "12345678" },
         })
       ).statusCode,
     ).toBe(403);
@@ -980,7 +1066,7 @@ describe("account authentication and profile boundaries", () => {
     const entered = await app.inject({
       method: "POST",
       url: "/api/v1/auth/local",
-      payload: {},
+      payload: { masterPin: "12345678" },
     });
     const localId = entered.json().account.id;
     const old = database.profiles.list(localId)[0]!;
@@ -1000,12 +1086,12 @@ describe("account authentication and profile boundaries", () => {
     const first = await app.inject({
       method: "POST",
       url: "/api/v1/auth/local",
-      payload: {},
+      payload: { masterPin: "12345678" },
     });
     const second = await app.inject({
       method: "POST",
       url: "/api/v1/auth/local",
-      payload: {},
+      payload: { masterPin: "12345678" },
     });
     const accountId = first.json().account.id;
     const profileId = database.profiles.list(accountId)[0]!.id;
@@ -1029,6 +1115,10 @@ describe("account authentication and profile boundaries", () => {
     const overview = (
       await app.inject({ url: "/api/v1/account", headers: { cookie: signed } })
     ).json();
+    expect(overview.account).toMatchObject({
+      id: accountId,
+      cloudAccountId: "owner-one",
+    });
     expect(overview.sync.configured).toBe(false);
     expect(
       (
@@ -1356,71 +1446,178 @@ describe("account authentication and profile boundaries", () => {
       ).statusCode,
     ).toBe(423);
   });
-  it("requires fresh same-account Google approval for PIN recovery and never replaces the login session", async () => {
-    const { app, login } = cloud();
+  it("resets through the signed-in owner's request without pairing or replacing the session", async () => {
+    const { app, login, resetRequests } = cloud();
     const owner = await login("owner-one");
+    const headers = { cookie: owner };
     await app.inject({
       method: "PUT",
       url: "/api/v1/profiles/default/pin",
-      headers: { cookie: owner },
+      headers,
       payload: { pin: "1234" },
     });
     const start = await app.inject({
       method: "POST",
-      url: "/api/v1/auth/device",
-      headers: { cookie: owner },
-      payload: { purpose: "pin-reset", profileId: "default" },
+      url: "/api/v1/profiles/default/pin-reset",
+      headers,
+      payload: {},
     });
-    const recovery = await app.inject({
-      method: "POST",
-      url: "/api/v1/auth/device/poll",
-      headers: { cookie: `${owner}; ${cookie(start)}` },
-      payload: { deviceCode: start.json().deviceCode },
-    });
-    expect(recovery.statusCode).toBe(200);
-    expect(recovery.json().status).toBe("approved");
-    expect(recovery.headers["set-cookie"]).toBeUndefined();
-    const reset = await app.inject({
-      method: "PUT",
-      url: "/api/v1/profiles/default/pin",
-      headers: { cookie: owner },
-      payload: { pin: null },
-    });
-    expect(reset.json()).toEqual({ pinEnabled: false });
-  });
-  it("rejects recovery using another Google account", async () => {
-    const { app, login, setIdentity } = cloud();
-    const owner = await login("owner-one");
-    await app.inject({
-      method: "PUT",
-      url: "/api/v1/profiles/default/pin",
-      headers: { cookie: owner },
-      payload: { pin: "1234" },
-    });
-    const start = await app.inject({
-      method: "POST",
-      url: "/api/v1/auth/device",
-      headers: { cookie: owner },
-      payload: { purpose: "pin-reset", profileId: "default" },
-    });
-    setIdentity("owner-two");
-    const recovered = await app.inject({
-      method: "POST",
-      url: "/api/v1/auth/device/poll",
-      headers: { cookie: `${owner}; ${cookie(start)}` },
-      payload: { deviceCode: start.json().deviceCode },
-    });
-    expect(recovered.statusCode).toBe(403);
+    expect(start.statusCode).toBe(200);
+    expect(start.json().manageUrl).toContain("/account?account_id=owner-one");
+    expect(start.body).not.toContain("deviceCode");
+    const id = start.json().id;
+    const poll = () =>
+      app.inject({
+        method: "POST",
+        url: "/api/v1/profiles/default/pin-reset/poll",
+        headers,
+        payload: { requestId: id },
+      });
+    expect((await poll()).json().status).toBe("pending");
     expect(
       (
         await app.inject({
           method: "PUT",
           url: "/api/v1/profiles/default/pin",
-          headers: { cookie: owner },
+          headers,
           payload: { pin: null },
         })
       ).statusCode,
     ).toBe(403);
+    resetRequests.get(id)!.status = "approved";
+    const approved = await poll();
+    expect(approved.json().status).toBe("approved");
+    expect(approved.headers["set-cookie"]).toBeUndefined();
+    expect(
+      (
+        await app.inject({
+          method: "PUT",
+          url: "/api/v1/profiles/default/pin",
+          headers,
+          payload: { pin: null },
+        })
+      ).json(),
+    ).toEqual({ pinEnabled: false });
+    await app.inject({
+      method: "PUT",
+      url: "/api/v1/profiles/default/pin",
+      headers,
+      payload: { pin: "5678" },
+    });
+    expect(
+      (
+        await app.inject({
+          method: "PUT",
+          url: "/api/v1/profiles/default/pin",
+          headers,
+          payload: { pin: null },
+        })
+      ).statusCode,
+    ).toBe(403);
+    expect((await poll()).statusCode).toBe(403);
+  });
+  it("rejects reset from another session and when synchronization is disabled", async () => {
+    const { app, login } = cloud();
+    const owner = await login("owner-one");
+    const headers = { cookie: owner };
+    await app.inject({
+      method: "PUT",
+      url: "/api/v1/profiles/default/pin",
+      headers,
+      payload: { pin: "1234" },
+    });
+    const start = await app.inject({
+      method: "POST",
+      url: "/api/v1/profiles/default/pin-reset",
+      headers,
+      payload: {},
+    });
+    const other = await login("owner-one");
+    expect(
+      (
+        await app.inject({
+          method: "POST",
+          url: "/api/v1/profiles/default/pin-reset/poll",
+          headers: { cookie: other },
+          payload: { requestId: start.json().id },
+        })
+      ).statusCode,
+    ).toBe(403);
+    await app.inject({
+      method: "PUT",
+      url: "/api/v1/account/sync",
+      headers,
+      payload: { enabled: false },
+    });
+    expect(
+      (await app.inject({ url: "/api/v1/auth/status", headers })).json()
+        .ownerResetAvailable,
+    ).toBe(false);
+    expect(
+      (
+        await app.inject({
+          method: "POST",
+          url: "/api/v1/profiles/default/pin-reset",
+          headers,
+          payload: {},
+        })
+      ).statusCode,
+    ).toBe(403);
+    expect(
+      (
+        await app.inject({
+          method: "POST",
+          url: "/api/v1/profiles/default/pin-reset/poll",
+          headers,
+          payload: { requestId: start.json().id },
+        })
+      ).statusCode,
+    ).toBe(403);
+  });
+  it("invalidates an approved reset when sync is disabled, including after re-enabling it", async () => {
+    const { app, login, resetRequests } = cloud();
+    const headers = { cookie: await login("owner-one") };
+    await app.inject({
+      method: "PUT",
+      url: "/api/v1/profiles/default/pin",
+      headers,
+      payload: { pin: "1234" },
+    });
+    const start = await app.inject({
+      method: "POST",
+      url: "/api/v1/profiles/default/pin-reset",
+      headers,
+      payload: {},
+    });
+    resetRequests.get(start.json().id)!.status = "approved";
+    expect(
+      (
+        await app.inject({
+          method: "POST",
+          url: "/api/v1/profiles/default/pin-reset/poll",
+          headers,
+          payload: { requestId: start.json().id },
+        })
+      ).json().status,
+    ).toBe("approved");
+    for (const enabled of [false, true]) {
+      await app.inject({
+        method: "PUT",
+        url: "/api/v1/account/sync",
+        headers,
+        payload: { enabled },
+      });
+      expect(
+        (
+          await app.inject({
+            method: "PUT",
+            url: "/api/v1/profiles/default/pin",
+            headers,
+            payload: { pin: null },
+          })
+        ).statusCode,
+      ).toBe(403);
+    }
   });
   it("invalidates logout locally and honors cloud device revocation", async () => {
     const { app, login, revoke, advance } = cloud();
@@ -1443,5 +1640,312 @@ describe("account authentication and profile boundaries", () => {
         })
       ).statusCode,
     ).toBe(401);
+  });
+  it("defers Master PIN creation only for the empty household's Welcome restore choice", async () => {
+    const { app, secrets, database } = cloud();
+    const pending = await app.inject({
+      method: "POST",
+      url: "/api/v1/auth/local",
+      payload: { deferMasterPin: true },
+    });
+    expect(pending.statusCode).toBe(200);
+    const accountId = pending.json().account.id;
+    expect(await new MasterPinService(secrets).read(accountId)).toBeNull();
+    expect(
+      (
+        await app.inject({
+          url: "/api/v1/auth/status",
+          headers: { cookie: cookie(pending) },
+        })
+      ).json().masterPinSetupRequired,
+    ).toBe(true);
+    database.profiles.update(database.profiles.list(accountId)[0]!.id, {
+      name: "Existing profile",
+      preferences: { onboardingComplete: true },
+    });
+    expect(
+      (
+        await app.inject({
+          method: "POST",
+          url: "/api/v1/auth/local",
+          payload: { deferMasterPin: true },
+        })
+      ).statusCode,
+    ).toBe(400);
+  });
+  it("requires an initial eight-digit local Master PIN and rejects using setup to replace it", async () => {
+    const { app } = cloud();
+    const missing = await app.inject({
+      method: "POST",
+      url: "/api/v1/auth/local",
+      payload: {},
+    });
+    expect(missing.statusCode).toBe(400);
+    expect(missing.json().error.code).toBe("MASTER_PIN_REQUIRED");
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/v1/auth/local",
+      payload: { masterPin: "01234567" },
+    });
+    expect(created.statusCode).toBe(200);
+    const headers = { cookie: cookie(created) };
+    expect(
+      (await app.inject({ url: "/api/v1/auth/status", headers })).json(),
+    ).toMatchObject({
+      masterPinEnabled: true,
+      masterPinSetupRequired: false,
+      ownerResetAvailable: false,
+    });
+    expect(
+      (
+        await app.inject({
+          method: "POST",
+          url: "/api/v1/account/master-pin",
+          headers,
+          payload: { pin: "87654321", confirmation: "87654321" },
+        })
+      ).statusCode,
+    ).toBe(403);
+    const profile = (
+      await app.inject({ url: "/api/v1/profiles", headers })
+    ).json().items[0];
+    await app.inject({
+      method: "PUT",
+      url: `/api/v1/profiles/${profile.id}/pin`,
+      headers,
+      payload: { pin: "1234" },
+    });
+    await app.inject({
+      method: "POST",
+      url: `/api/v1/profiles/${profile.id}/lock`,
+      headers,
+    });
+    expect(
+      (
+        await app.inject({
+          method: "POST",
+          url: `/api/v1/profiles/${profile.id}/unlock`,
+          headers,
+          payload: { pin: "01234567" },
+        })
+      ).statusCode,
+    ).toBe(204);
+    expect(
+      (
+        await app.inject({
+          method: "PUT",
+          url: `/api/v1/profiles/${profile.id}/pin`,
+          headers,
+          payload: { pin: null, currentPin: "01234567" },
+        })
+      ).json(),
+    ).toEqual({ pinEnabled: false });
+  });
+  it("enrolls a local-only installation before onboarding and validates confirmation", async () => {
+    const { app } = local();
+    const status = await app.inject("/api/v1/auth/status");
+    expect(status.json().masterPinSetupRequired).toBe(true);
+    const headers = { cookie: cookie(status) };
+    expect(
+      (
+        await app.inject({
+          method: "POST",
+          url: "/api/v1/account/master-pin",
+          headers,
+          payload: { pin: "12345678", confirmation: "12345679" },
+        })
+      ).statusCode,
+    ).toBe(400);
+    expect(
+      (
+        await app.inject({
+          method: "POST",
+          url: "/api/v1/account/master-pin",
+          headers,
+          payload: { pin: "12345678", confirmation: "12345678" },
+        })
+      ).statusCode,
+    ).toBe(200);
+    expect(
+      (await app.inject({ url: "/api/v1/auth/status", headers })).json()
+        .masterPinSetupRequired,
+    ).toBe(false);
+  });
+  it("uses the account Master PIN for multiple profiles and persists lockout across sessions", async () => {
+    const { app, login, database, advance } = cloud();
+    const owner = await login("owner-one"),
+      headers = { cookie: owner };
+    const account = (
+      await app.inject({ url: "/api/v1/auth/status", headers })
+    ).json().account.id;
+    database.profiles.create({
+      id: "other-profile",
+      accountId: account,
+      name: "Other",
+      locale: "en",
+    });
+    for (const id of ["default", "other-profile"]) {
+      await app.inject({
+        method: "PUT",
+        url: `/api/v1/profiles/${id}/pin`,
+        headers,
+        payload: { pin: "1234" },
+      });
+      await app.inject({
+        method: "POST",
+        url: `/api/v1/profiles/${id}/lock`,
+        headers,
+      });
+    }
+    for (let attempt = 0; attempt < 5; attempt++)
+      expect(
+        (
+          await app.inject({
+            method: "POST",
+            url: `/api/v1/profiles/${attempt % 2 ? "default" : "other-profile"}/unlock`,
+            headers,
+            payload: { pin: "00000000" },
+          })
+        ).statusCode,
+      ).toBe(403);
+    const second = await login("owner-one");
+    expect(
+      (
+        await app.inject({
+          method: "POST",
+          url: "/api/v1/profiles/default/unlock",
+          headers: { cookie: second },
+          payload: { pin: "87654321" },
+        })
+      ).statusCode,
+    ).toBe(429);
+    advance(300_001);
+    for (const id of ["default", "other-profile"])
+      expect(
+        (
+          await app.inject({
+            method: "POST",
+            url: `/api/v1/profiles/${id}/unlock`,
+            headers,
+            payload: { pin: "87654321" },
+          })
+        ).statusCode,
+      ).toBe(204);
+  });
+  it("refreshes online PIN changes, clears an old backup PIN and retains verified offline access", async () => {
+    const { app, login, secrets, setMasterPin, setCloudAvailable } = cloud();
+    const owner = await login("owner-one"),
+      headers = { cookie: owner };
+    const accountId = (
+      await app.inject({ url: "/api/v1/auth/status", headers })
+    ).json().account.id;
+    const master = new MasterPinService(secrets);
+    const verify = (pin: string) =>
+      app.inject({
+        method: "POST",
+        url: "/api/v1/account/master-pin/verify",
+        headers,
+        payload: { pin },
+      });
+    expect((await master.read(accountId))?.pin).toBeUndefined();
+    expect((await verify("87654321")).statusCode).toBe(204);
+    expect((await master.read(accountId))?.pin).toBe("87654321");
+    setMasterPin("11223344");
+    expect((await verify("87654321")).statusCode).toBe(403);
+    expect((await master.read(accountId))?.pin).toBeUndefined();
+    expect((await verify("11223344")).statusCode).toBe(204);
+    setCloudAvailable(false);
+    expect((await verify("11223344")).statusCode).toBe(204);
+    expect((await verify("87654321")).statusCode).toBe(403);
+  });
+  it("changes a local Master PIN only after checking the current PIN", async () => {
+    const { app, secrets } = cloud();
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/v1/auth/local",
+      payload: { masterPin: "01234567" },
+    });
+    const headers = { cookie: cookie(created) };
+    const accountId = created.json().account.id;
+    const change = (currentPin: string, newPin = "87654321") =>
+      app.inject({
+        method: "PUT",
+        url: "/api/v1/account/master-pin",
+        headers,
+        payload: { currentPin, newPin, confirmation: newPin },
+      });
+    expect((await change("99999999")).statusCode).toBe(403);
+    expect((await new MasterPinService(secrets).read(accountId))?.pin).toBe(
+      "01234567",
+    );
+    expect((await change("01234567")).statusCode).toBe(200);
+    const master = new MasterPinService(secrets);
+    expect(await master.verify(accountId, "01234567")).toBe(false);
+    expect(await master.verify(accountId, "87654321")).toBe(true);
+  });
+  it("changes an online Master PIN in the cloud and keeps the local PIN when the cloud is unavailable", async () => {
+    const { app, login, secrets, setCloudAvailable } = cloud();
+    const headers = { cookie: await login("owner-one") };
+    const accountId = (
+      await app.inject({ url: "/api/v1/auth/status", headers })
+    ).json().account.id;
+    const change = (currentPin: string, newPin: string) =>
+      app.inject({
+        method: "PUT",
+        url: "/api/v1/account/master-pin",
+        headers,
+        payload: { currentPin, newPin, confirmation: newPin },
+      });
+    expect((await change("11111111", "11223344")).statusCode).toBe(403);
+    expect((await change("87654321", "11223344")).statusCode).toBe(200);
+    const master = new MasterPinService(secrets);
+    expect(await master.verify(accountId, "11223344")).toBe(true);
+    setCloudAvailable(false);
+    expect((await change("11223344", "55667788")).statusCode).toBe(503);
+    expect(await master.verify(accountId, "11223344")).toBe(true);
+    expect(await master.verify(accountId, "55667788")).toBe(false);
+  });
+  it("expires recovery when the profile PIN changes before account approval", async () => {
+    const { app, login, resetRequests } = cloud();
+    const headers = { cookie: await login("owner-one") };
+    await app.inject({
+      method: "PUT",
+      url: "/api/v1/profiles/default/pin",
+      headers,
+      payload: { pin: "1234" },
+    });
+    const start = await app.inject({
+      method: "POST",
+      url: "/api/v1/profiles/default/pin-reset",
+      headers,
+      payload: {},
+    });
+    await app.inject({
+      method: "PUT",
+      url: "/api/v1/profiles/default/pin",
+      headers,
+      payload: { pin: "5678", currentPin: "1234" },
+    });
+    resetRequests.get(start.json().id)!.status = "approved";
+    expect(
+      (
+        await app.inject({
+          method: "POST",
+          url: "/api/v1/profiles/default/pin-reset/poll",
+          headers,
+          payload: { requestId: start.json().id },
+        })
+      ).json(),
+    ).toEqual({ status: "expired" });
+    expect(
+      (
+        await app.inject({
+          method: "PUT",
+          url: "/api/v1/profiles/default/pin",
+          headers,
+          payload: { pin: null },
+        })
+      ).statusCode,
+    ).toBe(403);
   });
 });

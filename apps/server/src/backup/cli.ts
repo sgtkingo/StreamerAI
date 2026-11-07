@@ -14,12 +14,17 @@ const usage = `Offline encrypted StreamerAI server backup (Node >=24.7).
 Stop the StreamerAI service first. No command contacts the network.
 
 export  [--data-dir DIR] [--vault-file FILE] --key-file FILE --output FILE
+        [--account-id ID]
         [--config-file FILE] [--media-file FILE] [--model-file FILE] [--installer-file FILE]
 inspect --input FILE
 restore --input FILE --target STATE_ROOT --mode replace|new-server
         [--overwrite] [--source-retired]
 recover --target STATE_ROOT
 
+Export uses the selected account's verified Master PIN from the encrypted vault.
+With multiple households, --account-id is required. Verify the PIN in the app first.
+For inspect/restore, enter the Master PIN used when the backup was created.
+Legacy backup passphrases are also accepted for inspect/restore.
 Passphrase is read with terminal echo disabled, or as one line from stdin.
 Never put a passphrase in command arguments or environment variables.
 Export always creates a new filename. Restore uses STATE_ROOT/data and STATE_ROOT/keys.
@@ -103,6 +108,7 @@ async function main(): Promise<void> {
     "--input",
     "--target",
     "--mode",
+    "--account-id",
   ]);
   const kinds = new Map<string, BackupExtraFile["kind"]>([
     ["--config-file", "configuration"],
@@ -161,26 +167,35 @@ async function main(): Promise<void> {
       (values.has("--data-dir")
         ? join(dataDirectory, "secrets.vault")
         : runtime.secrets.vaultFile);
-    process.stderr.write(
-      `${JSON.stringify(await previewServerBackup({ dataDirectory, vaultFile, keyFile, outputFile, appVersion: "0.1.0", extraFiles: extras }), null, 2)}\n`,
-    );
+    const preview = await previewServerBackup({
+      dataDirectory,
+      vaultFile,
+      keyFile,
+      outputFile,
+      appVersion: "0.1.0",
+      extraFiles: extras,
+    });
+    process.stderr.write(`${JSON.stringify(preview, null, 2)}\n`);
     process.stderr.write(
       "Includes complete database, provider vault and its key. Media/models/configuration require explicit selection. Maximum 256 MiB.\n",
     );
-    const password = await passphrase(
-      "Backup passphrase (at least 12 characters): ",
+    const households = preview.database.accounts.filter(
+      (account) => account.profiles > 0,
     );
+    const accountId =
+      values.get("--account-id") ??
+      (households.length === 1 ? households[0]!.id : undefined);
     if (
-      process.stdin.isTTY &&
-      password !== (await passphrase("Confirm backup passphrase: "))
+      !accountId ||
+      !preview.database.accounts.some((account) => account.id === accountId)
     )
-      throw new Error("Passphrases do not match.");
+      throw new Error("Select a backup account with --account-id.");
     const result = await createServerBackup({
       dataDirectory,
       vaultFile,
       keyFile,
       outputFile,
-      passphrase: password,
+      accountId,
       appVersion: "0.1.0",
       extraFiles: extras,
     });
@@ -194,7 +209,9 @@ async function main(): Promise<void> {
     const mode = command === "restore" ? required("--mode") : undefined;
     if (mode && mode !== "replace" && mode !== "new-server")
       throw new Error("Restore mode must be replace or new-server.");
-    const password = await passphrase("Backup passphrase: ");
+    const password = await passphrase(
+      "Backup Master PIN (or legacy passphrase): ",
+    );
     const manifest = await inspectServerBackup({ file, passphrase: password });
     process.stderr.write(`${JSON.stringify(manifest, null, 2)}\n`);
     if (command === "restore") {

@@ -1,6 +1,11 @@
 import { afterEach, expect, it, vi } from "vitest";
+import { pbkdf2Sync, randomBytes } from "node:crypto";
 import { openStreamerDatabase } from "@streamer-ai/database";
-import { fixture, origin } from "../../cloud/test/helpers.js";
+import {
+  fixture,
+  masterPinVerifier,
+  origin,
+} from "../../cloud/test/helpers.js";
 import { createWorker } from "../../cloud/src/index.js";
 import { createApp } from "../src/app.js";
 import { NonPersistentMemorySecretStore } from "../src/stores/secret-store.js";
@@ -69,6 +74,25 @@ it("pairs a real email-only Better Auth identity with the home server and synchr
       .getSetCookie()
       .map((item) => item.split(";")[0])
       .join("; ");
+    const initialApproval = await cloud(
+      "/v1/device/approve",
+      { user_code: start.json().userCode, approve: true },
+      browser,
+    );
+    expect(initialApproval.status).toBe(409);
+    const masterSetup = await worker.fetch(
+      new Request(origin + "/v1/account/master-pin", {
+        method: "PUT",
+        headers: {
+          origin,
+          "content-type": "application/json",
+          cookie: browser,
+        },
+        body: JSON.stringify({ verifier: masterPinVerifier("01234567") }),
+      }),
+      f.env,
+    );
+    expect(masterSetup.status).toBe(200);
     expect(
       (
         await cloud(
@@ -94,6 +118,87 @@ it("pairs a real email-only Better Auth identity with the home server and synchr
       },
     });
     const cookie = String(poll.headers["set-cookie"]).split(";")[0]!;
+    expect(
+      (
+        await app.inject({
+          method: "POST",
+          url: "/api/v1/account/master-pin/verify",
+          headers: { cookie },
+          payload: { pin: "01234567" },
+        })
+      ).statusCode,
+    ).toBe(204);
+    const change = (currentPin: string, newPin: string) =>
+      app.inject({
+        method: "PUT",
+        url: "/api/v1/account/master-pin",
+        headers: { cookie },
+        payload: { currentPin, newPin, confirmation: newPin },
+      });
+    expect((await change("01234567", "87654321")).json().error.code).toBe(
+      "MASTER_PIN_UPGRADE_REQUIRED",
+    );
+    const enrollment = await worker.fetch(
+      new Request(origin + "/v1/account/master-pin/enroll", {
+        headers: { cookie: browser },
+      }),
+      f.env,
+    );
+    expect(enrollment.status).toBe(200);
+    const details = (await enrollment.json()) as {
+      salt: string;
+      version: string;
+      required: boolean;
+    };
+    expect(details.required).toBe(true);
+    const changeSalt = randomBytes(16).toString("hex");
+    expect(
+      (
+        await cloud(
+          "/v1/account/master-pin/enroll",
+          {
+            version: details.version,
+            proof: pbkdf2Sync(
+              "01234567",
+              details.salt,
+              600_000,
+              32,
+              "sha256",
+            ).toString("hex"),
+            changeSalt,
+            changeHash: pbkdf2Sync(
+              "01234567",
+              changeSalt,
+              600_000,
+              32,
+              "sha256",
+            ).toString("hex"),
+          },
+          browser,
+        )
+      ).status,
+    ).toBe(200);
+    expect((await change("01234567", "87654321")).statusCode).toBe(200);
+    expect(
+      (
+        await app.inject({
+          method: "POST",
+          url: "/api/v1/account/master-pin/verify",
+          headers: { cookie },
+          payload: { pin: "87654321" },
+        })
+      ).statusCode,
+    ).toBe(204);
+    expect(
+      (
+        await app.inject({
+          method: "POST",
+          url: "/api/v1/account/master-pin/verify",
+          headers: { cookie },
+          payload: { pin: "01234567" },
+        })
+      ).statusCode,
+    ).toBe(403);
     const sync = await app.inject({
       method: "POST",
       url: "/api/v1/account/sync",
@@ -123,9 +228,55 @@ it("pairs a real email-only Better Auth identity with the home server and synchr
         .prepare("SELECT count(*) AS n FROM cloud_profile WHERE account_id = ?")
         .get(owner),
     ).toEqual({ n: 1 });
+    const profileId = db.profiles.list(db.accounts.getLocal().id)[0]!.id;
+    const headers = { cookie };
+    await app.inject({
+      method: "PUT",
+      url: `/api/v1/profiles/${profileId}/pin`,
+      headers,
+      payload: { pin: "1234" },
+    });
+    await app.inject({
+      method: "POST",
+      url: `/api/v1/profiles/${profileId}/lock`,
+      headers,
+    });
+    const reset = await app.inject({
+      method: "POST",
+      url: `/api/v1/profiles/${profileId}/pin-reset`,
+      headers,
+      payload: {},
+    });
+    expect(reset.statusCode).toBe(200);
+    expect(
+      (
+        await cloud(
+          `/v1/account/pin-resets/${reset.json().id}/decision`,
+          { approve: true },
+          browser,
+        )
+      ).status,
+    ).toBe(200);
+    const approvedReset = await app.inject({
+      method: "POST",
+      url: `/api/v1/profiles/${profileId}/pin-reset/poll`,
+      headers,
+      payload: { requestId: reset.json().id },
+    });
+    expect(approvedReset.json()).toEqual({ status: "approved" });
+    expect(
+      (
+        await app.inject({
+          method: "PUT",
+          url: `/api/v1/profiles/${profileId}/pin`,
+          headers,
+          payload: { pin: null },
+        })
+      ).json(),
+    ).toEqual({ pinEnabled: false });
   } finally {
     await app.close();
     db.close();
     f.close();
   }
-});
+}, 15_000);

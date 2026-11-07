@@ -27,6 +27,8 @@ function routeFromLocation(): Route {
     "settings",
     "preferences",
     "account",
+    "profile",
+    "support",
     "statistics",
   ].includes(path)
     ? (path as Route)
@@ -229,6 +231,13 @@ export function AppShell({
                 <button
                   role="menuitem"
                   type="button"
+                  onClick={() => navigate("profile")}
+                >
+                  Profile
+                </button>
+                <button
+                  role="menuitem"
+                  type="button"
                   onClick={() => navigate("settings")}
                 >
                   Settings
@@ -253,6 +262,13 @@ export function AppShell({
                   onClick={() => navigate("statistics")}
                 >
                   Statistics
+                </button>
+                <button
+                  role="menuitem"
+                  type="button"
+                  onClick={() => navigate("support")}
+                >
+                  Support
                 </button>
                 <span className="profile-menu__divider" aria-hidden="true" />
                 <button

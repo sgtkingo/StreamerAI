@@ -13,9 +13,18 @@ node --import tsx apps/server/src/backup/cli.ts --help
 ```
 
 V nativním balíku použijte jeho Node runtime a odpovídající `backup.mjs`.
-Příklady níže používají zdrojový projekt; cesty nahraďte vlastními. Fráze se zadává
-se skrytým výpisem a při exportu se zopakuje. Pro automatizaci lze jednu řádku
-předat přes stdin; frázi nevkládejte do argumentů, URL ani proměnných prostředí.
+Příklady níže používají zdrojový projekt; cesty nahraďte vlastními. Export automaticky
+použije osmimístný Master PIN vybraného účtu ze šifrovaného místního trezoru.
+U online účtu jej nejprve ověřte v aplikaci v nastavení účtu tlačítkem
+„Verify Master PIN for backups“ nebo jím odemkněte profil. Pokud má server více
+domácností s profily, přidejte `--account-id ID`; export obsahuje celý server.
+Bez místně ověřeného Master PINu se export odmítne.
+
+Při kontrole a obnově se zadává Master PIN platný v době vytvoření dané zálohy,
+se skrytým výpisem, případně přes jednu řádku stdin. Starší zálohy s vlastní frází
+zůstávají čitelné. PIN ani frázi nevkládejte do argumentů, URL nebo prostředí.
+Offline export nekontaktuje cloud a používá poslední místně ověřený PIN.
+Po změně online Master PINu proto nejprve ověřte nový PIN na domácím serveru.
 
 ```powershell
 node --import tsx apps/server/src/backup/cli.ts export --data-dir "C:/ProgramData/StreamerAI/data" --key-file "C:/ProgramData/StreamerAI/keys/master.key" --output "D:/Backups/streamer-2026-11-04.streamerai-backup"

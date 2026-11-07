@@ -40,6 +40,28 @@ export type EncryptedHouseholdEnvelope = z.infer<
   typeof EncryptedHouseholdEnvelopeSchema
 >;
 
+/** The same Master PIN protected format is used for downloads and cloud copies. */
+export const MasterPinHouseholdBackupSchema = z
+  .object({
+    format: z.literal("streamerai-master-pin-household"),
+    version: z.literal(1),
+    kdf: z
+      .object({
+        algorithm: z.literal("argon2id"),
+        memory: z.literal(65_536),
+        passes: z.literal(3),
+        parallelism: z.literal(1),
+        salt: base64url.length(22),
+      })
+      .strict(),
+    cloudRecovery: EncryptedHouseholdEnvelopeSchema.shape.recovery,
+    envelope: EncryptedHouseholdEnvelopeSchema,
+  })
+  .strict();
+export type MasterPinHouseholdBackup = z.infer<
+  typeof MasterPinHouseholdBackupSchema
+>;
+
 export const PortableCredentialKeySchema = z.enum([
   "integration.tmdb.read-token",
   "integration.webshare.wst",
@@ -169,13 +191,13 @@ export const EncryptedCheckpointWriteSchema = z
       .int()
       .nonnegative()
       .max(Number.MAX_SAFE_INTEGER),
-    envelope: EncryptedHouseholdEnvelopeSchema,
+    envelope: MasterPinHouseholdBackupSchema,
   })
   .strict();
 export const EncryptedCheckpointSchema = z
   .object({
     revision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
-    envelope: EncryptedHouseholdEnvelopeSchema.nullable(),
+    envelope: MasterPinHouseholdBackupSchema.nullable(),
   })
   .strict();
 export type EncryptedCheckpoint = z.infer<typeof EncryptedCheckpointSchema>;

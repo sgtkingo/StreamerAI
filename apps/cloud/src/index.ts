@@ -1,4 +1,5 @@
 import { createAuth } from "./auth.js";
+import { enrollMasterPinChange, masterPin, pinResets } from "./account-pins.js";
 import {
   assertLegacySyncAllowed,
   encryptedCheckpoint,
@@ -76,6 +77,12 @@ export function createWorker(
       try {
         return secured(await route(request, env, authFactory, clock.now()));
       } catch (error) {
+        if (!(error instanceof HttpError))
+          console.error("CLOUD_REQUEST_FAILED", {
+            method: request.method,
+            path: new URL(request.url).pathname,
+            errorName: error instanceof Error ? error.name : "UnknownError",
+          });
         const response =
           error instanceof HttpError
             ? json({ error: error.code }, error.status)
@@ -102,6 +109,9 @@ export function createWorker(
         env.DB.prepare(
           "DELETE FROM cloud_device_grant WHERE expires_at < ?",
         ).bind(now - 86_400_000),
+        env.DB.prepare("DELETE FROM cloud_pin_reset WHERE expires_at < ?").bind(
+          now,
+        ),
         env.DB.prepare(
           "DELETE FROM cloud_device WHERE revoked_at IS NOT NULL AND expires_at < ?",
         ).bind(now - 7 * 86_400_000),
@@ -274,6 +284,21 @@ async function route(
   }
   if (method === "GET" && path === "/v1/device/verify")
     return verifyGrant(request, env, principal, now);
+  if (path === "/v1/account/master-pin" && ["GET", "PUT"].includes(method))
+    return masterPin(request, env, principal, now);
+  if (
+    path === "/v1/account/master-pin/enroll" &&
+    ["GET", "POST"].includes(method)
+  )
+    return enrollMasterPinChange(request, env, principal, now);
+  if (path === "/v1/account/pin-resets" && ["GET", "POST"].includes(method))
+    return pinResets(request, env, principal, now);
+  const pinReset =
+    /^\/v1\/account\/pin-resets\/([a-f0-9-]{36})\/(decision|consume)$/.exec(
+      path,
+    );
+  if (method === "POST" && pinReset?.[1])
+    return pinResets(request, env, principal, now, pinReset[1], pinReset[2]);
   if (method === "POST" && path === "/v1/device/claim")
     return claimGrant(request, env, principal, now);
   if (method === "GET" && path === "/v1/device/pending")

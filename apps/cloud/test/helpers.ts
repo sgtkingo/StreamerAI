@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { pbkdf2Sync, randomBytes, randomUUID } from "node:crypto";
 import Database from "better-sqlite3";
 
 import { createWorker } from "../src/index.js";
@@ -10,6 +11,16 @@ export const accounts: Record<string, Account> = {
   b: { id: "account-b", email: "bob@example.test", name: "Bob" },
   c: { id: "account-c", email: "carol@example.test", name: "Carol" },
 };
+
+export function masterPinVerifier(pin = "12345678") {
+  const salt = randomBytes(16).toString("hex");
+  return {
+    salt,
+    hash: pbkdf2Sync(pin, salt, 600_000, 32, "sha256").toString("hex"),
+    version: randomUUID(),
+  };
+}
+const initializedLegacyVerifier = masterPinVerifier();
 
 export function fixture() {
   const sqlite = new Database(":memory:");
@@ -24,6 +35,7 @@ export function fixture() {
     "0007_source_feedback.sql",
     "0008_profile_source_feedback.sql",
     "0009_encrypted_checkpoint.sql",
+    "0010_account_pins.sql",
   ]) {
     sqlite.exec(
       readFileSync(
@@ -40,6 +52,13 @@ export function fixture() {
       )
       .run(account.id, account.email, account.name, time, time);
   }
+  // Fixture owners have completed the browser's legacy initialization. Tests
+  // for uninitialized or new accounts explicitly put them back in that state.
+  sqlite
+    .prepare(
+      "UPDATE cloud_master_pin SET setup_required = 0, verifier_json = ?",
+    )
+    .run(JSON.stringify(initializedLegacyVerifier));
   class Prepared {
     values: unknown[] = [];
     constructor(readonly sql: string) {}

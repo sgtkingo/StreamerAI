@@ -63,9 +63,223 @@ function makeApi(status: AuthStatus = loggedIn) {
 afterEach(() => {
   window.history.replaceState({}, "", "/");
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe("account access and profile PIN", () => {
+  it("offers backup restore on Welcome in trusted-local mode", async () => {
+    const api = makeApi({
+      ...loggedIn,
+      account: { ...account, cloudLinked: false },
+      masterPinSetupRequired: true,
+    });
+    api.getInstallationStatus = vi.fn().mockResolvedValue({
+      enabled: false,
+      claimed: false,
+      paired: false,
+      role: null,
+    });
+    vi.mocked(api.getProfiles).mockResolvedValue({
+      items: [
+        {
+          ...profile,
+          id: "default",
+          name: "Viewer",
+          pinEnabled: false,
+          onboardingComplete: false,
+        },
+      ],
+      limit: 5,
+    });
+    vi.mocked(api.getSetupStatus).mockResolvedValue({
+      complete: false,
+      playback: false,
+      tmdb: "not-configured",
+      webshare: "not-configured",
+      localAi: "not-configured",
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (path: string) => {
+        if (path === "/api/v1/installation/status")
+          return Response.json({ enabled: false, role: null });
+        if (path === "/api/v1/account/encrypted-household")
+          return Response.json({ enabled: false, cloudConfigured: true });
+        throw new Error("Unexpected recovery request");
+      }),
+    );
+    render(<App api={api} />);
+    const summary = await screen.findByText(
+      "Restore an encrypted household instead of starting over",
+    );
+    const privacy = screen
+      .getByText("Your viewing data stays at home.")
+      .closest(".trust-note")!;
+    expect(privacy.nextElementSibling).toBe(summary.closest("details"));
+    fireEvent.click(summary);
+    const input = await screen.findByLabelText("Master PIN for this backup");
+    expect(input).toBeEnabled();
+    const slots = input
+      .closest(".digit-slots")!
+      .querySelectorAll(".digit-slots__cell");
+    expect(slots).toHaveLength(8);
+    expect(slots[0]).toBeVisible();
+  });
+
+  it("places restore below the Welcome privacy block and uses the backup PIN without creating another", async () => {
+    let restored = false;
+    const bootstrap = {
+      ...profile,
+      id: "default",
+      name: "Viewer",
+      pinEnabled: false,
+      onboardingComplete: false,
+    };
+    const recovered = {
+      ...profile,
+      id: "recovered",
+      name: "Recovered viewer",
+      pinEnabled: false,
+    };
+    const api = makeApi();
+    api.getInstallationStatus = vi
+      .fn()
+      .mockResolvedValue({ enabled: true, paired: true, role: "owner" });
+    vi.mocked(api.getAuthStatus!).mockImplementation(async () => ({
+      ...loggedIn,
+      account: { ...account, cloudLinked: false },
+      masterPinSetupRequired: !restored,
+    }));
+    vi.mocked(api.getProfiles).mockImplementation(async () => ({
+      items: [restored ? recovered : bootstrap],
+      limit: 5,
+    }));
+    vi.mocked(api.getSetupStatus).mockImplementation(async () => ({
+      complete: restored,
+      playback: false,
+      tmdb: "not-configured",
+      webshare: "not-configured",
+      localAi: "not-configured",
+    }));
+    api.setupMasterPin = vi.fn();
+    const fetcher = vi.fn(async (path: string) => {
+      if (path === "/api/v1/installation/status")
+        return Response.json({ role: "owner" });
+      if (path === "/api/v1/account/encrypted-household")
+        return Response.json({ enabled: false, cloudConfigured: true });
+      if (path.endsWith("/preview"))
+        return Response.json({
+          profiles: [{ name: "Recovered viewer" }],
+          credentials: [],
+          limitations: [],
+        });
+      if (path.endsWith("/restore")) {
+        restored = true;
+        return Response.json({});
+      }
+      throw new Error("Unexpected recovery request");
+    });
+    vi.stubGlobal("fetch", fetcher);
+    render(<App api={api} />);
+    const summary = await screen.findByText(
+      "Restore an encrypted household instead of starting over",
+    );
+    const privacy = screen
+      .getByText("Your viewing data stays at home.")
+      .closest(".trust-note")!;
+    expect(privacy.nextElementSibling).toBe(summary.closest("details"));
+    expect(screen.getByRole("main")).toContainElement(summary);
+    fireEvent.click(summary);
+    const input = await screen.findByLabelText("Master PIN for this backup");
+    expect(
+      screen.queryByRole("button", { name: "Enable encrypted recovery" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Save encrypted household file" }),
+    ).not.toBeInTheDocument();
+    const data = { format: "streamerai-master-pin-household", version: 1 };
+    const file = new File([JSON.stringify(data)], "household.json");
+    Object.defineProperty(file, "text", {
+      value: async () => JSON.stringify(data),
+    });
+    fireEvent.change(screen.getByLabelText("Encrypted household file"), {
+      target: { files: [file] },
+    });
+    fireEvent.change(input, { target: { value: "01234567" } });
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Review contents" }),
+      ).toBeEnabled(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Review contents" }));
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Confirm restore into empty household",
+      }),
+    );
+    await screen.findByRole("button", { name: /Recovered viewer/ });
+    expect(api.setupMasterPin).not.toHaveBeenCalled();
+    expect(fetcher).toHaveBeenCalledWith(
+      "/api/v1/account/encrypted-household/restore",
+      expect.objectContaining({
+        body: JSON.stringify({
+          envelope: data,
+          recoveryKey: "01234567",
+          confirm: "restore-into-empty-household",
+        }),
+      }),
+    );
+    expect(
+      fetcher.mock.calls.some(
+        ([path]) =>
+          path.endsWith("/activate") || path.endsWith("/rotate-recovery"),
+      ),
+    ).toBe(false);
+  });
+  it("asks for a new Master PIN only after Start setup", async () => {
+    const api = makeApi({
+      ...loggedIn,
+      account: { ...account, cloudLinked: false },
+      masterPinSetupRequired: true,
+    });
+    vi.mocked(api.getProfiles).mockResolvedValue({
+      items: [
+        {
+          ...profile,
+          id: "default",
+          name: "Viewer",
+          pinEnabled: false,
+          onboardingComplete: false,
+        },
+      ],
+      limit: 5,
+    });
+    vi.mocked(api.getSetupStatus).mockResolvedValue({
+      complete: false,
+      playback: false,
+      tmdb: "not-configured",
+      webshare: "not-configured",
+      localAi: "not-configured",
+    });
+    api.setupMasterPin = vi.fn().mockResolvedValue({ ok: true });
+    render(<App api={api} />);
+    await screen.findByText("Your viewing data stays at home.");
+    expect(
+      screen.queryByLabelText("Master PIN (8 digits)"),
+    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Start setup/ }));
+    fireEvent.change(screen.getByLabelText("Master PIN (8 digits)"), {
+      target: { value: "01234567" },
+    });
+    fireEvent.change(screen.getByLabelText("Confirm Master PIN"), {
+      target: { value: "01234567" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save Master PIN" }));
+    await waitFor(() =>
+      expect(api.setupMasterPin).toHaveBeenCalledWith("01234567", "01234567"),
+    );
+    await screen.findByLabelText(/Display name/);
+  });
   it("leaves local setup and starts ordinary pairing after signing out of the local session", async () => {
     const localStatus: AuthStatus = {
       ...loggedIn,
@@ -105,6 +319,9 @@ describe("account access and profile PIN", () => {
     });
     render(<App api={api} />);
     fireEvent.click(await screen.findByRole("button", { name: "Sign in" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Connect this device" }),
+    );
     expect(
       await screen.findByLabelText("Pairing code ABCD-1234"),
     ).toBeVisible();

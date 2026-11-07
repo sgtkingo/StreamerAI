@@ -14,12 +14,12 @@ import { Onboarding } from "./components/onboarding/Onboarding";
 import { safeErrorMessage } from "./api/client";
 import { ThemeProvider } from "./theme/ThemeProvider";
 import { AccountLogin } from "./components/AccountLogin";
+import { MasterPinSetup } from "./components/MasterPinSetup";
 import { ProfilePinDialog } from "./components/ProfilePin";
 import {
   InstallationAccess,
   type InstallationStatus,
 } from "./components/InstallationAccess";
-import { EncryptedRecovery } from "./components/EncryptedRecovery";
 
 export interface AppProps {
   api?: StreamerApi;
@@ -275,6 +275,21 @@ export function App({ api = apiClient, forceOnboarding = false }: AppProps) {
         />
       );
     }
+    if (
+      auth?.masterPinSetupRequired &&
+      setupState === "complete" &&
+      api.setupMasterPin
+    )
+      return (
+        <main className="account-login">
+          <MasterPinSetup
+            onSave={async (pin) => {
+              await api.setupMasterPin!(pin, pin);
+              setAuthVersion((value) => value + 1);
+            }}
+          />
+        </main>
+      );
     if (setupState === "loading") {
       return (
         <main className="startup-status" aria-live="polite" aria-busy="true">
@@ -299,6 +314,26 @@ export function App({ api = apiClient, forceOnboarding = false }: AppProps) {
               : undefined
           }
           onComplete={completeOnboarding}
+          allowRestore={
+            installation?.enabled === false || installation?.role === "owner"
+          }
+          masterPinRequired={auth?.masterPinSetupRequired ?? false}
+          onMasterPinCreated={() =>
+            setAuth((current) =>
+              current
+                ? {
+                    ...current,
+                    masterPinSetupRequired: false,
+                    masterPinEnabled: true,
+                  }
+                : current,
+            )
+          }
+          onRestored={async () => {
+            setRerunProfile(null);
+            setSetupState("loading");
+            setAuthVersion((value) => value + 1);
+          }}
         />
       );
     }
@@ -397,14 +432,6 @@ export function App({ api = apiClient, forceOnboarding = false }: AppProps) {
       profile={activeProfile}
       onProfileUpdated={updateProfile}
     >
-      {installation?.role === "owner" && setupState === "required" && (
-        <details className="installation-screen">
-          <summary>
-            Restore an encrypted household instead of starting over
-          </summary>
-          <EncryptedRecovery />
-        </details>
-      )}
       {renderScreen()}
     </ThemeProvider>
   );

@@ -1,7 +1,7 @@
 import {
   ENCRYPTED_CHECKPOINT_MAX_BYTES,
   EncryptedCheckpointWriteSchema,
-  EncryptedHouseholdEnvelopeSchema,
+  MasterPinHouseholdBackupSchema,
 } from "@streamer-ai/contracts";
 import { body, enforceRateLimit, HttpError, json, record } from "./http.js";
 import type { Env, Principal } from "./types.js";
@@ -61,7 +61,7 @@ export async function encryptedCheckpoint(
     return json({
       revision: row?.revision ?? 0,
       envelope: row?.envelope_json
-        ? EncryptedHouseholdEnvelopeSchema.parse(JSON.parse(row.envelope_json))
+        ? MasterPinHouseholdBackupSchema.parse(JSON.parse(row.envelope_json))
         : null,
     });
   }
@@ -87,14 +87,19 @@ export async function encryptedCheckpoint(
             `INSERT OR IGNORE INTO cloud_encrypted_checkpoint (account_id, revision, dataset_id, envelope_json, updated_at)
        VALUES (?, 1, ?, ?, ?) RETURNING revision`,
           )
-            .bind(accountId, parsed.data.envelope.datasetId, serialized, now)
+            .bind(
+              accountId,
+              parsed.data.envelope.envelope.datasetId,
+              serialized,
+              now,
+            )
             .first<{ revision: number }>()
         : await env.DB.prepare(
             `UPDATE cloud_encrypted_checkpoint SET revision = revision + 1, dataset_id = ?, envelope_json = ?, updated_at = ?
        WHERE account_id = ? AND revision = ? RETURNING revision`,
           )
             .bind(
-              parsed.data.envelope.datasetId,
+              parsed.data.envelope.envelope.datasetId,
               serialized,
               now,
               accountId,

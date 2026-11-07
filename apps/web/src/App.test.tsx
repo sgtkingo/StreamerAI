@@ -10,6 +10,7 @@ import userEvent from "@testing-library/user-event";
 import { StrictMode } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { App } from "./App";
+import { ToastProvider } from "./components/ToastProvider";
 import type { IntegrationCatalogItem, StreamerApi } from "./api/client";
 import { DEFAULT_PLAYBACK_PREFERENCES } from "./playback-preferences";
 
@@ -408,7 +409,7 @@ describe("onboarding", () => {
   it("clears a TMDB token after connecting and never renders it in status UI", async () => {
     const user = userEvent.setup();
     const api = createApi();
-    render(<App api={api} forceOnboarding />);
+    render(<ToastProvider><App api={api} forceOnboarding /></ToastProvider>);
 
     await user.click(screen.getByRole("button", { name: /start setup/i }));
     await user.type(screen.getByLabelText(/display name/i), "Alex");
@@ -439,7 +440,7 @@ describe("onboarding", () => {
   it("clears the Webshare password after local connection", async () => {
     const user = userEvent.setup();
     const api = createApi();
-    render(<App api={api} forceOnboarding />);
+    render(<ToastProvider><App api={api} forceOnboarding /></ToastProvider>);
 
     await user.click(screen.getByRole("button", { name: /start setup/i }));
     await user.type(screen.getByLabelText(/display name/i), "Alex");

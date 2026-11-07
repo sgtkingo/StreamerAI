@@ -81,12 +81,31 @@
   font-size: 32px;
 }
 .profile-pin-recovery {
-  width: min(900px, calc(100vw - 32px));
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 18px;
+  width: min(520px, calc(100vw - 32px));
   max-height: calc(100dvh - 48px);
   overflow: auto;
-  background: var(--deep-black);
-  border: 1px solid var(--border);
+  padding: clamp(24px, 5vw, 36px);
+  background: linear-gradient(150deg, #222225, #111113);
+  border: 1px solid rgb(255 255 255 / 17%);
   border-radius: 20px;
+  box-shadow: 0 24px 80px rgb(0 0 0 / 50%);
+}
+.profile-pin-recovery h2 {
+  margin: 0;
+  font-size: 27px;
+  letter-spacing: -0.04em;
+}
+.profile-pin-recovery p {
+  margin: 0;
+  color: var(--slate);
+  line-height: 1.6;
+}
+.profile-pin-recovery .button {
+  text-decoration: none;
 }
 
 .account-login__card h1 {
@@ -180,9 +199,189 @@
   color: var(--error);
   line-height: 1.6;
 }
-.account-id {
-  display: inline-block;
+.profile-pin-method {
+  justify-self: start;
+  margin-top: -20px;
+}
+.cloud-backup-current {
+  color: var(--success);
+}
+.profile-pin-match {
+  margin: -8px 0 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.profile-pin-match--match {
+  color: var(--success);
+}
+.profile-pin-match--mismatch {
+  color: var(--error);
+}
+.account-uid {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  color: #aeb3c8;
+  font-size: 0.85rem;
+}
+.account-uid code {
+  font: inherit;
+  letter-spacing: 0;
   overflow-wrap: anywhere;
+  color: #e0e1eb;
+}
+.account-uid .copy-uid {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: 1px solid #656b85;
+  border-radius: 10px;
+  background: transparent;
+  color: #c8cbd6;
+  transition:
+    color 0.2s,
+    border-color 0.2s,
+    background-color 0.2s;
+}
+.account-uid .copy-uid:hover {
+  color: #fff;
+  border-color: #a7a2ff;
+  background: #a7a2ff1a;
+}
+.copy-uid svg {
+  grid-area: 1 / 1;
+  width: 18px;
+  height: 18px;
+  transition:
+    opacity 0.18s,
+    transform 0.22s;
+}
+.copy-uid__check {
+  opacity: 0;
+  transform: scale(0.6);
+}
+.account-uid .copy-uid[data-copied="true"] {
+  color: #8bdbab;
+  border-color: #61ae80;
+  background: #61ae801a;
+}
+.copy-uid[data-copied="true"] .copy-uid__copy {
+  opacity: 0;
+  transform: scale(0.6);
+}
+.copy-uid[data-copied="true"] .copy-uid__check {
+  opacity: 1;
+  transform: scale(1);
+  animation: copy-uid-pop 0.32s ease-out;
+}
+.copy-uid-status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+@keyframes copy-uid-pop {
+  50% {
+    transform: scale(1.2);
+  }
+}
+.account-security__subsection + .account-security__subsection {
+  margin-top: 32px;
+  padding-top: 24px;
+  border-top: 1px solid var(--border);
+}
+.account-security__subsection h3 {
+  margin-top: 0;
+}
+.account-security__subsection .form-stack {
+  margin-top: 20px;
+}
+.account-security__subsection .info-tip__tooltip {
+  left: auto;
+  right: -8px;
+}
+@media (max-width: 400px) {
+  .account-security__subsection .info-tip__tooltip {
+    left: -8px;
+    right: auto;
+  }
+}
+.household-backup-cloud h4 {
+  margin: 0 0 8px;
+}
+.household-backup-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  max-width: 360px;
+  margin-top: 20px;
+}
+.household-backup-action {
+  display: grid;
+  place-items: center;
+  gap: 12px;
+  padding: 20px 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--white);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    border-color 0.2s,
+    background-color 0.2s;
+}
+.household-backup-action svg {
+  width: 32px;
+  height: 32px;
+}
+.household-backup-action:hover:not(:disabled),
+.household-backup-action[aria-expanded="true"] {
+  border-color: var(--accent);
+  background: var(--surface-raised);
+}
+.household-backup-restore {
+  display: grid;
+  gap: 20px;
+  min-width: 0;
+  margin-top: 24px;
+}
+.household-backup-restore > p,
+.household-backup-restore > h3 {
+  margin: 0;
+}
+.household-backup-restore > .field {
+  min-width: 0;
+}
+.household-backup-restore > .field input[type="file"] {
+  min-width: 0;
+  max-width: 100%;
+}
+.household-backup-restore > .button {
+  justify-self: start;
+  max-width: 100%;
+}
+@media (prefers-reduced-motion: reduce) {
+  .account-uid .copy-uid,
+  .copy-uid svg,
+  .household-backup-action {
+    transition: none;
+  }
+  .copy-uid[data-copied="true"] .copy-uid__check {
+    animation: none;
+  }
 }
 .account-device-list {
   padding: 0;
@@ -2016,6 +2215,39 @@ textarea:not(:disabled):hover {
   color: var(--muted);
   font-size: 13px;
   line-height: 1.45;
+}
+
+.welcome-restore {
+  display: block;
+  margin-top: 20px;
+}
+.welcome-restore > summary {
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.5;
+}
+.welcome-restore > summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 6px;
+}
+.welcome-restore .profile-page__section {
+  display: grid;
+  gap: 18px;
+  margin: 20px 0 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.welcome-restore .profile-page__section > p {
+  margin: 0;
+}
+.welcome-restore .profile-page__section > .button {
+  justify-self: start;
+}
+.welcome-restore .household-backup-restore {
+  margin-top: 0;
 }
 
 .form-stack {

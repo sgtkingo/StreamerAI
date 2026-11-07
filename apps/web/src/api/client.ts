@@ -191,6 +191,7 @@ export interface PlaybackCheckResult {
 
 export interface AccountIdentity {
   id: string;
+  cloudAccountId?: string | null;
   name: string;
   email: string | null;
   cloudLinked?: boolean;
@@ -203,6 +204,16 @@ export interface AuthStatus {
   account: AccountIdentity | null;
   localAvailable?: boolean;
   recoveredLocalAccounts?: { id: string }[];
+  ownerResetAvailable?: boolean;
+  masterPinEnabled?: boolean;
+  masterPinSetupRequired?: boolean;
+  localMasterPinRequired?: boolean;
+}
+
+export interface ProfilePinResetRequest {
+  id: string;
+  expiresAt: string;
+  manageUrl: string;
 }
 
 export interface DeviceAuthorization {
@@ -215,9 +226,11 @@ export interface DeviceAuthorization {
   qrCodeDataUrl?: string;
 }
 
-export type DeviceAuthorizationInput =
-  | { purpose: "pin-reset"; profileId: string }
-  | { purpose?: "login"; adoptLocalAccount?: boolean; disableSync?: boolean };
+export type DeviceAuthorizationInput = {
+  purpose?: "login";
+  adoptLocalAccount?: boolean;
+  disableSync?: boolean;
+};
 
 export interface AccountOverview {
   account: AccountIdentity;
@@ -254,7 +267,20 @@ export interface StreamerApi {
   getAccountConnections?(): Promise<AccountConnections>;
   startLocalSession?(
     recoveredAccountId?: string,
+    masterPin?: string,
   ): Promise<{ account: AccountIdentity }>;
+  setupMasterPin?(pin: string, confirmation: string): Promise<{ ok: boolean }>;
+  verifyMasterPin?(pin: string): Promise<void>;
+  changeMasterPin?(
+    currentPin: string,
+    newPin: string,
+    confirmation: string,
+  ): Promise<{ ok: boolean }>;
+  requestProfilePinReset?(profileId: string): Promise<ProfilePinResetRequest>;
+  pollProfilePinReset?(
+    profileId: string,
+    requestId: string,
+  ): Promise<{ status: "pending" | "approved" | "expired" | "denied" }>;
   setAccountSync?(
     enabled: boolean,
   ): Promise<NonNullable<AccountOverview["sync"]>>;
@@ -537,8 +563,28 @@ const domainErrorMessages: Record<string, string> = {
   PROFILE_LOCKED: "Unlock this profile with its PIN to continue.",
   PIN_INVALID: "That PIN was not accepted. Please try again.",
   INVALID_PIN: "Use a PIN containing exactly 4 digits.",
+  INVALID_MASTER_PIN: "Enter and confirm an 8-digit Master PIN.",
+  MASTER_PIN_REQUIRED:
+    "Choose an 8-digit Master PIN to create this local account.",
+  MASTER_PIN_IMMUTABLE:
+    "A Master PIN is already set. Use Change Master PIN to update it.",
+  MASTER_PIN_SETUP_PENDING:
+    "Master PIN setup is already in progress. Try again shortly.",
+  LOCAL_ACCOUNT_UNAVAILABLE:
+    "This local account is no longer available. Choose another account.",
+  SIGN_OUT_FIRST:
+    "Sign out of the online account before opening a local account.",
+  PIN_RESET_UNAVAILABLE:
+    "A PIN cannot be reset without an online account with synchronization enabled.",
+  ACCOUNT_SIGN_IN_REQUIRED: "Sign in to your StreamerAI account again.",
   PIN_INCORRECT: "That PIN was not accepted. Please try again.",
   PIN_RATE_LIMITED: "Too many PIN attempts. Wait a moment and try again.",
+  MASTER_PIN_UPGRADE_REQUIRED:
+    "To enable PIN changes on this server, confirm your current Master PIN once in the account portal using Forgot PIN?.",
+  MASTER_PIN_CLOUD_UNAVAILABLE:
+    "Connect to your online account to change the Master PIN.",
+  MASTER_PIN_CHANGED:
+    "The Master PIN changed on another device. Check the current PIN and try again.",
   AUTH_UNAVAILABLE: "Sign-in is temporarily unavailable. Please try again.",
   ACCOUNT_SERVICE_UNAVAILABLE:
     "Sign-in is temporarily unavailable. Please try again.",
@@ -833,12 +879,39 @@ function readProfile(value: unknown): ProfileDraft | undefined {
 }
 
 export const apiClient: StreamerApi = {
-  startLocalSession: (recoveredAccountId) =>
+  startLocalSession: (recoveredAccountId, masterPin) =>
     request("/auth/local", {
       method: "POST",
-      ...(recoveredAccountId
-        ? { body: JSON.stringify({ recoveredAccountId }) }
-        : {}),
+      body: JSON.stringify({
+        recoveredAccountId,
+        masterPin,
+        ...(!masterPin ? { deferMasterPin: true } : {}),
+      }),
+    }),
+  setupMasterPin: (pin, confirmation) =>
+    request("/account/master-pin", {
+      method: "POST",
+      body: JSON.stringify({ pin, confirmation }),
+    }),
+  verifyMasterPin: (pin) =>
+    request<void>("/account/master-pin/verify", {
+      method: "POST",
+      body: JSON.stringify({ pin }),
+    }),
+  changeMasterPin: (currentPin, newPin, confirmation) =>
+    request("/account/master-pin", {
+      method: "PUT",
+      body: JSON.stringify({ currentPin, newPin, confirmation }),
+    }),
+  requestProfilePinReset: (profileId) =>
+    request(`/profiles/${encodeURIComponent(profileId)}/pin-reset`, {
+      method: "POST",
+      body: "{}",
+    }),
+  pollProfilePinReset: (profileId, requestId) =>
+    request(`/profiles/${encodeURIComponent(profileId)}/pin-reset/poll`, {
+      method: "POST",
+      body: JSON.stringify({ requestId }),
     }),
   setAccountSync: (enabled) =>
     request("/account/sync", {

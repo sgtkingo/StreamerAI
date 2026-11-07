@@ -7,16 +7,18 @@ export function PinPad({
   onChange,
   disabled = false,
   autoFocus = false,
+  length = 4,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   disabled?: boolean;
   autoFocus?: boolean;
+  length?: 4 | 8;
 }) {
   const inputId = useId();
   const update = (next: string) => {
-    if (!disabled) onChange(next.replace(/\D/g, "").slice(0, 4));
+    if (!disabled) onChange(next.replace(/\D/g, "").slice(0, length));
   };
   return (
     <div
@@ -42,8 +44,12 @@ export function PinPad({
         {label}
       </label>
       <div className="pin-pad__entry">
-        <div className="pin-pad__slots" aria-hidden="true">
-          {[0, 1, 2, 3].map((index) => (
+        <div
+          className="pin-pad__slots"
+          style={{ gridTemplateColumns: `repeat(${length}, 1fr)` }}
+          aria-hidden="true"
+        >
+          {Array.from({ length }, (_, index) => (
             <span
               key={index}
               className={
@@ -63,7 +69,7 @@ export function PinPad({
           inputMode="numeric"
           autoComplete="off"
           aria-label={label}
-          maxLength={4}
+          maxLength={length}
           value={value}
           disabled={disabled}
           autoFocus={autoFocus}
@@ -75,7 +81,7 @@ export function PinPad({
           <button
             key={digit}
             type="button"
-            disabled={disabled || value.length >= 4}
+            disabled={disabled || value.length >= length}
             onClick={() => update(value + digit)}
           >
             {digit}
@@ -84,7 +90,7 @@ export function PinPad({
         <span aria-hidden="true" />
         <button
           type="button"
-          disabled={disabled || value.length >= 4}
+          disabled={disabled || value.length >= length}
           onClick={() => update(value + "0")}
         >
           0

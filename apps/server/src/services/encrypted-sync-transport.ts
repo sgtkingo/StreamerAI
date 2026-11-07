@@ -2,13 +2,11 @@ import {
   ENCRYPTED_CHECKPOINT_MAX_BYTES,
   EncryptedCheckpointSchema,
   type EncryptedCheckpoint,
-  type EncryptedHouseholdEnvelope,
+  type MasterPinHouseholdBackup,
 } from "@streamer-ai/contracts";
 import type { AccountSyncCredential } from "./account-sync-transport.js";
-import {
-  EncryptedHouseholdError,
-  parseHouseholdEnvelope,
-} from "./encrypted-household-crypto.js";
+import { EncryptedHouseholdError } from "./encrypted-household-crypto.js";
+import { MasterPinHouseholdBackupSchema } from "@streamer-ai/contracts";
 
 /** A recovery checkpoint is not a merge engine; callers resolve revision conflicts explicitly. */
 export class EncryptedCheckpointTransport {
@@ -97,13 +95,13 @@ export class EncryptedCheckpointTransport {
   async write(
     credential: AccountSyncCredential,
     expectedRevision: number,
-    input: EncryptedHouseholdEnvelope,
+    input: MasterPinHouseholdBackup,
   ): Promise<{ revision: number }> {
     if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0)
       throw new EncryptedHouseholdError(
         "INVALID_ENCRYPTED_CHECKPOINT_REVISION",
       );
-    const envelope = parseHouseholdEnvelope(input);
+    const envelope = MasterPinHouseholdBackupSchema.parse(input);
     if (
       Buffer.byteLength(JSON.stringify(envelope)) >
       ENCRYPTED_CHECKPOINT_MAX_BYTES

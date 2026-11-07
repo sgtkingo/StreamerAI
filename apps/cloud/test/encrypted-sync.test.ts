@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { type EncryptedHouseholdEnvelope } from "@streamer-ai/contracts";
+import {
+  type EncryptedHouseholdEnvelope,
+  type MasterPinHouseholdBackup,
+} from "@streamer-ai/contracts";
 import { fixture } from "./helpers.js";
 
 let f: ReturnType<typeof fixture>;
@@ -10,14 +13,14 @@ afterEach(() => {
   f.close();
 });
 const path = "/v1/sync/v2/checkpoint";
-function envelope(): EncryptedHouseholdEnvelope {
+function envelope(): MasterPinHouseholdBackup {
   const cipher = {
     algorithm: "aes-256-gcm" as const,
     nonce: "AAAAAAAAAAAAAAAA",
     tag: "AAAAAAAAAAAAAAAAAAAAAA",
     ciphertext: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
   };
-  return {
+  const inner: EncryptedHouseholdEnvelope = {
     format: "streamerai-encrypted-household",
     version: 1,
     datasetId: crypto.randomUUID(),
@@ -28,6 +31,19 @@ function envelope(): EncryptedHouseholdEnvelope {
     createdAt: new Date(f.now()).toISOString(),
     recovery: { ...cipher },
     payload: { ...cipher },
+  };
+  return {
+    format: "streamerai-master-pin-household",
+    version: 1,
+    kdf: {
+      algorithm: "argon2id",
+      memory: 65_536,
+      passes: 3,
+      parallelism: 1,
+      salt: "AAAAAAAAAAAAAAAAAAAAAA",
+    },
+    cloudRecovery: { ...cipher },
+    envelope: inner,
   };
 }
 async function token(account = "a"): Promise<string> {
@@ -147,9 +163,12 @@ describe("opaque encrypted recovery checkpoints", () => {
             expectedRevision: 0,
             envelope: {
               ...encrypted,
-              payload: {
-                ...encrypted.payload,
-                ciphertext: "A".repeat(1_801_000),
+              envelope: {
+                ...encrypted.envelope,
+                payload: {
+                  ...encrypted.envelope.payload,
+                  ciphertext: "A".repeat(1_801_000),
+                },
               },
             },
           },

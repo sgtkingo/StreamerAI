@@ -7,21 +7,21 @@ import type {
 } from "../api/client";
 import { safeErrorMessage } from "../api/client";
 import { AccountLogin } from "./AccountLogin";
+import { AccountId } from "./AccountId";
+import { useToasts } from "./ToastProvider";
 
 export function AccountSettings({
   api,
   profile,
-  onSwitchProfile,
   onSignOut,
 }: {
   api: StreamerApi;
   profile: ViewerProfile;
-  onSwitchProfile: () => void;
   onSignOut?: () => Promise<void>;
 }) {
   const [overview, setOverview] = useState<AccountOverview | null>(null);
   const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
+  const { showToast } = useToasts();
   const [pending, setPending] = useState(false);
   const [retry, setRetry] = useState(0);
   const [localProfiles, setLocalProfiles] = useState<ViewerProfile[] | null>(
@@ -91,7 +91,6 @@ export function AccountSettings({
     if (pending) return;
     setPending(true);
     setError("");
-    setNotice("");
     try {
       await operation();
     } catch (reason) {
@@ -108,83 +107,17 @@ export function AccountSettings({
         {overview ? (
           <>
             <p>{overview.account.email}</p>
-            <p className="settings-note">
-              Account ID{" "}
-              <code className="account-id">{overview.account.id}</code>
-            </p>
+            <AccountId
+              value={
+                overview.account.cloudLinked
+                  ? (overview.account.cloudAccountId ?? null)
+                  : overview.account.id
+              }
+            />
             <p>
               Connected services are shared by this account's profiles. Viewing
               history and preferences stay with each profile.
             </p>
-            {overview.sync && (
-              <>
-                <h3>Cloud synchronization</h3>
-                <p>
-                  {overview.sync.configured
-                    ? `Status: ${overview.sync.status}`
-                    : "Synchronization is off. Your home server keeps your data locally."}
-                </p>
-                {overview.account.cloudLinked && api.setAccountSync && (
-                  <button
-                    className="button button--secondary"
-                    type="button"
-                    disabled={pending}
-                    onClick={() =>
-                      void run(async () => {
-                        const sync = await api.setAccountSync!(
-                          !overview.sync!.configured,
-                        );
-                        setOverview((current) =>
-                          current ? { ...current, sync } : current,
-                        );
-                        setNotice(
-                          sync.configured
-                            ? "Cloud synchronization enabled. Your queued changes will be synchronized."
-                            : "Synchronization disabled. Local data, pending changes and the online copy are preserved.",
-                        );
-                      })
-                    }
-                  >
-                    {overview.sync.configured
-                      ? "Disable synchronization"
-                      : "Enable synchronization"}
-                  </button>
-                )}
-                {overview.sync.lastSyncedAt && (
-                  <p className="settings-note">
-                    Last synchronized{" "}
-                    {new Date(overview.sync.lastSyncedAt).toLocaleString()}
-                  </p>
-                )}
-                {overview.sync.configured && api.syncAccount && (
-                  <button
-                    className="button button--secondary"
-                    type="button"
-                    disabled={pending}
-                    onClick={() =>
-                      void run(async () => {
-                        const sync = await api.syncAccount!();
-                        setOverview((current) =>
-                          current ? { ...current, sync } : current,
-                        );
-                        if (sync?.status === "error")
-                          setError(
-                            "Cloud synchronization is temporarily unavailable. Your changes are saved on the home server.",
-                          );
-                        else
-                          setNotice(
-                            sync?.status === "pending"
-                              ? "Your changes are queued for synchronization."
-                              : "Synchronization completed.",
-                          );
-                      })
-                    }
-                  >
-                    Sync now
-                  </button>
-                )}
-              </>
-            )}
           </>
         ) : (
           !error && <p role="status">Loading account…</p>
@@ -201,15 +134,7 @@ export function AccountSettings({
             </button>
           </p>
         )}
-        {notice && <p role="status">{notice}</p>}
         <div className="profile-page__actions">
-          <button
-            className="button button--secondary"
-            type="button"
-            onClick={onSwitchProfile}
-          >
-            Choose another profile
-          </button>
           {onSignOut && (
             <button
               className="button button--ghost"
@@ -395,7 +320,7 @@ export function AccountSettings({
                               }
                             : current,
                         );
-                        setNotice("Device disconnected.");
+                        showToast("Device disconnected.", "success");
                       })
                     }
                   >

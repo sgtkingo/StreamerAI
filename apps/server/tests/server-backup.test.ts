@@ -21,6 +21,7 @@ import {
 } from "../src/backup/server-backup.js";
 import { acquireServerRuntimeLock } from "../src/services/runtime-lock.js";
 import { EncryptedFileSecretStore } from "../src/stores/secret-store.js";
+import { MasterPinService } from "../src/services/master-pin.js";
 
 const switchFailure = vi.hoisted(() => ({
   target: undefined as string | undefined,
@@ -133,6 +134,58 @@ async function fixture() {
 }
 
 describe("offline encrypted server backup", () => {
+  it("automatically encrypts with the selected account's verified Master PIN and preserves it after offline restore", async () => {
+    const source = await fixture();
+    const master = new MasterPinService(
+      new EncryptedFileSecretStore({
+        filename: source.vaultFile,
+        keyFilename: source.keyFile,
+      }),
+    );
+    await master.setupLocal("local", "01234567");
+    await createServerBackup({
+      ...source,
+      accountId: "local",
+      passphrase: undefined,
+    });
+    const manifest = await inspectServerBackup({
+      file: source.outputFile,
+      passphrase: "01234567",
+    });
+    expect(
+      manifest.database.accounts.some((account) => account.id === "local"),
+    ).toBe(true);
+    await expect(
+      inspectServerBackup({ file: source.outputFile, passphrase: "76543210" }),
+    ).rejects.toThrow();
+    const restored = await restoreServerBackup({
+      file: source.outputFile,
+      passphrase: "01234567",
+      targetDirectory: join(source.directory, "restored-master"),
+      mode: "new-server",
+    });
+    const restoredMaster = new MasterPinService(
+      new EncryptedFileSecretStore({
+        filename: restored.vaultFile,
+        keyFilename: restored.keyFile,
+      }),
+    );
+    expect(await restoredMaster.verify("local", "01234567")).toBe(true);
+    expect(await restoredMaster.read("other")).toBeNull();
+  }, 15_000);
+  it("refuses automatic backup until the selected account's Master PIN has been verified locally", async () => {
+    const source = await fixture();
+    await expect(
+      createServerBackup({
+        ...source,
+        accountId: "local",
+        passphrase: undefined,
+      }),
+    ).rejects.toThrow(/Master PIN/);
+    expect(await readdir(source.directory)).not.toContain(
+      "portable.streamerai-backup",
+    );
+  });
   it("restores actual profiles, PINs, configuration, account ownership and provider vault entirely offline", async () => {
     const source = await fixture(),
       fetch = vi.fn(() => {

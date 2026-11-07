@@ -12,6 +12,7 @@ import {
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { StreamerApi } from "../api/client";
 import { ProfilePinDialog, ProfilePinSettings } from "./ProfilePin";
+import { ToastProvider } from "./ToastProvider";
 
 const profile = ViewerProfileSchema.parse({
   id: "alex",
@@ -40,6 +41,12 @@ describe("profile PIN controls", () => {
         onCancel={vi.fn()}
       />,
     );
+    expect(
+      screen
+        .getByLabelText("Profile PIN")
+        .closest(".pin-pad")
+        ?.querySelectorAll(".pin-pad__slot"),
+    ).toHaveLength(4);
     for (const digit of ["1", "2", "3", "4"])
       fireEvent.click(screen.getByRole("button", { name: digit }));
     await waitFor(() => expect(unlocked).toHaveBeenCalledOnce());
@@ -77,13 +84,27 @@ describe("profile PIN controls", () => {
       setProfilePin: vi.fn().mockResolvedValue({ pinEnabled: true }),
     } as unknown as StreamerApi;
     render(
-      <ProfilePinSettings
-        api={api}
-        profile={profile}
-        onProfileUpdated={updated}
-      />,
+      <ToastProvider>
+        <ProfilePinSettings
+          api={api}
+          profile={profile}
+          onProfileUpdated={updated}
+        />
+      </ToastProvider>,
     );
-    fireEvent.change(screen.getByLabelText("Current PIN"), {
+    for (const label of [
+      "Current profile PIN",
+      "New PIN (4 digits)",
+      "Confirm new PIN",
+    ]) {
+      expect(
+        screen
+          .getByLabelText(label)
+          .closest(".digit-slots")
+          ?.querySelectorAll(".digit-slots__cell"),
+      ).toHaveLength(4);
+    }
+    fireEvent.change(screen.getByLabelText("Current profile PIN"), {
       target: { value: "9876" },
     });
     fireEvent.change(screen.getByLabelText("New PIN (4 digits)"), {
@@ -103,7 +124,9 @@ describe("profile PIN controls", () => {
     );
     expect(api.setProfilePin).toHaveBeenCalledWith("alex", "1234", "9876");
     expect(screen.getByLabelText("New PIN (4 digits)")).toHaveValue("");
-    expect(screen.getByRole("status")).toHaveTextContent("Profile PIN saved.");
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Profile PIN changed.",
+    );
   });
 
   it("removes a PIN through the account-owner endpoint", async () => {
@@ -119,7 +142,7 @@ describe("profile PIN controls", () => {
       />,
     );
     expect(screen.getByRole("button", { name: "Remove PIN" })).toBeDisabled();
-    fireEvent.change(screen.getByLabelText("Current PIN"), {
+    fireEvent.change(screen.getByLabelText("Current profile PIN"), {
       target: { value: "9876" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Remove PIN" }));
@@ -129,7 +152,52 @@ describe("profile PIN controls", () => {
     expect(api.setProfilePin).toHaveBeenCalledWith("alex", null, "9876");
   });
 
-  it("requires a Google ownership confirmation before recovering a forgotten PIN", async () => {
+  it("uses eight slots for Master PIN authorization when changing a profile PIN", async () => {
+    const api = {
+      setProfilePin: vi.fn().mockResolvedValue({ pinEnabled: true }),
+    } as unknown as StreamerApi;
+    render(
+      <ToastProvider>
+        <ProfilePinSettings
+          api={api}
+          profile={profile}
+          onProfileUpdated={vi.fn()}
+        />
+      </ToastProvider>,
+    );
+    fireEvent.change(screen.getByLabelText("Current profile PIN"), {
+      target: { value: "9876" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Use Master PIN instead" }),
+    );
+    const master = screen.getByLabelText("Master PIN");
+    expect(master).toHaveValue("");
+    expect(
+      master.closest(".digit-slots")?.querySelectorAll(".digit-slots__cell"),
+    ).toHaveLength(8);
+    fireEvent.change(master, { target: { value: "01234567" } });
+    fireEvent.change(screen.getByLabelText("New PIN (4 digits)"), {
+      target: { value: "1234" },
+    });
+    fireEvent.change(screen.getByLabelText("Confirm new PIN"), {
+      target: { value: "1234" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save PIN" }));
+    await waitFor(() =>
+      expect(api.setProfilePin).toHaveBeenCalledWith(
+        "alex",
+        "1234",
+        "01234567",
+      ),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Use profile PIN instead" }),
+    );
+    expect(screen.getByLabelText("Current profile PIN")).toHaveValue("");
+  });
+
+  it("sends a reset request to the signed-in account without pairing", async () => {
     vi.useFakeTimers();
     const unlocked = vi.fn();
     const api = {
@@ -137,18 +205,15 @@ describe("profile PIN controls", () => {
         enabled: true,
         authenticated: true,
         cloudConfigured: true,
+        ownerResetAvailable: true,
       }),
-      startDeviceAuthorization: vi.fn().mockResolvedValue({
-        deviceCode: "reset-grant",
-        userCode: "ABCD-1234",
-        verificationUri: "https://example.com/device",
-        verificationUriComplete: "https://example.com/device?code=ABCD-1234",
+      startDeviceAuthorization: vi.fn(),
+      requestProfilePinReset: vi.fn().mockResolvedValue({
+        id: "reset-request",
+        manageUrl: "https://example.com/account",
         expiresAt: new Date(Date.now() + 300000).toISOString(),
-        interval: 5,
       }),
-      pollDeviceAuthorization: vi
-        .fn()
-        .mockResolvedValue({ status: "approved" }),
+      pollProfilePinReset: vi.fn().mockResolvedValue({ status: "approved" }),
       setProfilePin: vi.fn().mockResolvedValue({ pinEnabled: false }),
     } as unknown as StreamerApi;
     render(
@@ -165,16 +230,77 @@ describe("profile PIN controls", () => {
     fireEvent.click(
       screen.getByRole("button", { name: "Forgot PIN? Verify account" }),
     );
-    await act(async () =>
-      fireEvent.click(screen.getByRole("button", { name: "Verify account" })),
-    );
-    expect(api.startDeviceAuthorization).toHaveBeenCalledWith({
-      purpose: "pin-reset",
-      profileId: "alex",
+    await act(async () => {
+      await Promise.resolve();
     });
+    expect(api.requestProfilePinReset).toHaveBeenCalledWith("alex");
+    expect(api.startDeviceAuthorization).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("link", { name: "Open account portal" }),
+    ).toHaveAttribute("href", "https://example.com/account");
     expect(api.setProfilePin).not.toHaveBeenCalled();
     await act(async () => vi.advanceTimersByTimeAsync(5000));
     expect(api.setProfilePin).toHaveBeenCalledWith("alex", null);
     expect(unlocked).toHaveBeenCalledOnce();
+  });
+  it("offers the Master PIN by default and unlocks after eight digits", async () => {
+    const unlocked = vi.fn();
+    const api = {
+      getAuthStatus: vi.fn().mockResolvedValue({
+        masterPinEnabled: true,
+        ownerResetAvailable: false,
+      }),
+      unlockProfile: vi.fn().mockResolvedValue(undefined),
+    } as unknown as StreamerApi;
+    render(
+      <ProfilePinDialog
+        api={api}
+        profile={profile}
+        onUnlocked={unlocked}
+        onCancel={vi.fn()}
+      />,
+    );
+    const input = await screen.findByLabelText("Master PIN");
+    expect(input).toHaveAttribute("maxlength", "8");
+    expect(
+      input.closest(".pin-pad")?.querySelectorAll(".pin-pad__slot"),
+    ).toHaveLength(8);
+    fireEvent.change(input, { target: { value: "1234" } });
+    expect(api.unlockProfile).not.toHaveBeenCalled();
+    fireEvent.change(input, { target: { value: "12345678" } });
+    await waitFor(() => expect(unlocked).toHaveBeenCalledOnce());
+    expect(api.unlockProfile).toHaveBeenCalledWith("alex", "12345678");
+  });
+  it("hides account recovery without sync and explains why it is unavailable", async () => {
+    const api = {
+      getAuthStatus: vi.fn().mockResolvedValue({
+        masterPinEnabled: true,
+        ownerResetAvailable: false,
+      }),
+      requestProfilePinReset: vi.fn(),
+    } as unknown as StreamerApi;
+    render(
+      <ProfilePinDialog
+        api={api}
+        profile={profile}
+        onUnlocked={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+    await screen.findByLabelText("Master PIN");
+    expect(
+      screen.queryByRole("button", { name: "Forgot PIN? Verify account" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/cannot be reset without an online account/),
+    ).toHaveClass("settings-note");
+    fireEvent.click(
+      screen.getByRole("button", { name: "Use profile PIN instead" }),
+    );
+    expect(screen.getByLabelText("Profile PIN")).toHaveAttribute(
+      "maxlength",
+      "4",
+    );
+    expect(api.requestProfilePinReset).not.toHaveBeenCalled();
   });
 });

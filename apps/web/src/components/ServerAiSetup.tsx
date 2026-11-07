@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useToasts } from "./ToastProvider";
 
 interface AiSetupStatus {
   runtime: "ready" | "installed-not-running" | "missing" | "unavailable";
@@ -50,7 +51,7 @@ export function ServerAiSetup({
   const [showInstall, setShowInstall] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
+  const { showToast } = useToasts();
   const [selectedModel, setSelectedModel] = useState("");
   const [offerRecommended, setOfferRecommended] = useState(false);
   const refresh = useCallback(async () => {
@@ -98,7 +99,6 @@ export function ServerAiSetup({
     if (busy) return;
     setBusy(true);
     setError("");
-    setNotice("");
     try {
       await operation();
     } catch (reason) {
@@ -283,7 +283,7 @@ export function ServerAiSetup({
             onClick={() =>
               void act(async () => {
                 await onUseLocalModel(selectedModel);
-                setNotice("Local AI is ready for this profile.");
+                showToast("Local AI is ready for this profile.", "success");
               })
             }
           >
@@ -296,7 +296,6 @@ export function ServerAiSetup({
         reused; no runtime or model is downloaded without confirmation.
       </p>
       {error && <p role="alert">{error}</p>}
-      {notice && <p role="status">{notice}</p>}
     </section>
   );
 }

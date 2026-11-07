@@ -6,6 +6,7 @@ import type {
 } from "../api/client";
 import { safeErrorMessage } from "../api/client";
 import { Brand } from "./Brand";
+import { MasterPinSetup } from "./MasterPinSetup";
 
 interface AccountLoginProps {
   api: StreamerApi;
@@ -37,8 +38,12 @@ export function AccountLogin({
   const [starting, setStarting] = useState(false);
   const [startingLocal, setStartingLocal] = useState(false);
   const [chooseLocal, setChooseLocal] = useState(false);
+  const [needsMasterPin, setNeedsMasterPin] = useState(false);
   const [localAccountId, setLocalAccountId] = useState("");
   const [message, setMessage] = useState("");
+  const [messageSource, setMessageSource] = useState<
+    "pairing" | "local" | null
+  >(null);
   const [outcome, setOutcome] = useState<
     "expired" | "denied" | "cancelled" | null
   >(null);
@@ -60,6 +65,7 @@ export function AccountLogin({
     const id = ++requestId.current;
     setStarting(true);
     setMessage("");
+    setMessageSource(null);
     setOutcome(null);
     setGrant(null);
     try {
@@ -68,7 +74,10 @@ export function AccountLogin({
       );
       if (id === requestId.current) setGrant(result);
     } catch (reason) {
-      if (id === requestId.current) setMessage(safeErrorMessage(reason));
+      if (id === requestId.current) {
+        setMessage(safeErrorMessage(reason));
+        setMessageSource("pairing");
+      }
     } finally {
       inFlight.current = false;
       setStarting(false);
@@ -76,27 +85,48 @@ export function AccountLogin({
   }, [api, purpose, adoptLocalAccount]);
 
   useEffect(() => {
-    if (!purpose && !error && !started.current) {
+    if (!allowLocal && !purpose && !error && !started.current) {
       started.current = true;
       void start();
     }
-  }, [purpose, error, start]);
+  }, [allowLocal, purpose, error, start]);
 
-  const local = async () => {
+  const local = async (masterPin?: string) => {
     if (startingLocal || !api.startLocalSession) return;
     requestId.current++;
     setGrant(null);
     setOutcome("cancelled");
     setStartingLocal(true);
     setMessage("");
+    setMessageSource(null);
     try {
-      await api.startLocalSession(localAccountId || undefined);
+      if (masterPin)
+        await api.startLocalSession(localAccountId || undefined, masterPin);
+      else await api.startLocalSession(localAccountId || undefined);
       callback.current();
     } catch (reason) {
+      if (
+        reason instanceof Error &&
+        "code" in reason &&
+        reason.code === "MASTER_PIN_REQUIRED"
+      ) {
+        setNeedsMasterPin(true);
+        return;
+      }
       setMessage(safeErrorMessage(reason));
+      setMessageSource("local");
     } finally {
       setStartingLocal(false);
     }
+  };
+
+  const showLocalAccounts = () => {
+    requestId.current++;
+    setGrant(null);
+    setOutcome("cancelled");
+    setMessage("");
+    setMessageSource(null);
+    setChooseLocal(true);
   };
 
   useEffect(() => {
@@ -131,8 +161,9 @@ export function AccountLogin({
         }
         setMessage("");
       } catch (reason) {
-        if (!active) return;
+        if (!active || id !== requestId.current) return;
         setMessage(safeErrorMessage(reason));
+        setMessageSource("pairing");
       }
       if (active)
         timer = setTimeout(
@@ -148,6 +179,18 @@ export function AccountLogin({
     };
   }, [api, grant, outcome]);
 
+  if (needsMasterPin)
+    return (
+      <main className="account-login">
+        <MasterPinSetup
+          onSave={async (pin) => {
+            if (!api.startLocalSession) return;
+            await api.startLocalSession(localAccountId || undefined, pin);
+            callback.current();
+          }}
+        />
+      </main>
+    );
   return (
     <main
       className={`account-login${compact ? " account-login--compact" : ""}`}
@@ -179,7 +222,9 @@ export function AccountLogin({
                 ? "Sign-in was declined"
                 : outcome === "expired"
                   ? "Your pairing code has expired"
-                  : "Unable to complete sign-in"}
+                  : messageSource === "local"
+                    ? "Unable to open local account"
+                    : "Unable to complete sign-in"}
             </strong>
             <p>
               {error ||
@@ -306,7 +351,7 @@ export function AccountLogin({
                 disabled={startingLocal}
                 onClick={() =>
                   recoveredLocalAccounts.length && !chooseLocal
-                    ? setChooseLocal(true)
+                    ? showLocalAccounts()
                     : void local()
                 }
               >

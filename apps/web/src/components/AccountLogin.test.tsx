@@ -49,7 +49,103 @@ describe("device sign-in", () => {
     );
     expect(api.startLocalSession).toHaveBeenCalledWith("recovered");
   });
-  it("keeps local access available below automatic pairing", async () => {
+  it("clears an online pairing error when choosing a local account", async () => {
+    const onAuthenticated = vi.fn();
+    const api = {
+      startDeviceAuthorization: vi
+        .fn()
+        .mockRejectedValue(new Error("Online pairing unavailable")),
+      startLocalSession: vi
+        .fn()
+        .mockResolvedValue({ account: { id: "local" } }),
+    } as unknown as StreamerApi;
+    render(
+      <AccountLogin
+        api={api}
+        allowLocal
+        recoveredLocalAccounts={[{ id: "recovered" }]}
+        onAuthenticated={onAuthenticated}
+      />,
+    );
+    await act(async () =>
+      fireEvent.click(
+        screen.getByRole("button", { name: "Connect this device" }),
+      ),
+    );
+    await act(async () => {});
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Unable to complete sign-in",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Prefer to continue/ }));
+    expect(screen.getByLabelText("Local account")).toBeVisible();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Local account"), {
+      target: { value: "recovered" },
+    });
+    await act(async () =>
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: /Continue with selected local account/,
+        }),
+      ),
+    );
+    expect(api.startLocalSession).toHaveBeenCalledWith("recovered");
+    expect(onAuthenticated).toHaveBeenCalledOnce();
+  });
+  it("ignores a pairing poll failure after switching to local account selection", async () => {
+    vi.useFakeTimers();
+    let rejectPoll!: (reason: Error) => void;
+    const api = {
+      startDeviceAuthorization: vi.fn().mockResolvedValue(grant),
+      pollDeviceAuthorization: vi.fn().mockImplementation(
+        () =>
+          new Promise((_resolve, reject) => {
+            rejectPoll = reject;
+          }),
+      ),
+      startLocalSession: vi.fn(),
+    } as unknown as StreamerApi;
+    render(
+      <AccountLogin
+        api={api}
+        allowLocal
+        recoveredLocalAccounts={[{ id: "recovered" }]}
+        onAuthenticated={vi.fn()}
+      />,
+    );
+    await act(async () =>
+      fireEvent.click(
+        screen.getByRole("button", { name: "Connect this device" }),
+      ),
+    );
+    await act(async () => {});
+    await act(async () => vi.advanceTimersByTimeAsync(5000));
+    expect(api.pollDeviceAuthorization).toHaveBeenCalledOnce();
+    fireEvent.click(screen.getByRole("button", { name: /Prefer to continue/ }));
+    await act(async () => rejectPoll(new Error("Pairing failed")));
+    expect(screen.getByLabelText("Local account")).toBeVisible();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+  it("labels a failed local session as a local account error", async () => {
+    const api = {
+      startDeviceAuthorization: vi.fn().mockResolvedValue(grant),
+      startLocalSession: vi
+        .fn()
+        .mockRejectedValue(new Error("Local unavailable")),
+    } as unknown as StreamerApi;
+    render(<AccountLogin api={api} allowLocal onAuthenticated={vi.fn()} />);
+    await act(async () =>
+      fireEvent.click(
+        screen.getByRole("button", { name: /Prefer to continue/ }),
+      ),
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Unable to open local account",
+    );
+  });
+  it("opens a local account without starting online pairing", async () => {
     const onAuthenticated = vi.fn();
     const api = {
       startLocalSession: vi.fn().mockResolvedValue({
@@ -68,7 +164,7 @@ describe("device sign-in", () => {
       ),
     );
     expect(api.startLocalSession).toHaveBeenCalledOnce();
-    expect(api.startDeviceAuthorization).toHaveBeenCalledOnce();
+    expect(api.startDeviceAuthorization).not.toHaveBeenCalled();
     expect(onAuthenticated).toHaveBeenCalledOnce();
   });
 
@@ -219,6 +315,9 @@ describe("device sign-in", () => {
     } as unknown as StreamerApi;
     render(
       <AccountLogin api={api} allowLocal onAuthenticated={onAuthenticated} />,
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Connect this device" }),
     );
     await act(async () =>
       fireEvent.click(

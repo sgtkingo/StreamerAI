@@ -1,5 +1,7 @@
 import {
   createHash,
+  createHmac,
+  pbkdf2,
   randomBytes,
   randomUUID,
   scrypt,
@@ -22,8 +24,14 @@ import { toDataURL } from "qrcode";
 import type { SecretStore } from "../stores/secret-store.js";
 import type { PlaybackTicketStore } from "./playback-ticket-store.js";
 import type { LocalAccessService } from "./local-access.js";
+import {
+  createMasterPinVerifier,
+  isMasterPinVerifier,
+  MasterPinService,
+} from "./master-pin.js";
 
 const derive = promisify(scrypt);
+const derivePin = promisify(pbkdf2);
 const COOKIE = "streamer_session";
 const PAIR_COOKIE = "streamer_pair";
 const SESSION_MS = 30 * 24 * 60 * 60_000;
@@ -64,10 +72,7 @@ interface Pairing {
   nextPollAt: number;
   interval: number;
   name: string;
-  purpose: "login" | "pin-reset";
-  profileId?: string;
   sessionHash?: string;
-  accountId?: string;
   adoptAccountId?: string;
   disableSync?: boolean;
 }
@@ -175,8 +180,23 @@ export class AccountAuthService {
     string,
     { count: number; resetAt: number }
   >();
-  private readonly resets = new Map<string, number>();
+  private readonly resets = new Map<
+    string,
+    { accountId: string; expiresAt: number }
+  >();
   private readonly pinJobs = new Set<string>();
+  private readonly masterPins: MasterPinService;
+  private readonly ownerRequests = new Map<
+    string,
+    {
+      session: string;
+      accountId: string;
+      profileId: string;
+      version: number;
+      deviceId: string;
+      expiresAt: number;
+    }
+  >();
   private readonly checks = new Map<
     string,
     { at: number; job?: Promise<boolean>; valid: boolean }
@@ -194,6 +214,7 @@ export class AccountAuthService {
     });
   }
   constructor(private readonly options: AccountAuthOptions) {
+    this.masterPins = new MasterPinService(options.secretStore);
     this.enabled = options.serviceUrl !== null;
     this.fetcher = options.fetch ?? fetch;
     this.now = options.now ?? (() => new Date());
@@ -718,6 +739,70 @@ export class AccountAuthService {
       this.pinJobs.delete(profileId);
     }
   }
+  private async refreshMasterPin(account: Account) {
+    if (!account.cloudUserId || !this.enabled) return;
+    const credential = await this.getCredential(account.id);
+    if (!credential) return;
+    try {
+      const response = await this.cloud(
+        "/v1/account/master-pin",
+        {},
+        credential.token,
+      );
+      if (!response.ok) return;
+      const result = object(await response.json());
+      if (
+        result.accountId === account.cloudUserId &&
+        isMasterPinVerifier(result.verifier)
+      )
+        await this.masterPins.cacheVerifier(account.id, result.verifier);
+    } catch {
+      /* Cached verifier preserves offline access. */
+    }
+  }
+  private async checkMasterPin(
+    account: Account,
+    pin: string,
+  ): Promise<"ok" | "incorrect" | "locked" | "busy"> {
+    const key = `master:${account.id}`;
+    const lockKey = `account.masterPinAttempts.${sha(account.id)}`;
+    const previous = this.options.database.settings.get<{
+      count: number;
+      lockedUntil: number;
+    }>(lockKey);
+    if (previous && previous.lockedUntil > this.now().getTime())
+      return "locked";
+    if (this.pinJobs.has(key)) return "busy";
+    this.pinJobs.add(key);
+    try {
+      await this.refreshMasterPin(account);
+      if (await this.masterPins.verify(account.id, pin)) {
+        this.options.database.settings.set(lockKey, {
+          count: 0,
+          lockedUntil: 0,
+        });
+        return "ok";
+      }
+      const count =
+        previous && previous.lockedUntil === 0 ? previous.count + 1 : 1;
+      this.options.database.settings.set(lockKey, {
+        count,
+        lockedUntil: count >= 5 ? this.now().getTime() + 300_000 : 0,
+      });
+      return "incorrect";
+    } finally {
+      this.pinJobs.delete(key);
+    }
+  }
+  private ownerResetAvailable(account: Account) {
+    const sync = this.options.sync?.status(account.id);
+    return (
+      this.enabled &&
+      !!account.cloudUserId &&
+      !!sync?.configured &&
+      sync.status !== "disabled"
+    );
+  }
   register(app: FastifyInstance) {
     app.addHook("preValidation", async (request, reply) => {
       const path = request.url.split("?", 1)[0]!;
@@ -824,9 +909,10 @@ export class AccountAuthService {
             "PROFILE_NOT_FOUND",
             "This profile is not available.",
           );
-        const pinManagement = /\/profiles\/[^/]+\/(?:pin|unlock|lock)$/.test(
-          path,
-        );
+        const pinManagement =
+          /\/profiles\/[^/]+\/(?:pin|unlock|lock|pin-reset(?:\/poll)?)$/.test(
+            path,
+          );
         const publicSetup = path === "/api/v1/setup/status";
         const accountIntegration =
           /\/integrations\//.test(path) || /\/inference\//.test(path);
@@ -880,6 +966,15 @@ export class AccountAuthService {
       if (context && !this.enabled && !context.session)
         context = this.createSession(request, reply, context.account);
       if (context && !(await this.validateSession(context))) context = null;
+      const localAccount = this.options.database.accounts.getLocal();
+      const household = localAccount.cloudUserId
+        ? this.options.database.accounts
+            .list()
+            .find(
+              (account) =>
+                !account.cloudUserId && account.id.startsWith("household:"),
+            )
+        : localAccount;
       reply.header("cache-control", "no-store");
       return {
         enabled: this.enabled || this.options.localAccess?.enabled === true,
@@ -902,6 +997,18 @@ export class AccountAuthService {
         ).map((account) => ({ id: sha(account.id) })),
         authenticated: context !== null,
         account: context ? publicAccount(context.account) : null,
+        ownerResetAvailable: context
+          ? this.ownerResetAvailable(context.account)
+          : false,
+        masterPinEnabled: context
+          ? !!(await this.masterPins.read(context.account.id))
+          : false,
+        masterPinSetupRequired:
+          !!context &&
+          (!context.account.cloudUserId || !this.enabled) &&
+          !(await this.masterPins.read(context.account.id)),
+        localMasterPinRequired:
+          !household || !(await this.masterPins.read(household.id)),
       };
     });
     app.post("/api/v1/auth/local", async (request, reply) => {
@@ -938,6 +1045,45 @@ export class AccountAuthService {
           "LOCAL_ACCOUNT_UNAVAILABLE",
           "This local account is no longer available.",
         );
+      if (
+        !(restoring && account.cloudUserId) &&
+        !(await this.masterPins.read(account.id))
+      ) {
+        const pin = object(request.body).masterPin;
+        const profiles = this.options.database.profiles.list(account.id);
+        const deferForWelcome =
+          object(request.body).deferMasterPin === true &&
+          profiles.length <= 1 &&
+          profiles.every(
+            (profile) =>
+              profile.name === "Viewer" &&
+              !profile.pinEnabled &&
+              profile.preferences.onboardingComplete !== true,
+          );
+        if (typeof pin === "string" && /^\d{8}$/.test(pin)) {
+          const job = `setup-master:${account.id}`;
+          if (this.pinJobs.has(job))
+            return error(
+              reply,
+              409,
+              "MASTER_PIN_SETUP_PENDING",
+              "Master PIN setup is already in progress.",
+            );
+          this.pinJobs.add(job);
+          try {
+            await this.masterPins.setupLocal(account.id, pin);
+          } finally {
+            this.pinJobs.delete(job);
+          }
+        } else if (!deferForWelcome) {
+          return error(
+            reply,
+            400,
+            "MASTER_PIN_REQUIRED",
+            "Choose an 8-digit Master PIN before creating a local account.",
+          );
+        }
+      }
       this.options.database.settings.set("account.localEntryUsed", true);
       if (this.options.database.profiles.count(account.id) === 0)
         this.options.database.profiles.create({
@@ -982,6 +1128,13 @@ export class AccountAuthService {
           "Too many pairing requests. Try again shortly.",
         );
       const body = object(request.body);
+      if (body.purpose === "pin-reset")
+        return error(
+          reply,
+          409,
+          "USE_ACCOUNT_PIN_RESET",
+          "Request PIN recovery from the signed-in account.",
+        );
       const localContext = this.context(request);
       const adopt = body.adoptLocalAccount === true;
       if (adopt && (!localContext?.session || localContext.account.cloudUserId))
@@ -995,34 +1148,13 @@ export class AccountAuthService {
         typeof body.deviceName === "string"
           ? body.deviceName.trim().slice(0, 80)
           : "StreamerAI browser";
-      const purpose = body.purpose === "pin-reset" ? "pin-reset" : "login";
-      const resetContext =
-        purpose === "pin-reset" ? this.context(request) : null;
-      const resetProfile =
-        typeof body.profileId === "string"
-          ? this.options.database.profiles.get(body.profileId)
-          : null;
-      if (
-        purpose === "pin-reset" &&
-        (!resetContext?.session ||
-          !resetContext.account.cloudUserId ||
-          !resetProfile ||
-          resetProfile.accountId !== resetContext.account.id)
-      )
-        return error(
-          reply,
-          403,
-          "PROFILE_ACCESS_DENIED",
-          "Sign in to the account that owns this profile.",
-        );
       try {
         const response = await this.cloud("/v1/device/code", {
           method: "POST",
           body: JSON.stringify({
             client_id: "streamer-ai-home",
             device_name: name || "StreamerAI browser",
-            purpose,
-            ...(resetProfile ? { profile_name: resetProfile.name } : {}),
+            purpose: "login",
           }),
         });
         if (!response.ok)
@@ -1061,19 +1193,11 @@ export class AccountAuthService {
           interval,
           nextPollAt: 0,
           name,
-          purpose,
           ...(body.disableSync === true ? { disableSync: true } : {}),
           ...(adopt && localContext
             ? {
                 adoptAccountId: localContext.account.id,
                 sessionHash: localContext.hash,
-              }
-            : {}),
-          ...(purpose === "pin-reset" && resetContext && resetProfile
-            ? {
-                accountId: resetContext.account.id,
-                profileId: resetProfile.id,
-                sessionHash: resetContext.hash,
               }
             : {}),
         });
@@ -1167,41 +1291,6 @@ export class AccountAuthService {
           typeof device.id !== "string"
         )
           throw new Error("Invalid device response.");
-        if (pairing.purpose === "pin-reset") {
-          const current = this.context(request);
-          this.pending.delete(code as string);
-          try {
-            await this.cloud(
-              `/v1/devices/${encodeURIComponent(device.id)}`,
-              { method: "DELETE" },
-              result.access_token,
-            );
-          } catch {
-            /* Recovery tokens expire after five minutes and cannot synchronize. */
-          }
-          if (
-            !current?.session ||
-            current.hash !== pairing.sessionHash ||
-            current.account.id !== pairing.accountId ||
-            current.account.cloudUserId !== identity.id ||
-            !pairing.profileId ||
-            result.purpose !== "pin-reset"
-          )
-            return error(
-              reply,
-              403,
-              "OWNER_VERIFICATION_FAILED",
-              "Verify with the StreamerAI account that owns this profile.",
-            );
-          this.resets.set(
-            `${current.hash}:${pairing.profileId}`,
-            this.now().getTime() + 5 * 60_000,
-          );
-          return {
-            status: "approved",
-            account: publicAccount(current.account),
-          };
-        }
         if (result.purpose && result.purpose !== "login")
           throw new Error("Unexpected authorization purpose.");
         const existing = this.options.database.accounts.getByCloudUserId(
@@ -1305,6 +1394,7 @@ export class AccountAuthService {
           pairing.name,
           expiry,
         );
+        await this.refreshMasterPin(account);
         this.pending.delete(code as string);
         reply.header("cache-control", "no-store");
         return { status: "approved", account: publicAccount(account) };
@@ -1365,7 +1455,10 @@ export class AccountAuthService {
           current: session.deviceId === context.session?.deviceId,
         }));
       return {
-        account: publicAccount(context.account),
+        account: {
+          ...publicAccount(context.account),
+          cloudAccountId: context.account.cloudUserId,
+        },
         devices,
         manageUrl:
           this.options.serviceUrl && context.account.cloudUserId
@@ -1494,6 +1587,12 @@ export class AccountAuthService {
           "CLOUD_NOT_CONFIGURED",
           "Connect this account before enabling cloud synchronization.",
         );
+      if (!enabled) {
+        for (const [id, pending] of this.ownerRequests)
+          if (pending.accountId === account.id) this.ownerRequests.delete(id);
+        for (const [id, approval] of this.resets)
+          if (approval.accountId === account.id) this.resets.delete(id);
+      }
       return this.options.sync.setEnabled(account.id, enabled);
     });
     app.get<{ Params: { profileId: string } }>(
@@ -1540,19 +1639,439 @@ export class AccountAuthService {
       },
     );
     app.post<{ Params: { profileId: string } }>(
+      "/api/v1/profiles/:profileId/pin-reset",
+      async (request, reply) => {
+        const context = this.context(request)!;
+        if (!context.session || !this.ownerResetAvailable(context.account))
+          return error(
+            reply,
+            403,
+            "PIN_RESET_UNAVAILABLE",
+            "A PIN cannot be reset without an online account with synchronization enabled.",
+          );
+        if (!this.consumeAttempt(`owner-reset:${context.account.id}`, 5))
+          return error(
+            reply,
+            429,
+            "RATE_LIMITED",
+            "Wait before requesting another PIN reset.",
+          );
+        const credential = await this.getCredential(context.account.id);
+        if (!credential)
+          return error(
+            reply,
+            401,
+            "ACCOUNT_SIGN_IN_REQUIRED",
+            "Sign in to your account again.",
+          );
+        const profile = this.options.database.profiles.getRequired(
+          request.params.profileId,
+        );
+        const pinVersion = this.options.database.profiles.getPinRecord(
+          profile.id,
+        ).version;
+        try {
+          const response = await this.cloud(
+            "/v1/account/pin-resets",
+            {
+              method: "POST",
+              body: JSON.stringify({ profileName: profile.name }),
+            },
+            credential.token,
+          );
+          if (!response.ok) throw new Error("Request failed");
+          const result = object(await response.json());
+          if (
+            typeof result.id !== "string" ||
+            !/^[a-f0-9-]{36}$/.test(result.id) ||
+            typeof result.expiresAt !== "number" ||
+            result.expiresAt <= this.now().getTime()
+          )
+            throw new Error("Invalid reset request");
+          for (const [id, pending] of this.ownerRequests)
+            if (
+              pending.expiresAt <= this.now().getTime() ||
+              (pending.session === context.hash &&
+                pending.profileId === profile.id)
+            )
+              this.ownerRequests.delete(id);
+          this.ownerRequests.set(result.id, {
+            session: context.hash,
+            accountId: context.account.id,
+            profileId: profile.id,
+            version: pinVersion,
+            deviceId: credential.deviceId,
+            expiresAt: Math.min(
+              result.expiresAt,
+              this.now().getTime() + 300_000,
+            ),
+          });
+          return {
+            id: result.id,
+            expiresAt: new Date(result.expiresAt).toISOString(),
+            manageUrl: new URL(
+              `/account?account_id=${encodeURIComponent(context.account.cloudUserId!)}`,
+              this.options.serviceUrl!,
+            ).href,
+          };
+        } catch {
+          return error(
+            reply,
+            503,
+            "ACCOUNT_SERVICE_UNAVAILABLE",
+            "Account verification is temporarily unavailable.",
+          );
+        }
+      },
+    );
+    app.post<{ Params: { profileId: string } }>(
+      "/api/v1/profiles/:profileId/pin-reset/poll",
+      async (request, reply) => {
+        const context = this.context(request)!;
+        const id = object(request.body).requestId;
+        const pending =
+          typeof id === "string" ? this.ownerRequests.get(id) : undefined;
+        if (
+          !pending ||
+          pending.session !== context.hash ||
+          pending.accountId !== context.account.id ||
+          pending.profileId !== request.params.profileId ||
+          !this.ownerResetAvailable(context.account)
+        )
+          return error(
+            reply,
+            403,
+            "PIN_RESET_UNAVAILABLE",
+            "This PIN reset request is not available.",
+          );
+        if (
+          pending.expiresAt <= this.now().getTime() ||
+          pending.version !==
+            this.options.database.profiles.getPinRecord(pending.profileId)
+              .version
+        ) {
+          this.ownerRequests.delete(id as string);
+          return { status: "expired" };
+        }
+        if (!this.consumeAttempt(`owner-poll:${context.hash}`, 100))
+          return error(
+            reply,
+            429,
+            "RATE_LIMITED",
+            "Wait before checking again.",
+          );
+        const credential = await this.getCredential(context.account.id);
+        if (!credential || credential.deviceId !== pending.deviceId)
+          return error(
+            reply,
+            401,
+            "ACCOUNT_SIGN_IN_REQUIRED",
+            "Sign in to your account again.",
+          );
+        try {
+          const response = await this.cloud(
+            `/v1/account/pin-resets/${id as string}/consume`,
+            { method: "POST", body: "{}" },
+            credential.token,
+          );
+          if (!response.ok) throw new Error("Request failed");
+          const result = object(await response.json());
+          if (
+            !["pending", "approved", "expired", "denied"].includes(
+              String(result.status),
+            )
+          )
+            throw new Error("Invalid reset status");
+          if (result.status !== "pending")
+            this.ownerRequests.delete(id as string);
+          if (result.status === "approved") {
+            const liveSession = this.options.database.auth.getSession(
+              pending.session,
+            );
+            if (
+              !liveSession ||
+              liveSession.revokedAt ||
+              Date.parse(liveSession.expiresAt) <= this.now().getTime() ||
+              this.context(request)?.hash !== pending.session ||
+              !this.ownerResetAvailable(context.account) ||
+              pending.version !==
+                this.options.database.profiles.getPinRecord(pending.profileId)
+                  .version
+            )
+              return error(
+                reply,
+                403,
+                "PIN_RESET_UNAVAILABLE",
+                "This PIN reset request is no longer valid.",
+              );
+            this.resets.set(
+              `${context.hash}:${pending.profileId}:${pending.version}`,
+              {
+                accountId: context.account.id,
+                expiresAt: this.now().getTime() + 300_000,
+              },
+            );
+          }
+          return { status: result.status };
+        } catch {
+          return error(
+            reply,
+            503,
+            "ACCOUNT_SERVICE_UNAVAILABLE",
+            "Account verification is temporarily unavailable.",
+          );
+        }
+      },
+    );
+    app.post("/api/v1/account/master-pin", async (request, reply) => {
+      const context = this.context(request)!;
+      if (
+        (context.account.cloudUserId && this.enabled) ||
+        (await this.masterPins.read(context.account.id))
+      )
+        return error(
+          reply,
+          403,
+          "MASTER_PIN_IMMUTABLE",
+          "A Master PIN is already set. Use the change form to update it.",
+        );
+      const body = object(request.body);
+      if (
+        typeof body.pin !== "string" ||
+        !/^\d{8}$/.test(body.pin) ||
+        body.pin !== body.confirmation
+      )
+        return error(
+          reply,
+          400,
+          "INVALID_MASTER_PIN",
+          "Choose and confirm an 8-digit Master PIN.",
+        );
+      const job = `setup-master:${context.account.id}`;
+      if (this.pinJobs.has(job))
+        return error(
+          reply,
+          409,
+          "MASTER_PIN_SETUP_PENDING",
+          "Master PIN setup is already in progress.",
+        );
+      this.pinJobs.add(job);
+      try {
+        await this.masterPins.setupLocal(context.account.id, body.pin);
+      } finally {
+        this.pinJobs.delete(job);
+      }
+      this.options.database.settings.set("account.localEntryUsed", true);
+      return { ok: true };
+    });
+    app.post("/api/v1/account/master-pin/verify", async (request, reply) => {
+      const context = this.context(request)!;
+      const pin = object(request.body).pin;
+      if (typeof pin !== "string" || !/^\d{8}$/.test(pin))
+        return error(
+          reply,
+          400,
+          "INVALID_MASTER_PIN",
+          "Enter your 8-digit Master PIN.",
+        );
+      const result = await this.checkMasterPin(context.account, pin);
+      if (result === "busy" || result === "locked")
+        return error(
+          reply,
+          429,
+          "PIN_RATE_LIMITED",
+          "Too many attempts. Try again later.",
+        );
+      if (result !== "ok")
+        return error(
+          reply,
+          403,
+          "PIN_INCORRECT",
+          "The Master PIN is incorrect.",
+        );
+      return reply.code(204).send();
+    });
+    app.put("/api/v1/account/master-pin", async (request, reply) => {
+      const context = this.context(request)!;
+      const body = object(request.body);
+      if (
+        typeof body.currentPin !== "string" ||
+        !/^\d{8}$/.test(body.currentPin) ||
+        typeof body.newPin !== "string" ||
+        !/^\d{8}$/.test(body.newPin) ||
+        body.newPin !== body.confirmation
+      )
+        return error(
+          reply,
+          400,
+          "INVALID_MASTER_PIN",
+          "Enter your current PIN and confirm a new 8-digit Master PIN.",
+        );
+      const job = `change-master:${context.account.id}`;
+      if (this.pinJobs.has(job))
+        return error(
+          reply,
+          429,
+          "PIN_RATE_LIMITED",
+          "Another PIN change is in progress.",
+        );
+      this.pinJobs.add(job);
+      try {
+        const checked = await this.checkMasterPin(
+          context.account,
+          body.currentPin,
+        );
+        if (checked === "locked" || checked === "busy")
+          return error(
+            reply,
+            429,
+            "PIN_RATE_LIMITED",
+            "Too many attempts. Try again later.",
+          );
+        if (checked !== "ok")
+          return error(
+            reply,
+            403,
+            "PIN_INCORRECT",
+            "The current Master PIN is incorrect.",
+          );
+        if (!context.account.cloudUserId) {
+          if (
+            !(await this.masterPins.changeLocal(
+              context.account.id,
+              body.currentPin,
+              body.newPin,
+            ))
+          )
+            return error(
+              reply,
+              409,
+              "MASTER_PIN_CHANGED",
+              "The Master PIN changed. Try again.",
+            );
+          return { ok: true };
+        }
+        const current = await this.masterPins.read(context.account.id);
+        if (!current?.verifier.changeSalt)
+          return error(
+            reply,
+            409,
+            "MASTER_PIN_UPGRADE_REQUIRED",
+            "Confirm your current Master PIN once in the account portal to enable changes from this server.",
+          );
+        const credential = await this.getCredential(context.account.id);
+        if (!credential)
+          return error(
+            reply,
+            503,
+            "MASTER_PIN_CLOUD_UNAVAILABLE",
+            "Connect to your online account to change the Master PIN.",
+          );
+        const next = await createMasterPinVerifier(body.newPin);
+        const secret = await derivePin(
+          body.currentPin,
+          current.verifier.changeSalt,
+          600_000,
+          32,
+          "sha256",
+        );
+        const message = JSON.stringify([
+          context.account.cloudUserId,
+          current.verifier.version,
+          next.version,
+          next.salt,
+          next.hash,
+          next.changeSalt,
+          next.changeHash,
+        ]);
+        const proof = createHmac("sha256", secret)
+          .update(message)
+          .digest("hex");
+        secret.fill(0);
+        let response: Response;
+        try {
+          response = await this.cloud(
+            "/v1/account/master-pin",
+            {
+              method: "PUT",
+              body: JSON.stringify({
+                verifier: next,
+                expectedVersion: current.verifier.version,
+                proof,
+              }),
+            },
+            credential.token,
+          );
+        } catch {
+          return error(
+            reply,
+            503,
+            "MASTER_PIN_CLOUD_UNAVAILABLE",
+            "Connect to your online account to change the Master PIN.",
+          );
+        }
+        if (!response.ok) {
+          const result = object(await response.json().catch(() => null));
+          const cloudCode =
+            typeof result.error === "string" ? result.error : "";
+          if (cloudCode === "master_pin_upgrade_required")
+            return error(
+              reply,
+              409,
+              "MASTER_PIN_UPGRADE_REQUIRED",
+              "Confirm your current Master PIN once in the account portal to enable changes from this server.",
+            );
+          if (response.status === 429)
+            return error(
+              reply,
+              429,
+              "PIN_RATE_LIMITED",
+              "Too many attempts. Try again later.",
+            );
+          if (response.status === 409 || response.status === 403)
+            return error(
+              reply,
+              409,
+              "MASTER_PIN_CHANGED",
+              "The online Master PIN changed. Try again.",
+            );
+          return error(
+            reply,
+            503,
+            "MASTER_PIN_CLOUD_UNAVAILABLE",
+            "Connect to your online account to change the Master PIN.",
+          );
+        }
+        const publicNext = {
+          salt: next.salt,
+          hash: next.hash,
+          version: next.version,
+          changeSalt: next.changeSalt,
+        };
+        await this.masterPins.cacheVerifier(context.account.id, publicNext);
+        await this.masterPins.verify(context.account.id, body.newPin);
+        return { ok: true };
+      } finally {
+        this.pinJobs.delete(job);
+      }
+    });
+    app.post<{ Params: { profileId: string } }>(
       "/api/v1/profiles/:profileId/unlock",
       async (request, reply) => {
         let context = this.context(request)!;
         const id = request.params.profileId;
         const pin = object(request.body).pin;
-        if (typeof pin !== "string" || !/^\d{4}$/.test(pin))
+        if (typeof pin !== "string" || !/^(?:\d{4}|\d{8})$/.test(pin))
           return error(
             reply,
             400,
             "INVALID_PIN",
-            "Enter a PIN containing exactly 4 digits.",
+            "Enter your 8-digit Master PIN or 4-digit profile PIN.",
           );
-        const result = await this.checkPin(id, pin);
+        const result =
+          pin.length === 8
+            ? await this.checkMasterPin(context.account, pin)
+            : await this.checkPin(id, pin);
         if (result === "locked" || result === "busy")
           return error(
             reply,
@@ -1602,17 +2121,20 @@ export class AccountAuthService {
             "RATE_LIMITED",
             "Wait before changing PINs again.",
           );
-        const resetKey = `${context.hash}:${id}`;
+        const resetKey = `${context.hash}:${id}:${this.options.database.profiles.getPinRecord(id).version}`;
         const ownerReset =
-          (this.resets.get(resetKey) ?? 0) > this.now().getTime();
+          this.ownerResetAvailable(context.account) &&
+          (this.resets.get(resetKey)?.expiresAt ?? 0) > this.now().getTime();
+        if (ownerReset) this.resets.delete(resetKey);
         if (
           this.options.database.profiles.getPinRecord(id).hash &&
           !ownerReset
         ) {
-          const result = await this.checkPin(
-            id,
-            object(request.body).currentPin,
-          );
+          const currentPin = object(request.body).currentPin;
+          const result =
+            typeof currentPin === "string" && /^\d{8}$/.test(currentPin)
+              ? await this.checkMasterPin(context.account, currentPin)
+              : await this.checkPin(id, currentPin);
           if (result === "locked" || result === "busy")
             return error(
               reply,

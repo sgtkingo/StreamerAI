@@ -11,6 +11,7 @@ import {
   string,
 } from "./http.js";
 import type { Account, Env, Principal, SessionReader } from "./types.js";
+import { requireMasterPin } from "./account-pins.js";
 
 const CLIENT_ID = "streamer-ai-home";
 const DEVICE_LIFETIME_SECONDS = 30 * 24 * 60 * 60;
@@ -178,6 +179,7 @@ export async function redeemGrant(
   if (grant.status === "denied") throw new HttpError(400, "access_denied");
   if (grant.status !== "approved" || !grant.account_id)
     throw new HttpError(400, "authorization_pending");
+  await requireMasterPin(env, grant.account_id);
   const token = randomToken();
   const lifetime =
     grant.purpose === "pin-reset" ? 300 : DEVICE_LIFETIME_SECONDS;
@@ -286,6 +288,7 @@ export async function approveGrant(
   const input = record(await body(request, 2048));
   if (typeof input.approve !== "boolean")
     throw new HttpError(400, "invalid_request");
+  if (input.approve) await requireMasterPin(env, principal.account.id);
   const code = normalizeCode(string(input.user_code, 32));
   const grant = await env.DB.prepare(
     "SELECT purpose FROM cloud_device_grant WHERE user_hash = ? AND status = 'pending' AND expires_at > ? AND (account_id IS NULL OR account_id = ?)",
@@ -414,6 +417,7 @@ export async function decidePendingGrant(
     (await hash(normalizeCode(string(input.user_code, 32)))) !== grant.user_hash
   )
     throw new HttpError(400, "invalid_or_expired_code");
+  if (input.approve) await requireMasterPin(env, principal.account.id);
   if (
     grant.purpose === "pin-reset" &&
     (!principal.authenticatedAt || principal.authenticatedAt < now - 300_000)

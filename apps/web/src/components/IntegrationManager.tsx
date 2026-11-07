@@ -12,6 +12,7 @@ import { SourceIcon } from "./SourceIcon";
 import { LocalFolderSettings } from "./LocalFolderSettings";
 import { SourceFeedbackSettings } from "./SourceFeedback";
 import { AgentBackendSettings } from "./AgentBackendSettings";
+import { useToasts } from "./ToastProvider";
 
 type SourceCategory = IntegrationCatalogItem["category"];
 
@@ -113,7 +114,7 @@ interface IntegrationManagerProps {
   api: StreamerApi;
   context: "onboarding" | "settings";
   profileId?: string;
-  category?: "services" | "agents";
+  category?: "services" | "agents" | "sync";
   showAgentSelector?: boolean;
   initialTmdbState?: ConnectionState;
   initialWebshareState?: ConnectionState;
@@ -291,6 +292,7 @@ export function IntegrationManager({
   discoveryRevision = 0,
   discoveredAgentIds = null,
 }: IntegrationManagerProps) {
+  const { showToast } = useToasts();
   const [items, setItems] = useState<IntegrationCatalogItem[]>([
     coreIntegration("tmdb", initialTmdbState === "connected"),
     coreIntegration("webshare", initialWebshareState === "connected"),
@@ -328,7 +330,7 @@ export function IntegrationManager({
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
-  const [memoryOnly, setMemoryOnly] = useState(false);
+  const [memoryOnlyIds, setMemoryOnlyIds] = useState<string[]>([]);
   const [manualOpen, setManualOpen] = useState(false);
   const [agentFormBaseUrl, setAgentFormBaseUrl] = useState("");
   const [agentFormModel, setAgentFormModel] = useState("");
@@ -398,7 +400,7 @@ export function IntegrationManager({
   }, [api, discoveryRevision, profileId]);
 
   useEffect(() => {
-    if (category !== "services" || !api.getAccount) return;
+    if (category === "agents" || !api.getAccount) return;
     let active = true;
     const refresh = () => {
       void api.getAccount!()
@@ -518,7 +520,8 @@ export function IntegrationManager({
       setSourceMode(result.mode);
       setRequireSeeking(result.requireSeeking);
       setRequireDirectPlay(result.requireDirectPlay);
-      setOrderMessage("Source preference saved.");
+      setOrderMessage("");
+      showToast("Source preference saved.", "success");
       onConnectionChange?.("source-priority", true);
     } catch {
       setSourceOrder(previousOrder);
@@ -600,11 +603,7 @@ export function IntegrationManager({
       setExpandedId(null);
       setManualOpen(false);
       setPicker(null);
-      setMessage({
-        id: "ollama",
-        text: "Local agent verified and connected.",
-        error: false,
-      });
+      showToast("Local agent verified and connected.", "success");
     } catch (reason) {
       setAgentFormError(safeErrorMessage(reason));
     } finally {
@@ -684,7 +683,11 @@ export function IntegrationManager({
       }
       setToken("");
       setShowToken(false);
-      setMemoryOnly(result.persistence === "memory");
+      setMemoryOnlyIds((current) =>
+        result.persistence === "memory"
+          ? [...new Set([...current, id])]
+          : current.filter((entry) => entry !== id),
+      );
       setItems((current) =>
         current.map((item) =>
           item.id === id
@@ -693,16 +696,14 @@ export function IntegrationManager({
         ),
       );
       setExpandedId(null);
-      setMessage({
-        id,
-        text:
-          result.persistence === "memory"
-            ? "Connection verified for this development session."
-            : id !== "tmdb"
-              ? "Connected. The session token is stored in the encrypted local vault."
-              : "Connection verified. Your token is stored securely by the home server.",
-        error: false,
-      });
+      showToast(
+        result.persistence === "memory"
+          ? "Connection verified for this development session."
+          : id !== "tmdb"
+            ? "Connected. The session token is stored in the encrypted local vault."
+            : "Connection verified. Your token is stored securely by the home server.",
+        "success",
+      );
       onConnectionChange?.(id, true);
     } catch (error) {
       setPassword("");
@@ -736,6 +737,7 @@ export function IntegrationManager({
         ),
       );
       setAddedIds((current) => current.filter((id) => id !== item.id));
+      setMemoryOnlyIds((current) => current.filter((id) => id !== item.id));
       setExpandedId(null);
       setConfirmId(null);
     } catch (error) {
@@ -758,7 +760,9 @@ export function IntegrationManager({
         .filter((group) =>
           category === "agents"
             ? group.id === "inference"
-            : group.id !== "inference",
+            : category === "sync"
+              ? group.id === "sync"
+              : group.id !== "inference",
         )
         .map((group) => {
           const groupItems = items
@@ -1223,6 +1227,14 @@ export function IntegrationManager({
                                     ? "Profiles, library and watch progress synchronize with your StreamerAI account."
                                     : "Sign in to a StreamerAI account to enable cloud synchronization."}
                           </p>
+                          {accountOverview?.sync?.lastSyncedAt && (
+                            <p className="integration-block__hint">
+                              Last synchronized{" "}
+                              {new Date(
+                                accountOverview.sync.lastSyncedAt,
+                              ).toLocaleString()}
+                            </p>
+                          )}
                           {accountOverview?.manageUrl && (
                             <a
                               href={accountOverview.manageUrl}
@@ -1448,14 +1460,12 @@ export function IntegrationManager({
                           {message.text}
                         </p>
                       )}
-                      {message?.id === item.id &&
-                        !message.error &&
-                        memoryOnly && (
-                          <p className="integration-block__hint" role="status">
-                            Development mode: this credential is held in memory
-                            only.
-                          </p>
-                        )}
+                      {memoryOnlyIds.includes(item.id) && (
+                        <p className="integration-block__hint" role="status">
+                          Development mode: this credential is held in memory
+                          only.
+                        </p>
+                      )}
                     </article>
                   );
                 })}

@@ -16,6 +16,7 @@ import { FinishStep } from "./FinishStep";
 import { LocalAiStep } from "./LocalAiStep";
 import { ProfileStep } from "./ProfileStep";
 import { WelcomeStep } from "./WelcomeStep";
+import { MasterPinSetup } from "../MasterPinSetup";
 import { useTheme } from "../../theme/ThemeProvider";
 
 const steps = [
@@ -32,6 +33,10 @@ interface OnboardingProps {
   existingProfile?: ViewerProfile;
   onCancel?: () => void;
   onSignIn?: () => Promise<void>;
+  allowRestore?: boolean;
+  onRestored?: () => void | Promise<void>;
+  masterPinRequired?: boolean;
+  onMasterPinCreated?: () => void;
 }
 
 export function Onboarding({
@@ -40,10 +45,17 @@ export function Onboarding({
   existingProfile,
   onCancel,
   onSignIn,
+  allowRestore = false,
+  onRestored,
+  masterPinRequired = false,
+  onMasterPinCreated,
 }: OnboardingProps) {
   const { previewAppearance, rememberAppearance } = useTheme();
   const profileId = existingProfile?.id ?? "default";
   const [step, setStep] = useState(0);
+  const [masterPinReady, setMasterPinReady] = useState(false);
+  const [creatingMasterPin, setCreatingMasterPin] = useState(false);
+  const [afterMasterStep, setAfterMasterStep] = useState(1);
   const [profile, setProfile] = useState<ProfileDraft>({
     name: existingProfile?.name ?? "",
     locale: existingProfile?.locale ?? "en",
@@ -133,9 +145,20 @@ export function Onboarding({
   useEffect(() => {
     const heading = contentRef.current?.querySelector<HTMLElement>("h1");
     heading?.focus();
-  }, [step]);
+  }, [step, creatingMasterPin]);
+
+  const enterStep = (target: number) => {
+    if (masterPinRequired && !masterPinReady) {
+      setAfterMasterStep(target);
+      setCreatingMasterPin(true);
+    } else setStep(target);
+  };
 
   const next = async () => {
+    if (masterPinRequired && !masterPinReady) {
+      enterStep(step === 0 ? 1 : step);
+      return;
+    }
     if (step === 1 && !profile.name.trim()) return;
     if (step < steps.length - 1) {
       setStep((current) => current + 1);
@@ -214,7 +237,7 @@ export function Onboarding({
             <button
               className="text-button"
               type="button"
-              onClick={() => setStep(4)}
+              onClick={() => enterStep(4)}
               disabled={step === 4 || signingIn || isCompleting}
             >
               Finish later
@@ -260,7 +283,26 @@ export function Onboarding({
         </aside>
 
         <main className="onboarding-main" ref={contentRef}>
-          {step === 0 && <WelcomeStep />}
+          {creatingMasterPin ? (
+            <MasterPinSetup
+              onSave={async (pin) => {
+                if (!api.setupMasterPin)
+                  throw new Error("Master PIN setup is unavailable.");
+                await api.setupMasterPin(pin, pin);
+                setMasterPinReady(true);
+                setCreatingMasterPin(false);
+                onMasterPinCreated?.();
+                setStep(afterMasterStep);
+              }}
+            />
+          ) : (
+            step === 0 && (
+              <WelcomeStep
+                allowRestore={allowRestore}
+                onRestored={onRestored}
+              />
+            )
+          )}
           {step === 1 && (
             <ProfileStep profile={profile} onChange={setProfile} />
           )}
@@ -302,31 +344,37 @@ export function Onboarding({
           )}
 
           <div className="step-actions">
-            {step > 0 && (
+            {(step > 0 || creatingMasterPin) && (
               <button
                 className="button button--ghost"
                 type="button"
-                onClick={() => setStep((current) => current - 1)}
+                onClick={() =>
+                  creatingMasterPin
+                    ? setCreatingMasterPin(false)
+                    : setStep((current) => current - 1)
+                }
                 disabled={signingIn || isCompleting}
               >
                 Back
               </button>
             )}
-            <button
-              className="button button--primary"
-              type="button"
-              onClick={next}
-              disabled={!canContinue || isCompleting || signingIn}
-            >
-              {step === steps.length - 1
-                ? isCompleting
-                  ? "Opening…"
-                  : "Enter StreamerAI"
-                : step === 0
-                  ? "Start setup"
-                  : "Continue"}
-              {!isCompleting && <span aria-hidden="true">→</span>}
-            </button>
+            {!creatingMasterPin && (
+              <button
+                className="button button--primary"
+                type="button"
+                onClick={next}
+                disabled={!canContinue || isCompleting || signingIn}
+              >
+                {step === steps.length - 1
+                  ? isCompleting
+                    ? "Opening…"
+                    : "Enter StreamerAI"
+                  : step === 0
+                    ? "Start setup"
+                    : "Continue"}
+                {!isCompleting && <span aria-hidden="true">→</span>}
+              </button>
+            )}
           </div>
           {step === 1 && !canContinue && (
             <p className="action-hint">Enter a display name to continue.</p>

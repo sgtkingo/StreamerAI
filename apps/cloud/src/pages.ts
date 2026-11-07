@@ -33,11 +33,17 @@ body[data-page="login"] h1{font-size:clamp(28px,5vw,38px);letter-spacing:-.04em}
 .login-tip{margin:24px 0;padding:18px 20px;border:1px solid #34384a;border-radius:14px;color:#b6b9c6;font-size:13px;line-height:1.6;background:#ffffff03}
 .login-tip h2{font-size:14px;font-weight:600;margin:0 0 8px;color:#d2d5df}.login-tip p{margin:0;color:inherit}
 .account-uid{display:flex;align-items:center;gap:10px;flex-wrap:wrap;color:#aeb3c8;font-size:.85rem}.account-uid code{font:inherit;letter-spacing:0;overflow-wrap:anywhere;color:#e0e1eb}.account-uid button{margin:0;padding:5px 9px;font-size:.8rem}
+.account-uid .copy-uid{display:grid;place-items:center;width:36px;height:36px;padding:0;color:#c8cbd6;transition:color .2s,border-color .2s,background-color .2s}
+.copy-uid:hover{color:#fff;border-color:#a7a2ff;background:#a7a2ff1a}.copy-uid svg{grid-area:1/1;width:18px;height:18px;transition:opacity .18s,transform .22s}.copy-uid__check{opacity:0;transform:scale(.6)}.copy-uid[data-copied="true"]{color:#8bdbab;border-color:#61ae80;background:#61ae801a}.copy-uid[data-copied="true"] .copy-uid__copy{opacity:0;transform:scale(.6)}.copy-uid[data-copied="true"] .copy-uid__check{opacity:1;transform:scale(1);animation:copy-uid-pop .32s ease-out}
+@keyframes copy-uid-pop{50%{transform:scale(1.2)}}
+.copy-uid-status{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0}
+@media(prefers-reduced-motion:reduce){.account-uid .copy-uid,.copy-uid svg{transition:none}.copy-uid[data-copied="true"] .copy-uid__check{animation:none}}
 .email-approval__profiles label{display:flex;align-items:center;gap:10px;padding:10px 12px;margin:8px 0;border:1px solid #45495c;border-radius:9px}.email-approval__profiles input[type=checkbox]{width:auto;accent-color:#a7a2ff}
 .operation-form{margin-top:20px;padding:18px;border:1px solid #34384a;border-radius:12px;background:#151823}.operation-form summary{cursor:pointer;font-weight:700}.operation-form summary:focus-visible{outline:3px solid #a7a2ff;outline-offset:4px}.operation-form p,.approval-note{font-size:.9rem}.operation-form button{margin-top:16px}.approval-list{display:grid;gap:10px;margin-top:16px}.approval-card{padding:16px;border:1px solid #34384a;border-radius:12px;background:#151823}.approval-card strong{display:block}.approval-card p{margin:6px 0;font-size:.88rem}.approval-card button{font-size:.85rem;padding:9px 12px}.profile-picks{display:grid;gap:8px;max-height:45vh;overflow:auto}.profile-pick{display:flex;gap:10px;align-items:center;padding:10px 12px;margin:0;border:1px solid #45495c;border-radius:9px}.profile-pick input{width:auto;max-width:none;accent-color:#a7a2ff}.profile-pick span{overflow-wrap:anywhere}.selection-error{color:#ffaaaa;font-size:.85rem}
 button:focus-visible,input:focus-visible,summary:focus-visible{outline:3px solid #a7a2ff;outline-offset:4px}
 .account-section h2{margin:0 0 8px;font-size:1.25rem}.account-section>.section-intro{margin:0 0 20px;font-size:.9rem;color:#aeb3c8}
 .method-list{display:grid;gap:10px;margin-top:20px}.method-card,.device-row,.pairing-row{display:flex;align-items:center;gap:14px;padding:16px;border:1px solid #34384a;border-radius:12px;background:#151823}.method-icon{display:grid;place-items:center;flex:none;width:40px;height:40px;border-radius:10px;background:#25283a;font-size:18px;font-weight:700;color:#d8d5ff}.method-content,.device-info,.pairing-info{min-width:0;flex:1}.method-content strong,.device-info strong,.pairing-info strong{display:block}.method-content p,.device-info p,.pairing-info p{font-size:.85rem;margin:4px 0 0;color:#aeb3c8}.method-card button,.device-row button,.pairing-row button{flex:none;margin:0}.method-card button{padding:9px 12px;font-size:.85rem}.account-help{margin-top:18px}.account-link{display:inline-block;margin-top:20px}.device-list,.pairing-list{display:grid;gap:10px;margin-top:20px}.empty-state{color:#aeb3c8;font-size:.9rem;margin:0}.icon-button{display:grid;place-items:center;width:42px;height:42px;padding:0;background:transparent;border-color:#545970;color:#c8cbd6}.icon-button:hover{color:#ffb4b4;border-color:#e77e88;background:#7a273522}.icon-button svg{width:20px;height:20px}.danger-button{background:#a12d40;border-color:#a12d40}.danger-button:hover{background:#b7374b}.confirm-dialog{width:min(440px,calc(100% - 32px));padding:24px;background:#1c1f2b;color:#f3f4f7;border:1px solid #545970;border-radius:16px}.confirm-dialog::backdrop{background:#080910b8}.confirm-dialog h2{margin:0;font-size:1.25rem}.confirm-dialog p{margin:12px 0}.account-final-actions{display:flex;gap:8px;flex-wrap:wrap}.account-final-actions button{margin:12px 0 0}.dialog-actions{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap}.dialog-actions button{margin:8px 0 0}
+.master-pin-entry{position:relative;width:min(100%,400px);border-radius:8px}.master-pin-entry:focus-within{outline:2px solid #a7a2ff;outline-offset:3px}.master-pin-entry__slots{display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:6px}.master-pin-entry__slot{height:46px;display:grid;place-items:center;border:1px solid #656b85;border-radius:7px;background:#12151f;color:#f3f4f7}.master-pin-entry__input{position:absolute;inset:0;width:100%;height:100%;max-width:none;padding:0;opacity:0;cursor:text}.master-pin-entry__input:disabled{cursor:wait}
 @media(max-width:500px){.method-card{flex-wrap:wrap}.method-card button{margin-left:54px}.account-section{padding:20px}}
 @media(max-width:400px){body[data-page="login"]{padding:24px 16px}.login-card{padding:20px}}
 
@@ -79,7 +85,7 @@ export function page(
     <p><a href="/account">Spravovat účet a zařízení</a></p>
   `
         : `
-    <h1>Váš účet StreamerAI</h1><p id="identity"></p><div class="account-uid"><span>UID účtu:</span><code id="account-uid"></code><button id="copy-account-uid" class="secondary" type="button">Kopírovat</button></div>
+    <h1>Váš účet StreamerAI</h1><p id="identity"></p><div class="account-uid"><span>UID účtu:</span><code id="account-uid"></code><button id="copy-account-uid" class="secondary copy-uid" type="button" aria-label="Kopírovat UID účtu" title="Kopírovat UID účtu"><svg class="copy-uid__copy" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg><svg class="copy-uid__check" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 4.5 4.5L19 7"/></svg></button><span id="copy-account-uid-status" class="copy-uid-status" role="status" aria-live="polite"></span></div>
     <p><a id="login-again" href="/login">Změnit účet</a></p>
     <section id="connections" class="account-section"><h2>Propojené účty</h2><p class="section-intro">Spravujte způsoby přihlášení ke svému účtu.</p>
       <div class="method-list"><div class="method-card"><span class="method-icon" aria-hidden="true">G</span><div class="method-content"><strong>Google</strong><p id="google-status"></p></div><button id="link-google" class="secondary" hidden>Propojit</button><button id="unlink-google" class="secondary" hidden>Odpojit</button></div>
@@ -87,10 +93,12 @@ export function page(
       <p id="email-feedback" role="status" aria-live="polite"></p>
       <form id="enable-email-form" hidden><label for="enable-email-otp">Osmimístný ověřovací kód</label><input id="enable-email-otp" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{8}" maxlength="8" required><button type="submit">Potvrdit e-mailové přihlášení</button></form>
       <small id="reauth-help" class="account-help" role="status" aria-live="polite" hidden>Pro změnu způsobů přihlášení je potřeba čerstvé ověření účtu. <a id="reauthenticate" href="/login">Přihlaste se znovu</a>.</small></section>
-    <section class="account-section"><h2>Čekající párování</h2><p class="section-intro">Potvrďte pouze žádosti ze zařízení, které znáte.</p><div id="pairings" class="pairing-list"></div><a class="account-link" href="/device">Zadat párovací kód ručně</a><p class="section-intro">Zapomenutý PIN profilu můžete odebrat po ověření účtu. Na domácím serveru zvolte „Forgot PIN? Verify account“ a zde potvrďte zobrazený kód. PIN se odstraní na tomto serveru.</p></section>
+    <section class="account-section"><h2>Čekající párování</h2><p class="section-intro">Potvrďte pouze žádosti ze zařízení, které znáte.</p><div id="pairings" class="pairing-list"></div><a class="account-link" href="/device">Zadat párovací kód ručně</a></section>
     <section class="account-section"><h2>Připojená zařízení</h2><div id="devices" class="device-list"></div><a class="account-link" href="/device">Připojit další zařízení</a></section>
     <section class="account-section"><h2>Čekající ke schválení</h2><p class="section-intro">Žádosti o převod profilů a sloučení účtů.</p><div id="transfers" class="approval-list"></div></section>
-    <section class="account-section"><h2>Účty a profily</h2><p class="section-intro">Převádějte profily nebo spojte své účty. Každou žádost potvrdí vlastník druhého účtu.</p>
+    <section class="account-section"><h2>Obnovení PINů</h2><p class="section-intro">Zapomenutý PIN profilu můžete odebrat po ověření účtu. Na domácím serveru zvolte „Forgot PIN?“ nebo zadáním Master PINu.</p><p class="section-intro">Potvrďte pouze reset profilu, o který jste právě požádali na domácím serveru.</p><div id="pin-resets" class="pairing-list"></div><button id="refresh-pin-resets" class="secondary" type="button">Obnovit žádosti</button></section>
+    <section class="account-section"><h2>Účty a profily</h2><p class="section-intro">Spravujte Master PIN, převádějte profily nebo spojte své účty. Žádosti o převod a sloučení potvrdí vlastník druhého účtu.</p>
+      <details class="operation-form" id="master-pin-settings"><summary>Master PIN</summary><p>Osmimístný Master PIN odemkne libovolný profil a šifruje místní zálohy. Po změně používají nové zálohy nový PIN; starší zálohy vyžadují původní PIN.</p><button id="enroll-master-pin" class="secondary" type="button">Potvrdit stávající PIN pro změny na domácím serveru</button><button id="change-master-pin" type="button">Změnit / resetovat Master PIN</button></details>
       <details class="operation-form"><summary>Převést profil</summary><p>Přenese se synchronizovaná knihovna, historie a rozkoukanost. Před převodem spusťte synchronizaci na zdrojovém serveru; nesynchronizované změny a místní přihlašovací údaje ke službám se nepřenášejí. PIN nastavíte znovu na cílovém serveru.</p>
         <form id="transfer-form"><label for="profile">Profil k převodu</label><select id="profile" required></select>
         <label for="target-email">E-mail nebo UID cílového účtu</label><input id="target-email" type="text" autocomplete="off" maxlength="320" required>
@@ -105,14 +113,49 @@ export function page(
     <dialog id="confirm-dialog" class="confirm-dialog" aria-labelledby="confirm-title" aria-describedby="confirm-description"><h2 id="confirm-title"></h2><p id="confirm-description"></p><div class="dialog-actions"><button id="confirm-cancel" class="secondary" type="button">Zrušit</button><button id="confirm-action" class="danger-button" type="button"></button></div></dialog>
     <dialog id="profiles-dialog" class="confirm-dialog" aria-labelledby="profiles-title" aria-describedby="profiles-description"><h2 id="profiles-title"></h2><p id="profiles-description"></p><div id="profiles-list" class="profile-picks"></div><p id="profiles-count" class="approval-note" role="status"></p><p id="profiles-error" class="selection-error" role="alert" hidden>Vyberte alespoň jeden a nejvýše pět profilů.</p><div class="dialog-actions"><button id="profiles-cancel" class="secondary" type="button">Zrušit</button><button id="profiles-confirm" type="button">Potvrdit výběr</button></div></dialog>
   `;
-  return `<!doctype html><html lang="cs"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>StreamerAI — účet</title><link rel="stylesheet" href="/assets/auth.css"><script src="/assets/auth.js" defer></script></head><body data-page="${kind}"><main><div class="brand">STREAMER AI</div>${content}<p id="message" role="status" aria-live="polite"></p><footer>Přihlašovací údaje k mediálním službám zůstávají na domácím serveru.</footer></main></body></html>`;
+  return `<!doctype html><html lang="cs"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>StreamerAI — účet</title><link rel="stylesheet" href="/assets/auth.css"><script src="/assets/auth.js" defer></script></head><body data-page="${kind}"><main><div class="brand">STREAMER AI</div>${content}<dialog id="master-pin-dialog" class="confirm-dialog" aria-labelledby="master-pin-title"><h2 id="master-pin-title">Master PIN</h2><p>Zvolte 8 číslic pro odemykání všech profilů a šifrování místních záloh. PIN si bezpečně uschovejte. Starší zálohy zůstávají chráněné původním PINem.</p><form id="master-pin-form"><label for="master-pin">Nový Master PIN (8 číslic)</label><input id="master-pin" type="password" inputmode="numeric" autocomplete="new-password" pattern="[0-9]{8}" minlength="8" maxlength="8" required><label for="master-pin-confirmation">Potvrzení Master PINu</label><input id="master-pin-confirmation" type="password" inputmode="numeric" autocomplete="new-password" pattern="[0-9]{8}" minlength="8" maxlength="8" required><p id="master-pin-error" role="alert"></p><div class="dialog-actions"><button id="master-pin-cancel" class="secondary" type="button">Zrušit</button><button id="master-pin-save" type="submit">Uložit Master PIN</button></div></form></dialog><dialog id="enroll-pin-dialog" class="confirm-dialog" aria-labelledby="enroll-pin-title"><h2 id="enroll-pin-title">Potvrďte současný Master PIN</h2><p>Jednorázově povolíte změnu PINu z domácí aplikace. Váš PIN se tím nezmění.</p><form id="enroll-pin-form"><label for="enroll-pin">Současný Master PIN (8 číslic)</label><input id="enroll-pin" type="password" inputmode="numeric" autocomplete="off" pattern="[0-9]{8}" minlength="8" maxlength="8" required><p id="enroll-pin-error" role="alert"></p><div class="dialog-actions"><button id="enroll-pin-cancel" class="secondary" type="button">Zrušit</button><button id="enroll-pin-save" type="submit">Potvrdit PIN</button></div></form></dialog><p id="message" role="status" aria-live="polite"></p><footer>Přihlašovací údaje k mediálním službám zůstávají na domácím serveru.</footer></main></body></html>`;
 }
 
 export const browserScript = String.raw`
 (() => {
   const el = (id) => document.getElementById(id);
+  function attachMasterPinSlots(id) {
+    const input = el(id);
+    if (!input) return;
+    const entry = document.createElement('div');
+    entry.className = 'master-pin-entry';
+    const slots = document.createElement('div');
+    slots.className = 'master-pin-entry__slots';
+    slots.setAttribute('aria-hidden', 'true');
+    const cells = Array.from({length: 8}, () => {
+      const cell = document.createElement('span');
+      cell.className = 'master-pin-entry__slot';
+      slots.append(cell);
+      return cell;
+    });
+    input.parentElement.insertBefore(entry, input);
+    entry.append(slots, input);
+    input.classList.add('master-pin-entry__input');
+    const update = () => {
+      const digits = input.value.replace(/\D/g, '').slice(0, 8);
+      if (input.value !== digits) input.value = digits;
+      cells.forEach((cell, index) => {
+        cell.textContent = index < digits.length ? '●' : '';
+      });
+    };
+    input.addEventListener('input', update);
+    input.form?.addEventListener('reset', () => queueMicrotask(update));
+    update();
+  }
+  attachMasterPinSlots('master-pin');
+  attachMasterPinSlots('master-pin-confirmation');
+  attachMasterPinSlots('enroll-pin');
   const message = (text, inline) => { el('message').textContent = inline ? '' : text; if(inline && el(inline))el(inline).textContent=text; };
   const errors = {
+    master_pin_setup_required:'Nejprve nastavte osmimístný Master PIN.',
+    master_pin_initialization_required:'Obnovte stránku pro dokončení zabezpečení účtu a zopakujte připojení zařízení.',
+    invalid_master_pin_verifier:'Master PIN se nepodařilo připravit. Obnovte stránku a zkuste to znovu.',
+    master_pin_unavailable:'Master PIN je dočasně nedostupný. Zkuste to znovu.',
     unauthorized:'Přihlaste se prosím znovu.',invalid_or_expired_code:'Kód není platný nebo již vypršel.',
     profile_limit:'Cílový účet již má pět profilů.',target_account_unavailable:'Cílový účet není dostupný. Nejprve se na něm přihlaste.',
     transfer_changed:'Profily se mezitím změnily. Načtěte stránku a zkuste to znovu.',transfer_not_found:'Převod není dostupný nebo vypršel.',merge_not_found:'Žádost o sloučení není dostupná nebo vypršela.',merge_changed:'Účty nebo profily se mezitím změnily. Vytvořte novou žádost.',merge_email_conflict:'Oba účty mají aktivní přihlášení různými e-maily. Toto sloučení zatím není dostupné.',
@@ -176,6 +219,40 @@ export const browserScript = String.raw`
     try {const data=await api('/v1/account');el('identity').textContent=data.name+' · '+data.email;return data;}
     catch(error){if(error.code==='unauthorized'){location.replace('/login'+(safeCode?'?user_code='+encodeURIComponent(safeCode):(approvalQuery||accountQuery)));return null;}throw error;}
   }
+  async function makeMasterPinVerifier(pin) {
+    const hex = bytes => Array.from(new Uint8Array(bytes), byte => byte.toString(16).padStart(2, '0')).join('');
+    const salt = hex(crypto.getRandomValues(new Uint8Array(16)));
+    const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(pin), 'PBKDF2', false, ['deriveBits']);
+    const hash = hex(await crypto.subtle.deriveBits({name:'PBKDF2', hash:'SHA-256', salt:new TextEncoder().encode(salt), iterations:600000}, key, 256));
+    const changeSalt = hex(crypto.getRandomValues(new Uint8Array(16)));
+    const changeHash = hex(await crypto.subtle.deriveBits({name:'PBKDF2', hash:'SHA-256', salt:new TextEncoder().encode(changeSalt), iterations:600000}, key, 256));
+    return {salt, hash, version:crypto.randomUUID(), changeSalt, changeHash};
+  }
+  async function initializeMasterPin() {
+    const digits = [];
+    while (digits.length < 8) {
+      for (const byte of crypto.getRandomValues(new Uint8Array(16))) {
+        if (byte < 250) digits.push(byte % 10);
+        if (digits.length === 8) break;
+      }
+    }
+    const verifier = await makeMasterPinVerifier(digits.join(''));
+    await api('/v1/account/master-pin', {method:'PUT', body:JSON.stringify({initialize:true, verifier})});
+  }
+  function editMasterPin(required) {
+    return new Promise(resolve=>{
+      const dialog=el('master-pin-dialog');const form=el('master-pin-form');form.reset();el('master-pin-error').textContent='';el('master-pin-cancel').hidden=required;
+      let saved=false;let saving=false;const cancel=()=>{if(!saving)dialog.close();};const escape=event=>{if(required||saving)event.preventDefault();};
+      const submit=async(event)=>{event.preventDefault();if(saving)return;const pin=el('master-pin').value;const confirmation=el('master-pin-confirmation').value;if(!/^\d{8}$/.test(pin)||pin!==confirmation){el('master-pin-error').textContent='Zadejte dvakrát stejný osmimístný PIN.';return;}saving=true;el('master-pin-save').disabled=true;el('master-pin-cancel').disabled=true;try{const verifier=await makeMasterPinVerifier(pin);await api('/v1/account/master-pin',{method:'PUT',body:JSON.stringify({verifier})});saved=true;dialog.close();}catch(error){if(error.code==='reauth_required'){location.assign('/login'+(safeCode?'?user_code='+encodeURIComponent(safeCode):accountQuery));return;}el('master-pin-error').textContent=error.message;}finally{saving=false;el('master-pin-save').disabled=false;el('master-pin-cancel').disabled=false;}};
+      const finish=()=>{form.removeEventListener('submit',submit);el('master-pin-cancel').removeEventListener('click',cancel);dialog.removeEventListener('cancel',escape);dialog.removeEventListener('close',finish);form.reset();resolve(saved);};
+      form.addEventListener('submit',submit);el('master-pin-cancel').addEventListener('click',cancel);dialog.addEventListener('cancel',escape);dialog.addEventListener('close',finish);dialog.showModal();el('master-pin').focus();
+    });
+  }
+  async function refreshPinResets() {
+    const data=await api('/v1/account/pin-resets');el('pin-resets').replaceChildren();
+    if(!data.requests.length){const p=document.createElement('p');p.className='empty-state';p.textContent='Žádné čekající žádosti o reset PINu.';el('pin-resets').append(p);}
+    data.requests.forEach(request=>{const div=document.createElement('div');div.className='pairing-row';const info=document.createElement('div');info.className='pairing-info';const name=document.createElement('strong');name.textContent=request.profile_name;const detail=document.createElement('p');detail.textContent=request.device_name+' · Platí do '+new Date(request.expires_at).toLocaleTimeString('cs-CZ');info.append(name,detail);div.append(info);[true,false].forEach(approve=>div.append(button(approve?'Povolit reset':'Zamítnout',async()=>{if(!await confirmAction(approve?'Resetovat PIN profilu?':'Zamítnout reset?', 'Profil „'+request.profile_name+'“ na zařízení „'+request.device_name+'“.',approve?'Povolit reset':'Zamítnout'))return;try{await api('/v1/account/pin-resets/'+encodeURIComponent(request.id)+'/decision',{method:'POST',body:JSON.stringify({approve})});await refreshPinResets();}catch(error){operationError(error);}},!approve)));el('pin-resets').append(div);});
+  }
   async function refreshPortal() {
     const [devices,profiles,transfers,pending,merges]=await Promise.all([api('/v1/devices'),api('/v1/profiles'),api('/v1/transfers'),api('/v1/device/pending'),api('/v1/merges')]);
     el('devices').replaceChildren();
@@ -231,13 +308,20 @@ export const browserScript = String.raw`
     }
     const currentAccount=await account();if(!currentAccount)return;
     if(expectedAccount && currentAccount.id!==expectedAccount)throw new Error('V prohlížeči je přihlášen jiný účet než v domácí instalaci. Přihlaste se znovu ke stejnému účtu, který chcete propojit.');
+    const masterState=await api('/v1/account/master-pin');if(masterState.initializationRequired)await initializeMasterPin();if(masterState.setupRequired)await editMasterPin(true);
     const reauthenticate=el('reauthenticate');if(reauthenticate && /^[a-zA-Z0-9_-]{1,160}$/.test(currentAccount.id))reauthenticate.href='/login?account_id='+encodeURIComponent(currentAccount.id);
     const deleteReauthenticate=el('delete-reauthenticate');if(deleteReauthenticate && /^[a-zA-Z0-9_-]{1,160}$/.test(currentAccount.id))deleteReauthenticate.href='/login?account_id='+encodeURIComponent(currentAccount.id);
     if(document.body.dataset.page==='account'){
       portalAccount=currentAccount;
+      if(location.hash==='#master-pin-settings')el('master-pin-settings').open=true;
+      el('enroll-master-pin').addEventListener('click',async()=>{try{const setup=await api('/v1/account/master-pin/enroll');if(!setup.required){message('Změna Master PINu z domácího serveru je již povolena.');return;}const dialog=el('enroll-pin-dialog');const form=el('enroll-pin-form');form.reset();el('enroll-pin-error').textContent='';dialog.showModal();el('enroll-pin').focus();const cancel=()=>dialog.close();const submit=async(event)=>{event.preventDefault();const pin=el('enroll-pin').value;if(!/^\d{8}$/.test(pin))return;el('enroll-pin-save').disabled=true;el('enroll-pin-cancel').disabled=true;try{const hex=bytes=>Array.from(new Uint8Array(bytes),byte=>byte.toString(16).padStart(2,'0')).join('');const key=await crypto.subtle.importKey('raw',new TextEncoder().encode(pin),'PBKDF2',false,['deriveBits']);const proof=hex(await crypto.subtle.deriveBits({name:'PBKDF2',hash:'SHA-256',salt:new TextEncoder().encode(setup.salt),iterations:600000},key,256));const changeSalt=hex(crypto.getRandomValues(new Uint8Array(16)));const changeHash=hex(await crypto.subtle.deriveBits({name:'PBKDF2',hash:'SHA-256',salt:new TextEncoder().encode(changeSalt),iterations:600000},key,256));await api('/v1/account/master-pin/enroll',{method:'POST',body:JSON.stringify({version:setup.version,proof,changeSalt,changeHash})});dialog.close();message('PIN byl potvrzen. Nyní jej můžete změnit na domácím serveru.');}catch(error){if(error.code==='reauth_required'){dialog.close();operationError(error);}else el('enroll-pin-error').textContent=error.code==='master_pin_incorrect'?'Master PIN není správný.':error.message;}finally{el('enroll-pin-save').disabled=false;el('enroll-pin-cancel').disabled=false;}};const finish=()=>{form.removeEventListener('submit',submit);el('enroll-pin-cancel').removeEventListener('click',cancel);dialog.removeEventListener('close',finish);form.reset();};form.addEventListener('submit',submit);el('enroll-pin-cancel').addEventListener('click',cancel);dialog.addEventListener('close',finish);}catch(error){operationError(error);}});
+      el('change-master-pin').addEventListener('click',()=>editMasterPin(false).then(saved=>{if(saved)message('Master PIN byl změněn. Na domácím serveru zadejte nový PIN před další zálohou.');}));
+      el('refresh-pin-resets').addEventListener('click',()=>refreshPinResets().catch(operationError));
+      await refreshPinResets();
       el('account-uid').textContent=currentAccount.id;
       if(approvalQuery)el('login-again').href='/login'+approvalQuery;
-      el('copy-account-uid').addEventListener('click',async()=>{try{await navigator.clipboard.writeText(currentAccount.id);message('UID účtu bylo zkopírováno.');}catch{message('UID můžete označit a zkopírovat ručně.');}});
+      let copyResetTimer;
+      el('copy-account-uid').addEventListener('click',async()=>{const target=el('copy-account-uid');const status=el('copy-account-uid-status');clearTimeout(copyResetTimer);delete target.dataset.copied;target.title='Kopírovat UID účtu';status.textContent='';try{await navigator.clipboard.writeText(currentAccount.id);void target.offsetWidth;target.dataset.copied='true';target.title='UID účtu zkopírováno';status.textContent='UID účtu bylo zkopírováno.';copyResetTimer=setTimeout(()=>{delete target.dataset.copied;target.title='Kopírovat UID účtu';status.textContent='';},2000);}catch{message('UID můžete označit a zkopírovat ručně.');}});
       el('operation-reauth-link').href='/login?account_id='+encodeURIComponent(currentAccount.id)+(approvalQuery?'&'+approvalQuery.slice(1):'');
       el('signout').addEventListener('click',async()=>{try{await api('/api/auth/sign-out',{method:'POST',body:'{}'});location.assign('/login');}catch(error){message(error.message);}});
       el('delete-account').addEventListener('click',async()=>{if(!await confirmAction('Smazat účet?', 'Tím trvale smažete online účet, připojená zařízení a cloudové profily, knihovnu a historii. Místní data na domácích serverech zůstanou zachována. Akci nelze vrátit zpět.', 'Smazat účet'))return;const target=el('delete-account');target.disabled=true;el('delete-reauth-help').hidden=true;message('');try{await api('/v1/account',{method:'DELETE'});location.replace('/login?account_deleted=1');}catch(error){if(error.code==='reauth_required')el('delete-reauth-help').hidden=false;else message(error.message);target.disabled=false;}});

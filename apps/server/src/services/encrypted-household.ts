@@ -16,6 +16,8 @@ import {
 import type { SecretStore } from "../stores/secret-store.js";
 import { MediaSourcePreferenceStore } from "./media-source-preferences.js";
 import { manualAgentSettingKey } from "../integrations/manual-agent-config.js";
+import { MasterPinService } from "./master-pin.js";
+import { protectHouseholdWithMasterPin } from "./master-pin-household-backup.js";
 import {
   EncryptedHouseholdError,
   openHouseholdSnapshot,
@@ -361,6 +363,33 @@ export class EncryptedHouseholdService {
     });
   }
 
+  async exportLocalBackup(accountId: string) {
+    const master = await new MasterPinService(this.secrets).read(accountId);
+    if (!master?.pin) throw new EncryptedHouseholdError("MASTER_PIN_REQUIRED");
+    if (!this.isEnabled(accountId)) await this.activate(accountId);
+    const envelope = await this.export(accountId);
+    return this.exclusive(accountId, async () => {
+      const state = this.state(accountId);
+      if (
+        state.datasetId !== envelope.datasetId ||
+        state.keyVersion !== envelope.keyVersion ||
+        state.recoveryVersion !== envelope.recoveryVersion
+      )
+        throw new EncryptedHouseholdError("HOUSEHOLD_CHANGED_RETRY");
+      if (
+        (await new MasterPinService(this.secrets).read(accountId))?.verifier
+          .version !== master.verifier.version
+      )
+        throw new EncryptedHouseholdError("HOUSEHOLD_CHANGED_RETRY");
+      const key = await this.dataKey(accountId);
+      try {
+        return await protectHouseholdWithMasterPin(envelope, key, master.pin!);
+      } finally {
+        key.fill(0);
+      }
+    });
+  }
+
   preview(envelope: unknown, key: string) {
     const opened = openHouseholdSnapshot(envelope, key);
     try {
@@ -450,11 +479,23 @@ export class EncryptedHouseholdService {
     accountId: string,
     envelope: unknown,
     key: string,
+    cloudRecovery?: EncryptedHouseholdEnvelope["recovery"],
+    restoredMasterPin?: string,
   ): Promise<HouseholdImportResult> {
     return this.exclusive(accountId, async () => {
       await this.ready();
       const opened = openHouseholdSnapshot(envelope, key);
       try {
+        const finish = async (result: HouseholdImportResult) => {
+          const master = new MasterPinService(this.secrets);
+          if (
+            restoredMasterPin &&
+            !this.database.accounts.getRequired(accountId).cloudUserId &&
+            !(await master.read(accountId))
+          )
+            await master.setupLocal(accountId, restoredMasterPin);
+          return result;
+        };
         await this.recoverImport(accountId);
         const installed = this.database.settings.get<Installed>(
           installedKey(accountId),
@@ -465,11 +506,11 @@ export class EncryptedHouseholdService {
             (id) => this.database.profiles.get(id)?.accountId === accountId,
           )
         ) {
-          return {
+          return finish({
             profileIds: installed.profileIds,
             credentials: installed.credentials,
             limitations: installed.limitations,
-          };
+          });
         }
         this.assertEmpty(accountId);
         for (const profile of opened.snapshot.profiles) {
@@ -574,7 +615,7 @@ export class EncryptedHouseholdService {
                 datasetId: opened.envelope.datasetId,
                 keyVersion: opened.envelope.keyVersion,
                 recoveryVersion: opened.envelope.recoveryVersion,
-                recovery: opened.envelope.recovery,
+                recovery: cloudRecovery ?? opened.envelope.recovery,
                 sequence: opened.envelope.sequence,
                 lastExportAt: null,
               } satisfies State,
@@ -586,38 +627,13 @@ export class EncryptedHouseholdService {
             this.database.settings.delete(journalKey(accountId));
             return result;
           });
-          return result;
+          return await finish(result);
         } catch (error) {
           await this.recoverImport(accountId);
           throw error;
         }
       } finally {
         opened.dataKey.fill(0);
-      }
-    });
-  }
-
-  async rotateRecoveryKey(
-    accountId: string,
-  ): Promise<{ recoveryKey: string; status: EncryptedHouseholdStatus }> {
-    return this.exclusive(accountId, async () => {
-      await this.ready();
-      const state = this.state(accountId);
-      const key = await this.dataKey(accountId);
-      const replacement = recoveryKey();
-      try {
-        const context = {
-          ...state,
-          recoveryVersion: state.recoveryVersion + 1,
-        };
-        const recovery = wrapHouseholdKey(context, key, replacement);
-        this.database.settings.set(encryptedHouseholdSettingKey(accountId), {
-          ...context,
-          recovery,
-        });
-        return { recoveryKey: replacement, status: this.status(accountId) };
-      } finally {
-        key.fill(0);
       }
     });
   }

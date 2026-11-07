@@ -60,9 +60,7 @@ describe("account management", () => {
       getAccount: vi.fn().mockResolvedValue(overview),
       getAccountConnections,
     } as unknown as StreamerApi;
-    render(
-      <AccountSettings api={api} profile={profile} onSwitchProfile={vi.fn()} />,
-    );
+    render(<AccountSettings api={api} profile={profile} />);
     const connect = await screen.findByRole("link", { name: "Connect Google" });
     expect(connect).toHaveAttribute(
       "href",
@@ -99,9 +97,7 @@ describe("account management", () => {
         .fn()
         .mockRejectedValue(new Error("Temporarily offline")),
     } as unknown as StreamerApi;
-    render(
-      <AccountSettings api={api} profile={profile} onSwitchProfile={vi.fn()} />,
-    );
+    render(<AccountSettings api={api} profile={profile} />);
     expect(
       await screen.findByText(/Connected accounts cannot be checked right now/),
     ).toBeVisible();
@@ -109,33 +105,24 @@ describe("account management", () => {
       screen.getByRole("link", { name: "Manage connected accounts" }),
     ).toBeVisible();
   });
-  it("disables synchronization without signing out or deleting account data", async () => {
+  it("shows the online account ID instead of the local household ID", async () => {
     const api = {
       getAccount: vi.fn().mockResolvedValue({
         ...overview,
-        account: { ...overview.account, cloudLinked: true },
+        account: {
+          ...overview.account,
+          id: "local-household",
+          cloudLinked: true,
+          cloudAccountId: "cloud-owner-123",
+        },
       }),
-      setAccountSync: vi
-        .fn()
-        .mockResolvedValue({ configured: false, status: "idle" }),
-      logout: vi.fn(),
     } as unknown as StreamerApi;
-    render(
-      <AccountSettings api={api} profile={profile} onSwitchProfile={vi.fn()} />,
-    );
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Disable synchronization" }),
-    );
+    render(<AccountSettings api={api} profile={profile} />);
+    expect(await screen.findByText("cloud-owner-123")).toBeVisible();
+    expect(screen.queryByText("local-household")).not.toBeInTheDocument();
     expect(
-      await screen.findByText(
-        /Local data, pending changes and the online copy are preserved/,
-      ),
-    ).toBeVisible();
-    expect(api.setAccountSync).toHaveBeenCalledWith(false);
-    expect(api.logout).not.toHaveBeenCalled();
-    expect(
-      screen.getByRole("button", { name: "Enable synchronization" }),
-    ).toBeVisible();
+      screen.queryByRole("heading", { name: "Cloud synchronization" }),
+    ).not.toBeInTheDocument();
   });
 
   it("requires a preview and explicit choice before pairing an online owner for local profiles", async () => {
@@ -148,9 +135,7 @@ describe("account management", () => {
       getProfiles: vi.fn().mockResolvedValue({ items: [profile] }),
       startDeviceAuthorization: vi.fn(),
     } as unknown as StreamerApi;
-    render(
-      <AccountSettings api={api} profile={profile} onSwitchProfile={vi.fn()} />,
-    );
+    render(<AccountSettings api={api} profile={profile} />);
     fireEvent.click(
       await screen.findByRole("button", { name: "Review local profiles" }),
     );
@@ -172,9 +157,7 @@ describe("account management", () => {
       getAccount: vi.fn().mockResolvedValue(overview),
       revokeAccountDevice: vi.fn().mockResolvedValue(undefined),
     } as unknown as StreamerApi;
-    render(
-      <AccountSettings api={api} profile={profile} onSwitchProfile={vi.fn()} />,
-    );
+    render(<AccountSettings api={api} profile={profile} />);
     const portal = await screen.findByRole("link", {
       name: "Open account portal",
     });
@@ -199,12 +182,8 @@ describe("account management", () => {
         sync: { configured: false, status: "disabled" },
       }),
     } as unknown as StreamerApi;
-    render(
-      <AccountSettings api={api} profile={profile} onSwitchProfile={vi.fn()} />,
-    );
-    expect(
-      await screen.findByText(/Your home server keeps your data locally/),
-    ).toBeVisible();
+    render(<AccountSettings api={api} profile={profile} />);
+    expect(await screen.findByText(/This household is local/)).toBeVisible();
     expect(
       screen.queryByRole("link", { name: "Open account portal" }),
     ).not.toBeInTheDocument();

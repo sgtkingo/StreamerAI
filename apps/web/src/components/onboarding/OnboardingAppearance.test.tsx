@@ -106,6 +106,12 @@ describe("onboarding appearance", () => {
     render(<Flow api={api} onComplete={onComplete} />);
     fireEvent.click(screen.getByRole("button", { name: "Finish later" }));
     fireEvent.click(screen.getByLabelText("Add a PIN to this profile"));
+    expect(
+      screen
+        .getByLabelText("Choose a 4-digit PIN")
+        .closest(".pin-pad")
+        ?.querySelectorAll(".pin-pad__slot"),
+    ).toHaveLength(4);
     for (const digit of ["1", "2", "3", "0"]) {
       fireEvent.click(screen.getByRole("button", { name: digit }));
     }

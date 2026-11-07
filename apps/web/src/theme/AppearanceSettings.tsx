@@ -5,6 +5,7 @@ import {
 } from "@streamer-ai/contracts";
 import { safeErrorMessage, type StreamerApi } from "../api/client";
 import { InfoTip } from "../components/InfoTip";
+import { useToasts } from "../components/ToastProvider";
 import {
   createClockAnchor,
   isValidTimeZone,
@@ -36,7 +37,7 @@ export function AppearanceSettings({
   const [wallDirty, setWallDirty] = useState(false);
   const [offsetChoice, setOffsetChoice] = useState("");
   const [timeError, setTimeError] = useState("");
-  const [timeNotice, setTimeNotice] = useState("");
+  const { showToast } = useToasts();
   const [query, setQuery] = useState("");
   const [locations, setLocations] = useState<WeatherLocation[]>([]);
   const [searching, setSearching] = useState(false);
@@ -129,14 +130,13 @@ export function AppearanceSettings({
 
   const applyTime = () => {
     setTimeError("");
-    setTimeNotice("");
     if (!isValidTimeZone(zoneDraft)) {
       setTimeError("Choose a valid IANA timezone, for example Europe/Prague.");
       return;
     }
     if (!wallDirty) {
       updateEnvironment({ ...environment, timeZone: zoneDraft });
-      setTimeNotice("Time settings saved on this device.");
+      showToast("Time settings saved on this device.", "success");
       return;
     }
     if (
@@ -163,7 +163,7 @@ export function AppearanceSettings({
       timeZone: zoneDraft,
       manualClock: createClockAnchor(new Date(candidate.instant)),
     });
-    setTimeNotice("Time settings saved on this device.");
+    showToast("Time settings saved on this device.", "success");
   };
 
   const chooseLocation = (location: WeatherLocation) => {
@@ -456,7 +456,6 @@ export function AppearanceSettings({
               onChange={(event) => {
                 const autoDetectTime = event.target.checked;
                 setTimeError("");
-                setTimeNotice("");
                 updateEnvironment({
                   ...environment,
                   autoDetectTime,
@@ -535,7 +534,6 @@ export function AppearanceSettings({
             </div>
           )}
           {timeError && <p role="alert">{timeError}</p>}
-          {timeNotice && <p role="status">{timeNotice}</p>}
           {theme.resolvedTheme.approximateDaylight && (
             <p className="settings-note theme-muted-note">
               Daylight is approximate: 07:00–19:00. Select a weather location

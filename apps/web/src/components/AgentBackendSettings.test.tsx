@@ -9,6 +9,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { StreamerApi } from "../api/client";
 import { AgentBackendSettings } from "./AgentBackendSettings";
+import { ToastProvider } from "./ToastProvider";
 
 function createApi(mode: "api" | "mcp" | "disabled" = "api") {
   const selection = {
@@ -352,7 +353,11 @@ describe("AgentBackendSettings", () => {
       message: "Saved",
     }));
     const user = userEvent.setup();
-    render(<AgentBackendSettings api={api} profileId="default" />);
+    render(
+      <ToastProvider>
+        <AgentBackendSettings api={api} profileId="default" />
+      </ToastProvider>,
+    );
     const slider = screen.getByRole("slider", { name: "Thinking level" });
     await waitFor(() => expect(slider).toHaveAttribute("max", "1"));
     expect(slider).toHaveValue("1");

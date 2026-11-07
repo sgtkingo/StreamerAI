@@ -100,6 +100,7 @@ import { registerDeploymentRoutes } from "./routes/deployment.js";
 import { LocalAccessService } from "./services/local-access.js";
 import { EncryptedHouseholdService } from "./services/encrypted-household.js";
 import { EncryptedCheckpointTransport } from "./services/encrypted-sync-transport.js";
+import { AutomaticHouseholdBackup } from "./services/automatic-household-backup.js";
 import { registerEncryptedHouseholdRoutes } from "./routes/encrypted-household.js";
 import { registerServerAiSetupRoutes } from "./routes/ollama-setup.js";
 import { ServerAiSetupService } from "./services/ollama-setup.js";
@@ -627,11 +628,26 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
       },
     },
   );
+  const checkpointTransport = accountServiceUrl
+    ? new EncryptedCheckpointTransport(
+        accountServiceUrl,
+        options.accountFetch ?? fetch,
+      )
+    : undefined;
+  const automaticBackup = checkpointTransport
+    ? new AutomaticHouseholdBackup(
+        database,
+        encryptedHousehold,
+        checkpointTransport,
+        (accountId) => accountAuth.getCredential(accountId),
+        now,
+      )
+    : undefined;
   registerEncryptedHouseholdRoutes(app, {
     service: encryptedHousehold,
     accountId: (request) => accountAuth.account(request).id,
     requireOwner: (request, reply) => {
-      if (localAccess.enabled && localAccess.isOwner(request)) return true;
+      if (!localAccess.enabled || localAccess.isOwner(request)) return true;
       reply.code(403).send({
         error: {
           code: "INSTALLATION_OWNER_REQUIRED",
@@ -642,12 +658,12 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
       return false;
     },
     getCredential: (accountId) => accountAuth.getCredential(accountId),
-    cloud: accountServiceUrl
-      ? new EncryptedCheckpointTransport(
-          accountServiceUrl,
-          options.accountFetch ?? fetch,
-        )
-      : undefined,
+    cloud: checkpointTransport,
+    cloudBackupStatus: (accountId) => automaticBackup?.status(accountId) ?? {},
+    cloudConnected: (accountId) =>
+      !!database.accounts.get(accountId)?.cloudUserId,
+    cloudBackupAdopt: (accountId, revision, datasetId) =>
+      automaticBackup?.adopt(accountId, revision, datasetId),
   });
   app.addHook("onResponse", async (request, reply) => {
     if (
@@ -657,7 +673,17 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
     )
       return;
     try {
-      accountSync.capture(accountAuth.account(request).id);
+      const accountId = accountAuth.account(request).id;
+      accountSync.capture(accountId);
+      if (
+        environment !== "test" &&
+        automaticBackup &&
+        database.accounts.get(accountId)?.cloudUserId
+      ) {
+        automaticBackup.markDirty(accountId);
+        if (request.url !== "/api/v1/account/encrypted-household/export")
+          void automaticBackup.sync(accountId).catch(() => undefined);
+      }
     } catch {
       app.log.warn(
         { code: "ACCOUNT_SYNC_CAPTURE_PENDING" },
@@ -670,6 +696,8 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
       ? setInterval(() => {
           for (const account of database.accounts.list()) {
             if (!account.cloudUserId) continue;
+            if (automaticBackup)
+              void automaticBackup.sync(account.id).catch(() => undefined);
             if (accountSync.status(account.id).configured)
               void accountSync.sync(account.id);
             else

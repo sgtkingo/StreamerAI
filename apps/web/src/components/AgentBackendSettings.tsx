@@ -11,6 +11,7 @@ import type {
 } from "../api/client";
 import { safeErrorMessage } from "../api/client";
 import { InfoTip } from "./InfoTip";
+import { useToasts } from "./ToastProvider";
 
 type LocalProvider = "ollama" | "custom";
 type RemoteProvider = Exclude<AgentBackend, LocalAgentCapability["provider"]>;
@@ -301,7 +302,7 @@ export function AgentBackendSettings({
   const [busy, setBusy] = useState(false);
   const [turnOffComplete, setTurnOffComplete] = useState(false);
   const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
+  const { showToast } = useToasts();
   const provider: AgentBackend =
     side === "local" ? localProvider : remoteProvider;
   const mcp = side === "external" && transport === "mcp";
@@ -632,7 +633,6 @@ export function AgentBackendSettings({
     }
     setBusy(true);
     setError("");
-    setNotice("");
     try {
       if (
         choice.side === "external" &&
@@ -685,7 +685,7 @@ export function AgentBackendSettings({
       else if (choice.transport === "api") setExternalModel(choice.model ?? "");
       setApiKey("");
       onChanged?.(isEnabled(result));
-      setNotice("Agent preference saved.");
+      showToast("Agent preference saved.", "success");
       return true;
     } catch (cause) {
       const message = safeErrorMessage(cause);
@@ -747,7 +747,7 @@ export function AgentBackendSettings({
       setCurrent(status);
       setTurnOffComplete(true);
       onChanged?.(false);
-      setNotice("Agent turned off.");
+      showToast("Agent turned off.", "success");
     } catch (cause) {
       setError(safeErrorMessage(cause));
     } finally {
@@ -764,11 +764,11 @@ export function AgentBackendSettings({
         baseUrl: ollamaUrl.trim(),
       });
       if (!result.ok) throw new Error(result.message);
-      setNotice("Ollama connected.");
       await discover();
       const selection = await api.getAgentSelection(profileId);
       setCurrent(selection);
       onChanged?.(isEnabled(selection));
+      showToast("Ollama connected.", "success");
       setLocalSettingsOpen(false);
       return true;
     } catch (cause) {
@@ -790,8 +790,8 @@ export function AgentBackendSettings({
       setCustomUrl(config.baseUrl);
       setCustomModel(config.model);
       setLocalModel(config.model);
-      setNotice("Custom local agent settings saved.");
       await discover();
+      showToast("Custom local agent settings saved.", "success");
       return true;
     } catch (cause) {
       setError(safeErrorMessage(cause));
@@ -1768,11 +1768,6 @@ export function AgentBackendSettings({
             {busy ? "Saving…" : "Save agent preference"}
           </button>
         </div>
-        {notice && (
-          <p className="agent-backend__notice" role="status">
-            {notice}
-          </p>
-        )}
         {error && (
           <p className="agent-backend__error" role="alert">
             {error}

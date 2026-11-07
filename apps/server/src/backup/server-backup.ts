@@ -26,6 +26,8 @@ import {
   type ServerDatabaseSummary,
 } from "@streamer-ai/database";
 import { acquireServerRuntimeLock } from "../services/runtime-lock.js";
+import { MasterPinService } from "../services/master-pin.js";
+import { EncryptedFileSecretStore } from "../stores/secret-store.js";
 
 const MAGIC = Buffer.from("STREAMERAI-BACKUP\0", "ascii");
 const FORMAT = "streamerai-offline-backup";
@@ -77,7 +79,10 @@ export interface CreateServerBackupOptions {
   vaultFile: string;
   keyFile: string;
   outputFile: string;
-  passphrase: string;
+  /** Legacy passphrase export remains available for existing automation. */
+  passphrase?: string;
+  /** Use this account's verified Master PIN from the encrypted local vault. */
+  accountId?: string;
   appVersion: string;
   extraFiles?: BackupExtraFile[];
 }
@@ -710,15 +715,40 @@ export async function previewServerBackup(
 export async function createServerBackup(
   options: CreateServerBackupOptions,
 ): Promise<ServerBackupManifest> {
-  if (options.passphrase.length < 12)
-    throw new Error("Use a backup passphrase of at least 12 characters.");
   ensureOutside(options.outputFile, options.dataDirectory);
   const lock = acquireServerRuntimeLock(options.dataDirectory);
   let contents: BackupContents | undefined;
   try {
+    let passphrase = options.passphrase;
+    if (options.accountId) {
+      const master = await new MasterPinService(
+        new EncryptedFileSecretStore({
+          filename: options.vaultFile,
+          keyFilename: options.keyFile,
+        }),
+      ).read(options.accountId);
+      if (!master?.pin || !/^\d{8}$/.test(master.pin))
+        throw new Error(
+          "Enter and verify the account's Master PIN on this home server before exporting a backup.",
+        );
+      passphrase = master.pin;
+    }
+    if (!passphrase || (!options.accountId && passphrase.length < 12))
+      throw new Error(
+        "Use the account's Master PIN or a legacy backup passphrase of at least 12 characters.",
+      );
     contents = await contentSnapshot(options);
-    const encrypted = await encrypt(contents, options.passphrase),
-      checked = await decrypt(encrypted, options.passphrase);
+    if (
+      options.accountId &&
+      !contents.manifest.database.accounts.some(
+        (account) => account.id === options.accountId,
+      )
+    )
+      throw new Error(
+        "The selected backup account is not part of this server.",
+      );
+    const encrypted = await encrypt(contents, passphrase),
+      checked = await decrypt(encrypted, passphrase);
     clear(checked);
     await atomicNewFile(options.outputFile, encrypted);
     return contents.manifest;

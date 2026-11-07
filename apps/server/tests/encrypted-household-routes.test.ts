@@ -13,6 +13,7 @@ import { registerEncryptedHouseholdRoutes } from "../src/routes/encrypted-househ
 import { createApp } from "../src/app.js";
 import { readRuntimeConfig } from "../src/runtime-config.js";
 import { accountSecretKey } from "../src/stores/account-integrations.js";
+import { MasterPinService } from "../src/services/master-pin.js";
 
 const databases: StreamerDatabase[] = [];
 afterEach(() => {
@@ -20,6 +21,43 @@ afterEach(() => {
 });
 
 describe("owner-only encrypted household API", () => {
+  it("allows recovery for the local household in trusted-local mode", async () => {
+    const database = openStreamerDatabase({ filename: ":memory:" });
+    databases.push(database);
+    const app = createApp({
+      environment: "test",
+      logger: false,
+      database,
+      secretStore: new NonPersistentMemorySecretStore(),
+      accountServiceUrl: "https://accounts.example",
+      runtimeConfig: readRuntimeConfig({
+        NODE_ENV: "test",
+        STREAMERAI_ACCESS_MODE: "trusted-local",
+        STREAMERAI_WEB_ORIGIN: "http://localhost:5173",
+        STREAMERAI_AGENT_MODE: "disabled",
+      }),
+    });
+    const base = "/api/v1/account/encrypted-household";
+    try {
+      expect((await app.inject({ url: base })).statusCode).toBe(401);
+      const entered = await app.inject({
+        method: "POST",
+        url: "/api/v1/auth/local",
+        payload: { deferMasterPin: true },
+      });
+      expect(entered.statusCode).toBe(200);
+      const session = String(entered.headers["set-cookie"]).split(";", 1)[0]!;
+      const status = await app.inject({
+        url: base,
+        headers: { cookie: session },
+      });
+      expect(status.statusCode).toBe(200);
+      expect(status.json()).toMatchObject({ enabled: false });
+    } finally {
+      await app.close();
+    }
+  });
+
   it("runs through createApp paired ownership and restores over the clean first-run bootstrap", async () => {
     const root = mkdtempSync(join(tmpdir(), "streamerai-encrypted-api-"));
     const instances: ReturnType<typeof createApp>[] = [];
@@ -50,6 +88,10 @@ describe("owner-only encrypted household API", () => {
     try {
       const original = make("source");
       const destination = make("destination");
+      await new MasterPinService(original.secrets).setupLocal(
+        "local",
+        "01234567",
+      );
       original.database.profiles.update("default", {
         name: "Restored owner",
         preferences: { prompt: "Private preferences" },
@@ -84,7 +126,6 @@ describe("owner-only encrypted household API", () => {
         payload: { confirm: "enable-encrypted-household" },
       });
       expect(activated.statusCode).toBe(200);
-      const key = activated.json<{ recoveryKey: string }>().recoveryKey;
       const exported = await original.app.inject({
         method: "POST",
         url: base + "/export",
@@ -92,17 +133,34 @@ describe("owner-only encrypted household API", () => {
       });
       expect(exported.statusCode).toBe(200);
       expect(exported.body).not.toContain("PRIVATE-RECOVERY-TOKEN");
+      const wrongPin = await destination.app.inject({
+        method: "POST",
+        url: base + "/restore",
+        headers: { ...headers, cookie: destinationOwner },
+        payload: {
+          envelope: exported.json(),
+          recoveryKey: "99999999",
+          confirm: "restore-into-empty-household",
+        },
+      });
+      expect(wrongPin.statusCode).toBe(400);
+      expect(
+        await new MasterPinService(destination.secrets).read("local"),
+      ).toBeNull();
       const restored = await destination.app.inject({
         method: "POST",
         url: base + "/restore",
         headers: { ...headers, cookie: destinationOwner },
         payload: {
           envelope: exported.json(),
-          recoveryKey: key,
+          recoveryKey: "01234567",
           confirm: "restore-into-empty-household",
         },
       });
       expect(restored.statusCode).toBe(200);
+      expect(
+        (await new MasterPinService(destination.secrets).read("local"))?.pin,
+      ).toBe("01234567");
       expect(destination.database.profiles.list().map((p) => p.name)).toEqual([
         "Restored owner",
       ]);
@@ -166,10 +224,8 @@ describe("owner-only encrypted household API", () => {
     const database = openStreamerDatabase({ filename: ":memory:" });
     databases.push(database);
     database.profiles.create({ id: "default", name: "Viewer", locale: "en" });
-    const service = new EncryptedHouseholdService(
-      database,
-      new NonPersistentMemorySecretStore(),
-    );
+    const secrets = new NonPersistentMemorySecretStore();
+    const service = new EncryptedHouseholdService(database, secrets);
     const app = Fastify({ logger: false, bodyLimit: 64 * 1024 });
     registerEncryptedHouseholdRoutes(app, {
       service,
@@ -206,9 +262,13 @@ describe("owner-only encrypted household API", () => {
       });
       expect(activated.statusCode).toBe(200);
       expect(activated.headers["cache-control"]).toBe("no-store");
-      expect(activated.json<{ recoveryKey: string }>().recoveryKey).toMatch(
-        /^STRM-R1-/,
-      );
+      expect(activated.json()).not.toHaveProperty("recoveryKey");
+      expect(
+        (
+          await app.inject({ method: "POST", url: base + "/export", headers })
+        ).json().error.code,
+      ).toBe("MASTER_PIN_REQUIRED");
+      await new MasterPinService(secrets).setupLocal("local", "01234567");
       const exported = await app.inject({
         method: "POST",
         url: base + "/export",

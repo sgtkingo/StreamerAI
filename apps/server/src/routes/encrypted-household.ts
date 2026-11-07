@@ -1,8 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import {
-  ENCRYPTED_HOUSEHOLD_MAX_BYTES,
-  EncryptedHouseholdEnvelopeSchema,
-} from "@streamer-ai/contracts";
+import { ENCRYPTED_HOUSEHOLD_MAX_BYTES } from "@streamer-ai/contracts";
+import { resolveHouseholdBackup } from "../services/master-pin-household-backup.js";
 import {
   EncryptedHouseholdError,
   type EncryptedHouseholdService,
@@ -20,6 +18,13 @@ export interface EncryptedHouseholdRouteOptions {
   ): boolean | Promise<boolean>;
   getCredential?(accountId: string): Promise<AccountSyncCredential | null>;
   cloud?: EncryptedCheckpointTransport;
+  cloudBackupStatus?(accountId: string): object;
+  cloudConnected?(accountId: string): boolean;
+  cloudBackupAdopt?(
+    accountId: string,
+    revision: number,
+    datasetId: string,
+  ): void;
 }
 
 const base = "/api/v1/account/encrypted-household";
@@ -28,30 +33,22 @@ const record = (input: unknown): Record<string, unknown> => {
     throw new EncryptedHouseholdError("INVALID_ENCRYPTED_HOUSEHOLD_REQUEST");
   return input as Record<string, unknown>;
 };
-function recoverInput(input: unknown, restore: boolean) {
+async function recoverInput(input: unknown, restore: boolean) {
   const body = record(input);
-  const envelope = EncryptedHouseholdEnvelopeSchema.safeParse(body.envelope);
   if (
-    !envelope.success ||
     typeof body.recoveryKey !== "string" ||
     body.recoveryKey.length > 100 ||
     (restore && body.confirm !== "restore-into-empty-household")
   ) {
     throw new EncryptedHouseholdError("INVALID_ENCRYPTED_HOUSEHOLD_REQUEST");
   }
-  return { envelope: envelope.data, recoveryKey: body.recoveryKey };
+  return resolveHouseholdBackup(body.envelope, body.recoveryKey);
 }
 function confirm(input: unknown, expected: string): void {
   if (record(input).confirm !== expected)
     throw new EncryptedHouseholdError(
       "ENCRYPTED_HOUSEHOLD_CONFIRMATION_REQUIRED",
     );
-}
-function revision(input: unknown): number {
-  const value = record(input).expectedRevision;
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0)
-    throw new EncryptedHouseholdError("INVALID_ENCRYPTED_CHECKPOINT_REVISION");
-  return value;
 }
 
 /** Authenticated owner-only recovery surfaces; never logs request bodies or decrypted snapshots. */
@@ -115,55 +112,66 @@ export function registerEncryptedHouseholdRoutes(
 
   route("GET", "", (accountId) => ({
     ...options.service.status(accountId),
-    cloudConfigured: !!options.cloud,
+    cloudConfigured:
+      !!options.cloud && (options.cloudConnected?.(accountId) ?? true),
+    ...options.cloudBackupStatus?.(accountId),
   }));
   route("POST", "/activate", (accountId, request) => {
     confirm(request.body, "enable-encrypted-household");
-    return options.service.activate(accountId);
+    return options.service.activate(accountId).then(({ status }) => status);
   });
   route("POST", "/export", async (accountId, _request, reply) => {
-    const envelope = await options.service.export(accountId);
+    const backup = await options.service.exportLocalBackup(accountId);
     reply.header(
       "content-disposition",
-      `attachment; filename="streamerai-household-${envelope.snapshotId}.json"`,
+      `attachment; filename="streamerai-household-${backup.envelope.snapshotId}.json"`,
     );
-    return envelope;
+    return backup;
   });
-  route("POST", "/preview", (_accountId, request) => {
-    const input = recoverInput(request.body, false);
+  route("POST", "/preview", async (_accountId, request) => {
+    const input = await recoverInput(request.body, false);
     return options.service.preview(input.envelope, input.recoveryKey);
   });
-  route("POST", "/restore", (accountId, request) => {
-    const input = recoverInput(request.body, true);
-    return options.service.restore(
+  route("POST", "/restore", async (accountId, request) => {
+    const input = await recoverInput(request.body, true);
+    const cloudRevision = record(request.body).cloudRevision;
+    if (cloudRevision !== undefined) {
+      if (
+        typeof cloudRevision !== "number" ||
+        !Number.isSafeInteger(cloudRevision) ||
+        cloudRevision < 1
+      )
+        throw new EncryptedHouseholdError(
+          "INVALID_ENCRYPTED_CHECKPOINT_REVISION",
+        );
+      const connection = await credential(accountId);
+      const current = await connection.cloud.read(connection.credential);
+      if (
+        current.revision !== cloudRevision ||
+        JSON.stringify(current.envelope) !==
+          JSON.stringify(record(request.body).envelope)
+      )
+        throw new EncryptedHouseholdError("ENCRYPTED_CHECKPOINT_CONFLICT");
+    }
+    const result = await options.service.restore(
       accountId,
       input.envelope,
       input.recoveryKey,
+      input.cloudRecovery,
+      input.cloudRecovery
+        ? (record(request.body).recoveryKey as string)
+        : undefined,
     );
-  });
-  route("POST", "/rotate-recovery", (accountId, request) => {
-    confirm(request.body, "rotate-recovery-key");
-    return options.service.rotateRecoveryKey(accountId);
+    if (typeof cloudRevision === "number")
+      options.cloudBackupAdopt?.(
+        accountId,
+        cloudRevision,
+        input.envelope.datasetId,
+      );
+    return result;
   });
   route("GET", "/cloud", async (accountId) => {
     const connection = await credential(accountId);
     return connection.cloud.read(connection.credential);
-  });
-  route("PUT", "/cloud", async (accountId, request) => {
-    const expectedRevision = revision(request.body);
-    confirm(request.body, "upload-encrypted-checkpoint");
-    const connection = await credential(accountId);
-    const envelope = await options.service.export(accountId);
-    return connection.cloud.write(
-      connection.credential,
-      expectedRevision,
-      envelope,
-    );
-  });
-  route("DELETE", "/cloud", async (accountId, request) => {
-    const expectedRevision = revision(request.body);
-    confirm(request.body, "delete-encrypted-checkpoint");
-    const connection = await credential(accountId);
-    return connection.cloud.remove(connection.credential, expectedRevision);
   });
 }
