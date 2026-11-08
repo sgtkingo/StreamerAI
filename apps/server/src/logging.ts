@@ -38,10 +38,94 @@ export const LOG_REDACTION_PATHS = [
   "credentials.*",
 ] as const;
 
+const REDACTED = "[REDACTED]";
+const errorTypes = new Set([
+  "Error",
+  "TypeError",
+  "RangeError",
+  "SyntaxError",
+  "ReferenceError",
+  "URIError",
+  "EvalError",
+  "AggregateError",
+  "AbortError",
+  "TimeoutError",
+]);
+const errorCodes = new Set([
+  "ENOENT",
+  "EACCES",
+  "EPERM",
+  "EADDRINUSE",
+  "ECONNREFUSED",
+  "ECONNRESET",
+  "ETIMEDOUT",
+  "ENOTFOUND",
+  "EPIPE",
+  "ABORT_ERR",
+  "SQLITE_BUSY",
+  "SQLITE_ERROR",
+]);
+
+function sensitiveKey(key: string): boolean {
+  const normalized = key.replace(/[^a-z0-9]/gi, "").toLowerCase();
+  return (
+    normalized === "body" ||
+    normalized === "payload" ||
+    normalized === "query" ||
+    normalized === "querystring" ||
+    normalized === "searchparams" ||
+    normalized === "headers" ||
+    normalized === "confirmation" ||
+    normalized === "otp" ||
+    normalized === "pwd" ||
+    normalized === "pass" ||
+    normalized === "passcode" ||
+    normalized === "wst" ||
+    normalized === "proof" ||
+    normalized === "authorization" ||
+    normalized === "auth" ||
+    normalized === "cookie" ||
+    normalized === "setcookie" ||
+    normalized === "tokens" ||
+    normalized === "recoverykey" ||
+    normalized === "backupkey" ||
+    normalized === "devicecode" ||
+    normalized === "usercode" ||
+    normalized === "verificationcode" ||
+    normalized === "pairingcode" ||
+    normalized === "url" ||
+    normalized === "uri" ||
+    normalized === "href" ||
+    normalized.endsWith("key") ||
+    normalized.includes("verifier") ||
+    /^pin(?:hash|code|value|confirmation)/.test(normalized) ||
+    normalized.includes("password") ||
+    normalized.includes("passphrase") ||
+    normalized.includes("masterpin") ||
+    normalized.endsWith("pin") ||
+    normalized.endsWith("pinhash") ||
+    normalized.endsWith("pincode") ||
+    normalized.endsWith("token") ||
+    normalized.includes("secret") ||
+    normalized.includes("credential")
+  );
+}
+
 function requestSerializer(request: Record<string, unknown>) {
-  const rawUrl = typeof request.url === "string" ? request.url : undefined;
+  if (!request || typeof request !== "object") return {};
+  const route = request.routeOptions;
+  const template =
+    route && typeof route === "object" && "url" in route
+      ? route.url
+      : undefined;
+  const rawUrl =
+    typeof template === "string"
+      ? template
+      : typeof request.url === "string"
+        ? request.url
+        : undefined;
   const path = rawUrl
-    ?.split("?", 1)[0]
+    ?.split(/[?#]/, 1)[0]
     ?.replace(/(\/api\/v1\/playback\/grants\/)[^/]+/g, "$1[REDACTED]");
 
   return {
@@ -49,10 +133,28 @@ function requestSerializer(request: Record<string, unknown>) {
     method: request.method,
     // Query values can contain accidentally supplied secrets. Keep only path.
     url: path,
-    host: request.host,
+    host: safeHost(request.host),
     remoteAddress: request.remoteAddress,
     remotePort: request.remotePort,
   };
+}
+
+function safeHost(value: unknown): string | undefined {
+  if (typeof value !== "string" || value.length > 255) return undefined;
+  try {
+    const url = new URL(`http://${value}`);
+    if (
+      url.username ||
+      url.password ||
+      url.pathname !== "/" ||
+      url.search ||
+      url.hash
+    )
+      return undefined;
+    return url.host;
+  } catch {
+    return undefined;
+  }
 }
 
 function safeErrorSerializer(error: unknown) {
@@ -60,10 +162,85 @@ function safeErrorSerializer(error: unknown) {
     return { type: "UnknownError" };
   }
 
-  const candidate = error as { name?: unknown; code?: unknown };
-  return {
-    type: typeof candidate.name === "string" ? candidate.name : "Error",
-    code: typeof candidate.code === "string" ? candidate.code : undefined,
+  try {
+    const candidate = error as {
+      name?: unknown;
+      type?: unknown;
+      code?: unknown;
+    };
+    const type = candidate.name ?? candidate.type;
+    return {
+      type: typeof type === "string" && errorTypes.has(type) ? type : "Error",
+      code:
+        typeof candidate.code === "string" && errorCodes.has(candidate.code)
+          ? candidate.code
+          : undefined,
+    };
+  } catch {
+    return { type: "Error" };
+  }
+}
+
+/** Copy structured records before logging so sensitive values at any depth never reach Pino. */
+function sanitizeRecord(
+  record: Record<string, unknown>,
+): Record<string, unknown> {
+  const ancestors = new WeakSet<object>();
+  const visit = (value: unknown, depth: number): unknown => {
+    if (value instanceof Error) return safeErrorSerializer(value);
+    if (value === null || typeof value !== "object") return value;
+    if (value instanceof Date)
+      return Number.isFinite(value.getTime())
+        ? value.toISOString()
+        : "[INVALID DATE]";
+    if (ArrayBuffer.isView(value) || value instanceof ArrayBuffer)
+      return REDACTED;
+    if (depth >= 12) return "[TRUNCATED]";
+    if (ancestors.has(value)) return "[Circular]";
+    ancestors.add(value);
+    try {
+      if (Array.isArray(value))
+        return value.map((item) => visit(item, depth + 1));
+      const result: Record<string, unknown> = {};
+      for (const [key, descriptor] of Object.entries(
+        Object.getOwnPropertyDescriptors(value),
+      )) {
+        if (!descriptor.enumerable) continue;
+        let sanitized: unknown;
+        if (depth === 0 && key === "req")
+          sanitized =
+            "value" in descriptor
+              ? requestSerializer(descriptor.value as Record<string, unknown>)
+              : undefined;
+        else if (sensitiveKey(key) || !("value" in descriptor))
+          sanitized = REDACTED;
+        else if (["err", "error", "cause"].includes(key.toLowerCase()))
+          sanitized = safeErrorSerializer(descriptor.value);
+        else sanitized = visit(descriptor.value, depth + 1);
+        Object.defineProperty(result, key, {
+          value: sanitized,
+          enumerable: true,
+          writable: true,
+          configurable: true,
+        });
+      }
+      return result;
+    } finally {
+      ancestors.delete(value);
+    }
+  };
+  return visit(record, 0) as Record<string, unknown>;
+}
+
+/** Pino resets the bindings formatter on child loggers, so sanitize before it serializes bindings. */
+function protectBindings(logger: Logger): void {
+  const child = logger.child;
+  const setBindings = logger.setBindings;
+  logger.child = function (this: Logger, ...args: Parameters<Logger["child"]>) {
+    return Reflect.apply(child, this, [sanitizeRecord(args[0]), args[1]]);
+  } as Logger["child"];
+  logger.setBindings = function (bindings) {
+    return setBindings.call(this, sanitizeRecord(bindings));
   };
 }
 
@@ -111,8 +288,28 @@ export function createAppLogger({
       req: requestSerializer,
       err: safeErrorSerializer,
       error: safeErrorSerializer,
+      cause: safeErrorSerializer,
     },
+    formatters: { log: sanitizeRecord, bindings: sanitizeRecord },
+    hooks: {
+      logMethod(args, method) {
+        const first = args[0];
+        if (
+          args[1] === undefined &&
+          first &&
+          typeof first === "object" &&
+          (first instanceof Error ||
+            ("err" in first && first.err && !("msg" in first)))
+        )
+          return method.apply(this, [first, "Error"]);
+        return method.apply(this, args);
+      },
+    },
+    onChild: protectBindings,
   };
 
-  return destination === undefined ? pino(options) : pino(options, destination);
+  const logger =
+    destination === undefined ? pino(options) : pino(options, destination);
+  protectBindings(logger);
+  return logger;
 }

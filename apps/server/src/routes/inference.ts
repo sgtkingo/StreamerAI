@@ -598,7 +598,7 @@ export function registerInferenceRoutes(
       return { ok: true, model: config.model };
     } catch (cause) {
       request.log.warn(
-        { code: "OLLAMA_PULL_FAILED", profileId, cause },
+        { code: "OLLAMA_PULL_FAILED", profileId, err: cause },
         "Ollama model download failed",
       );
       return reply.code(controller.signal.aborted ? 504 : 502).send({

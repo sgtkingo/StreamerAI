@@ -201,4 +201,4 @@ DONE: V Settings sekci "Profile PIN" zobrazuj hlášku "Profile PIN saved" nebo 
 
 DONE: V Onbordingu by se měl pod blokem "Your viewing data stays at home." v sekci Welcome, objevit i druh blok s importem zálohy. Přesun tam "Restore an encrypted household instead of starting over", klíč ted bude Master PIN, takže při rekovery se již nevytváří, použe žádá.
 
-- Po instalaci serveru se na https://localhost:8443/ objevila Onboarding obrazovka místo párovací - první je nutné přihlásit účet, nebo vybrat lokální, a až poté Onboarding. Příhlášený účet přenese synchronizaci automaticky, lokální účet půjde syncnout pomocí ""Restore an encrypted household instead of starting over"". 
+- Přidat Report a bug i do klienta, Open household administration odstranit z hlavní profilové nabídky, vylepšit UI/UX sekce "Household services and devices" v Settings, v rámci https://cloud.streamer-ai.workers.dev/account nepoužívat na převod profilů a sloučení domácnsti UID domácnosti ale vybrat z nabídky. 
