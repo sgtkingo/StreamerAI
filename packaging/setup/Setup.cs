@@ -70,8 +70,8 @@ internal static class Program {
                         if (rule.IdentityReference.Value == "S-1-5-32-545" && (privateState || rule.FileSystemRights != (FileSystemRights.ReadAndExecute | FileSystemRights.Synchronize))) throw new InvalidDataException("Public program access must be read-only.");
                     }
                 }
-                if (!NeedsBootstrap(Json.Deserialize<Dictionary<string, object>>("{\"enabled\":true,\"claimed\":false}")) || NeedsBootstrap(Json.Deserialize<Dictionary<string, object>>("{\"enabled\":true,\"claimed\":true}")) || NeedsBootstrap(Json.Deserialize<Dictionary<string, object>>("{\"enabled\":false,\"claimed\":false}"))) throw new InvalidDataException("Owner handoff policy check failed.");
-                try { NeedsBootstrap(Json.Deserialize<Dictionary<string, object>>("{\"enabled\":\"false\",\"claimed\":false}")); throw new InvalidOperationException("Malformed owner status was accepted."); } catch (InvalidDataException) { }
+                if (!NeedsInitialAdministration(Json.Deserialize<Dictionary<string, object>>("{\"enabled\":true,\"claimed\":false}")) || NeedsInitialAdministration(Json.Deserialize<Dictionary<string, object>>("{\"enabled\":true,\"claimed\":true}")) || NeedsInitialAdministration(Json.Deserialize<Dictionary<string, object>>("{\"enabled\":false,\"claimed\":false}"))) throw new InvalidDataException("Owner handoff policy check failed.");
+                try { NeedsInitialAdministration(Json.Deserialize<Dictionary<string, object>>("{\"enabled\":\"false\",\"claimed\":false}")); throw new InvalidOperationException("Malformed owner status was accepted."); } catch (InvalidDataException) { }
                 Console.WriteLine(Json.Serialize(new { format = "streamerai-setup/v1", version = Configuration.version, reviewOnly = Configuration.reviewOnly, preview = Configuration.preview, payloadVerified = true, gatewayRepairVerified = true, exactModelMatchVerified = true, protectedCreationVerified = true, ownerHandoffVerified = true, serverUrl = ServerUrl, recommendedModel = Model }));
                 return 0;
             }
@@ -185,7 +185,7 @@ internal static class Program {
     }
     private static void AssertManagedState(string state) {
         // ProgramData itself uses normal OS ACLs; only this private subtree is scoped here.
-        foreach (string relative in new[] { "", "setup-receipt.json", "data/installation-bootstrap.key", "keys/master.key", "gateway/pki/authorities/local/root.crt" }) AssertManagedDescendant(state, relative, true);
+        foreach (string relative in new[] { "", "setup-receipt.json", "keys/master.key", "gateway/pki/authorities/local/root.crt" }) AssertManagedDescendant(state, relative, true);
     }
     internal static string Hash(Stream stream) {
         using (SHA256 sha = SHA256.Create()) return BitConverter.ToString(sha.ComputeHash(stream)).Replace("-", "").ToLowerInvariant();
@@ -355,14 +355,13 @@ internal static class Program {
                         }
                     }
                     AssertManagedState(state);
-                    bool needsBootstrap;
                     using (X509Certificate2 certificate = new X509Certificate2(certificateFile)) {
                         bool isCa = certificate.Extensions.OfType<X509BasicConstraintsExtension>().Any(extension => extension.CertificateAuthority);
                         if (!isCa || certificate.HasPrivateKey) throw new InvalidDataException("The local HTTPS certificate is not a public CA certificate.");
                         using (X509Store store = new X509Store(StoreName.Root, StoreLocation.LocalMachine)) { store.Open(OpenFlags.ReadWrite); store.Add(certificate); }
                         progress("Checking the server through its own trusted HTTPS certificate…");
                         WaitForTrustedServer(certificate.Thumbprint);
-                        needsBootstrap = NeedsBootstrap(ReadTrustedServerJson("/api/v1/installation/status", certificate.Thumbprint));
+                        NeedsInitialAdministration(ReadTrustedServerJson("/api/v1/installation/status", certificate.Thumbprint));
                     }
                     progress("Creating Start menu shortcuts…");
                     string setupDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "StreamerAI", "setup");
@@ -382,16 +381,8 @@ internal static class Program {
                     shortcut.GetType().InvokeMember("TargetPath", BindingFlags.SetProperty, null, shortcut, new object[] { retainedSetup });
                     shortcut.GetType().InvokeMember("Arguments", BindingFlags.SetProperty, null, shortcut, new object[] { "--configure-ai" });
                     shortcut.GetType().InvokeMember("Save", BindingFlags.InvokeMethod, null, shortcut, new object[0]);
-                    string token = null;
-                    if (needsBootstrap) {
-                        string bootstrap = Path.Combine(state, "data", "installation-bootstrap.key");
-                        WaitForFile(bootstrap, 60000);
-                        AssertManagedState(state);
-                        token = File.ReadAllText(bootstrap).Trim();
-                        if (!System.Text.RegularExpressions.Regex.IsMatch(token, "^[a-f0-9]{64}$")) throw new InvalidDataException("The owner setup key is invalid.");
-                    }
                     WriteManagedText(receipt, Json.Serialize(new { version = Configuration.version, phase = "complete" }));
-                    writer.WriteLine(Json.Serialize(new { kind = "installed", bootstrap = token }));
+                    writer.WriteLine(Json.Serialize(new { kind = "installed" }));
                     return 0;
                 } catch (Exception exception) {
                     writer.WriteLine(Json.Serialize(new { kind = "error", code = FailureCode(exception), message = exception.Message }));
@@ -441,7 +432,7 @@ internal static class Program {
             return result;
         }
     }
-    private static bool NeedsBootstrap(IDictionary<string, object> status) {
+    private static bool NeedsInitialAdministration(IDictionary<string, object> status) {
         object enabled, claimed;
         if (!status.TryGetValue("enabled", out enabled) || !(enabled is bool) || !status.TryGetValue("claimed", out claimed) || !(claimed is bool)) throw new InvalidDataException("The server owner status must contain valid boolean fields.");
         return (bool)enabled && !(bool)claimed;
@@ -494,7 +485,6 @@ internal sealed class SetupWindow : Form {
     private readonly Label resultSummary = new Label();
     private readonly TextBox resultDetails = new TextBox();
     private bool working, installed, aiAvailable, modelAvailable, aiFailed, skipRequested;
-    private string bootstrap;
     private CancellationTokenSource aiCancellation;
 
     internal SetupWindow(bool configureOnly) {
@@ -665,7 +655,7 @@ internal sealed class SetupWindow : Form {
                             if (!System.Text.RegularExpressions.Regex.IsMatch(code, "^[A-Z][A-Z0-9_]{0,63}$")) code = "SERVER_SETUP_FAILED";
                             throw new SetupFailure(code, Convert.ToString(message["message"]));
                         }
-                        else if (kind == "installed") { bootstrap = Convert.ToString(message["bootstrap"]); confirmed = true; }
+                        else if (kind == "installed") { confirmed = true; }
                     }
                 }
             });
@@ -829,8 +819,7 @@ internal sealed class SetupWindow : Form {
         }
     }
     private void OpenBrowser() {
-        string url = Program.ServerUrl;
-        if (!String.IsNullOrEmpty(bootstrap)) { url += "/#setup=" + Uri.EscapeDataString(bootstrap); bootstrap = null; }
+        string url = Program.ServerUrl + "/admin";
         Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
     }
     private static string ExistingOllama() {

@@ -38,7 +38,10 @@ services:
       STREAMERAI_LOG_LEVEL: ${STREAMERAI_LOG_LEVEL:-info}
       STREAMERAI_HOST: 0.0.0.0
       STREAMERAI_ACCOUNT_SERVICE_URL: ${STREAMERAI_ACCOUNT_SERVICE_URL:-}
+      STREAMERAI_ACCESS_MODE: ${STREAMERAI_ACCESS_MODE:-paired}
       STREAMERAI_WEB_ORIGIN: ${STREAMERAI_WEB_ORIGIN:-http://localhost:8080}
+      STREAMERAI_ADVERTISE_URL: ${STREAMERAI_ADVERTISE_URL:-}
+      STREAMERAI_DISCOVERY_ENABLED: ${STREAMERAI_DISCOVERY_ENABLED:-true}
       STREAMERAI_PORT: 4400
       STREAMERAI_DATA_DIR: /app/data
       STREAMERAI_SECRET_BACKEND: encrypted-file
@@ -57,6 +60,8 @@ services:
       - streamerai_master_key
     volumes:
       - streamerai_data:/app/data
+    ports:
+      - "47777:47777/udp"
     healthcheck:
       test:
         - CMD
@@ -77,7 +82,7 @@ services:
       server:
         condition: service_healthy
     ports:
-      - "127.0.0.1:8080:8080"
+      - "${STREAMERAI_WEB_BIND:-0.0.0.0}:8080:8080"
 
 secrets:
   streamerai_master_key:

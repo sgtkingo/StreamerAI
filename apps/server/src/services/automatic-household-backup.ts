@@ -3,6 +3,12 @@ import type { StreamerDatabase } from "@streamer-ai/database";
 import type { AccountSyncCredential } from "./account-sync-transport.js";
 import { EncryptedHouseholdService } from "./encrypted-household.js";
 import { EncryptedCheckpointTransport } from "./encrypted-sync-transport.js";
+import { householdPendingKey } from "./household-state.js";
+import {
+  backupScheduleKey,
+  defaultBackupSchedule,
+  type HouseholdBackupSchedule,
+} from "./household-backup-schedule.js";
 
 interface BackupState {
   revision: number;
@@ -72,9 +78,30 @@ export class AutomaticHouseholdBackup {
     return run;
   }
 
+  async idle(accountId: string): Promise<void> {
+    await this.running.get(accountId)?.catch(() => undefined);
+  }
+
   private async perform(accountId: string): Promise<void> {
     const generation = this.generations.get(accountId) ?? 0;
     try {
+      if (
+        this.database.settings.get(householdPendingKey(accountId)) ||
+        this.database.settings.get(`household.mergeBusy.${accountId}`)
+      )
+        return;
+      const schedule =
+        this.database.settings.get<HouseholdBackupSchedule>(
+          backupScheduleKey(accountId),
+        ) ?? defaultBackupSchedule;
+      if (!schedule.cloudEnabled) return;
+      const saved = this.database.settings.get<BackupState>(key(accountId));
+      if (
+        saved &&
+        Date.parse(saved.lastSavedAt) + schedule.intervalMinutes * 60_000 >
+          this.now().getTime()
+      )
+        return;
       const credential = await this.getCredential(accountId);
       if (!credential) throw new Error("Cloud account is not connected.");
       const remote = await this.cloud.read(credential);

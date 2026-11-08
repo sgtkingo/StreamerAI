@@ -8,7 +8,6 @@ import { InfoTip } from "./InfoTip";
 
 export function AccountSecurity({ api }: { api: StreamerApi }) {
   const [account, setAccount] = useState<AccountOverview | null>(null);
-  const [pin, setPin] = useState("");
   const [changeOpen, setChangeOpen] = useState(false);
   const [currentPin, setCurrentPin] = useState("");
   const [newPin, setNewPin] = useState("");
@@ -18,16 +17,20 @@ export function AccountSecurity({ api }: { api: StreamerApi }) {
   const { showToast } = useToasts();
   useEffect(() => {
     let active = true;
-    void api
-      .getAccount?.()
-      .then((value) => {
-        if (active) setAccount(value);
-      })
-      .catch((reason) => {
-        if (active) setError(safeErrorMessage(reason));
-      });
+    const refresh = () =>
+      void api
+        .getAccount?.()
+        .then((value) => {
+          if (active) setAccount(value);
+        })
+        .catch((reason) => {
+          if (active) setError(safeErrorMessage(reason));
+        });
+    refresh();
+    window.addEventListener("streamer:household-changed", refresh);
     return () => {
       active = false;
+      window.removeEventListener("streamer:household-changed", refresh);
     };
   }, [api]);
 
@@ -69,16 +72,11 @@ export function AccountSecurity({ api }: { api: StreamerApi }) {
               </button>
               {account?.account.cloudLinked && account.manageUrl && (
                 <span>
-                  <a
-                    href={account.manageUrl + "#master-pin-settings"}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    Forgot PIN?
-                  </a>{" "}
+                  <a href="/admin/recover">Forgot PIN?</a>{" "}
                   <InfoTip label="How to recover your Master PIN">
-                    Sign in to your online account to reset your Master PIN.
-                    Existing backups still require their original PIN.
+                    Sign in with the cloud account connected to this household
+                    to reset its Master PIN on this server. Existing backups
+                    still require their original PIN.
                   </InfoTip>
                 </span>
               )}
@@ -102,7 +100,6 @@ export function AccountSecurity({ api }: { api: StreamerApi }) {
                       setCurrentPin("");
                       setNewPin("");
                       setConfirmation("");
-                      setPin("");
                       setChangeOpen(false);
                       showToast(
                         "Master PIN changed. New backups will use the new PIN.",
@@ -157,46 +154,6 @@ export function AccountSecurity({ api }: { api: StreamerApi }) {
             If you forget the Master PIN for a local account, it cannot be
             recovered.
           </p>
-        )}
-        {api.verifyMasterPin && (
-          <form
-            className="form-stack"
-            onSubmit={(event) => {
-              event.preventDefault();
-              if (pending || !/^\d{8}$/.test(pin)) return;
-              setPending(true);
-              setError("");
-              void api.verifyMasterPin!(pin)
-                .then(() => {
-                  setPin("");
-                  showToast(
-                    "Master PIN verified. Backups will use this PIN automatically.",
-                    "success",
-                  );
-                })
-                .catch((reason) => setError(safeErrorMessage(reason)))
-                .finally(() => setPending(false));
-            }}
-          >
-            <p className="settings-note">
-              Enter your current PIN once on this server to enable automatic
-              backup encryption.
-            </p>
-            <DigitSlotsInput
-              label="Master PIN (8 digits)"
-              value={pin}
-              onChange={setPin}
-              className="field--compact"
-              disabled={pending}
-            />
-            <button
-              className="button button--secondary"
-              type="submit"
-              disabled={pending || !/^\d{8}$/.test(pin)}
-            >
-              Verify Master PIN for backups
-            </button>
-          </form>
         )}
         {error && (
           <p className="account-inline-error" role="alert">

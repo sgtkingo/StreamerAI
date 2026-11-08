@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'"
+    />
+    <title>StreamerAI — Home server</title>
+    <link rel="stylesheet" href="renderer.css" />
+    <script src="renderer.js" defer></script>
+  </head>
+  <body>
+    <main>
+      <p class="brand">STREAMER<span>AI</span></p>
+      <p class="eyebrow">YOUR CINEMA, AT HOME</p>
+      <h1>Connect to your<br />home server.</h1>
+      <p class="intro">
+        Choose the server on your network. Your profiles, services and watch
+        progress stay together on that server.
+      </p>
+      <section aria-labelledby="servers-title">
+        <div class="section-heading">
+          <h2 id="servers-title">Nearby servers</h2>
+          <button id="refresh" type="button">Search again</button>
+        </div>
+        <p id="discovery-status" role="status">Looking for your server…</p>
+        <div id="servers" class="servers"></div>
+      </section>
+      <section aria-labelledby="manual-title">
+        <h2 id="manual-title">Enter a server address</h2>
+        <form id="manual-form">
+          <label for="address">Server URL or QR connection link</label>
+          <div class="manual-row">
+            <input
+              id="address"
+              type="text"
+              placeholder="https://streamerai.local:8443"
+              autocomplete="url"
+              autocapitalize="none"
+              spellcheck="false"
+              required
+              maxlength="4096"
+            /><button id="connect" class="primary" type="submit">
+              Connect
+            </button>
+          </div>
+        </form>
+        <p class="hint">
+          Use the address or connection QR link shown by the server owner.
+          Network isolation, VPNs and Docker may hide servers from automatic
+          discovery.
+        </p>
+      </section>
+      <section id="selected" hidden>
+        <h2>Saved server</h2>
+        <p id="selected-name"></p>
+        <button id="reconnect" class="primary" type="button">Open server</button
+        ><button id="forget" type="button">
+          Forget this server and pairing
+        </button>
+      </section>
+      <p id="error" class="error" role="alert"></p>
+      <footer>
+        <span id="client-id"></span>
+        <p>
+          After connecting, the home server will ask its owner to approve this
+          device. Server settings are also available from the StreamerAI menu.
+        </p>
+      </footer>
+    </main>
+  </body>
+</html>

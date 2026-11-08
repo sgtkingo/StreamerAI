@@ -19,8 +19,10 @@ deployment and agent decisions live in [`instructions/`](instructions/).
   provider ID mappings, durable discovery sessions/idempotency, Library and
   editable History.
 - TMDB connection verification designed around an in-app guided setup flow.
-- Google account login, TV pairing by QR/code, up to five profiles per account,
-  optional local profile PINs and Cloudflare Workers/D1 user-state sync.
+- One household per home server, with up to five profiles, local QR/code or
+  Master PIN pairing, and optional Cloudflare Workers/D1 sync and encrypted backups.
+- Separate household administration at `/admin`, plus thin Windows, Linux,
+  macOS and Android/Android TV clients that discover and open the home server.
 - Provider-neutral contracts and registries, TMDB metadata, guided Webshare
   authentication, an optional authenticated Hellspy stream adapter, an FFmpeg-backed in-app player and Ollama structured-agent
   adapters.
@@ -59,10 +61,23 @@ node scripts/generate-master-key.mjs
 docker compose up --build
 ```
 
-Open `http://localhost:8080`. Compose keeps the API private, persists SQLite and
+Open `http://localhost:8080/admin` to create or import the household.
+The viewing application remains at `http://localhost:8080/`.
+Compose keeps the HTTP API behind the web proxy, persists SQLite and
 the encrypted credential vault in a named volume, and reaches host-native
 Ollama through `host.docker.internal`. The master key stays in the ignored
 `.secrets` directory and must be backed up separately.
+
+On a server without a household, `/admin` opens **Set up your household** directly:
+create a household, import a file, or restore from the cloud. New households
+require a new 8-digit Master PIN; either restore option requires the original
+backup PIN. No installation key is required. Administration becomes available
+after the PIN has been created or the backup has been decrypted successfully.
+Additional clients request pairing and are approved
+by the owner in `/admin`; the same pairing works with or without cloud management.
+An 8-digit Master PIN can also authorize clients and household administrators.
+An explicit `STREAMERAI_ACCESS_MODE=trusted-local` override retains trusted access
+for isolated development or an existing deployment that requires it.
 
 The web application is served by Vite during development and forwards `/api`
 requests to the local server. Copy `.env.example` to `.env` only for non-secret
@@ -71,11 +86,36 @@ not in environment files or source control.
 
 To enable Google accounts, set `STREAMERAI_ACCOUNT_SERVICE_URL` to the deployed
 identity Worker and restart the server. See [account setup and migration](docs/ACCOUNTS.md)
-and [Cloudflare deployment](docs/CLOUD_AUTH.md). Leaving it empty retains trusted
-local operation. With cloud accounts configured, **Continue locally** also
-opens an isolated household without registration. Online accounts support Google
-and e-mail codes; synchronization can be paused independently. Apple and Google
-Drive remain planned.
+and [Cloudflare deployment](docs/CLOUD_AUTH.md). Leaving it empty keeps the
+household on the home server without cloud management. Online accounts support
+Google and e-mail codes. Apple and Google Drive remain planned.
+
+The household owns its profiles, shared services and Master PIN. Connecting or
+disconnecting cloud management preserves its identity, data and paired clients.
+A cloud account can manage several households. Creating a household asks for a
+new Master PIN; importing one asks for the existing backup PIN. Cloud login can
+select and restore an existing household. The PIN stays in the home server's
+encrypted credential vault, and is never uploaded to the cloud.
+
+Automatic local backups default to once an hour under
+`data/household-backups/<household-id>/`. Cloud backups use the same Master PIN;
+both schedules can be changed in household administration. Portable backups
+include profiles, viewing data, conversations and shared provider credentials;
+media files, AI models, local paths and device authorizations require separate
+server backups. Structured cloud synchronization contains allowlisted profile
+and viewing records; encrypted backups are a separate channel.
+
+Native clients, installation/build commands and Android TV notes are documented
+in [apps/client/README.md](apps/client/README.md). LAN discovery uses UDP port
+47777, verifies the discovered server identity over HTTP, and offers manual
+server selection when multicast/broadcast is unavailable. In Docker, set
+`STREAMERAI_ADVERTISE_URL` to the home server's reachable web address, for example
+`http://192.168.1.20:8080`, rather than its container address. A reverse proxy
+using HTTPS should also set `STREAMERAI_WEB_ORIGIN` to that public HTTPS origin.
+
+This branch's cloud API requires D1 migration `0011_households.sql` and the
+matching Worker version; migration and production deployment are separate
+operator steps. See [the household architecture](docs/HOUSEHOLD_SERVER_CLIENT.md).
 
 ## Quality checks
 

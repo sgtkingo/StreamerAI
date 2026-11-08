@@ -33,27 +33,16 @@ vyžadována HTTPS adresa; HTTP je přípustné jen na localhostu. Nové instal�
 používají `https://localhost:8443` přes interní CA gateway a režim `paired`.
 Existující explicitní nastavení při obnově respektují; běžící instalaci nemění.
 
-Při prvním startu vznikne v datovém adresáři `installation-bootstrap.key`.
-Instalátor předá jednorázové převzetí správce přímo do prohlížeče; fragment
-`#setup` se před odesláním odstraní z adresy a klíč se neukládá do prohlížeče.
-Při ručním nasazení lze klíč přečíst na hostiteli a zadat do uvítací obrazovky.
-Klíč se nepíše do logů a po použití se odstraní. Další zařízení žádá o přístup a vlastník
-v Nastavení opíše jeho osmiznakový kód. V Nastavení lze jeho přístup odvolat.
-Cloudové přihlášení a oprávnění domácnosti zůstávají další vrstvou.
+A fresh server opens `/admin` directly to **Set up your household**, without a
+one-time installation key. Creating a household requires a new 8-digit Master
+PIN; file import and cloud restore require the backup's existing PIN. Until that
+step succeeds the setup browser cannot manage profiles, devices or host services.
+Additional devices use the six-digit local pairing flow or the household PIN.
 
-Párovací cookie má maximální platnost 90 dní a 30 dní neaktivity. Obnovu
-ztraceného či expirovaného owner přístupu lze připravit místním nástrojem na
-zastaveném serveru:
-
-```sh
-node apps/server/dist/installation-recovery.js --reset-owner --data-dir /absolute/server/data
-```
-
-Nástroj se v tomto kroku nespouští na uživatelských datech. Při ručním spuštění
-odvolá relace zařízení a vytvoří nový setup klíč; profily a vault zachová.
-V režimu `paired` zatím není zpřístupněný současný interní MCP/CLI bridge:
-nepřidáváme výjimku obcházející schválení zařízení. V dosavadním režimu se jeho
-chování nemění. Řízené propojení vyžaduje samostatné bezpečnostní posouzení.
+Device access can be revoked by the server administrator. The offline
+`installation-recovery.js --reset-owner` command revokes device sessions while
+preserving the household and its Master PIN. It does not generate a setup key;
+reconnect to `/admin` using the existing household PIN.
 
 ## Praktická obnova a přenos
 

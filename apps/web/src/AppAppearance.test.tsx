@@ -172,9 +172,7 @@ describe("application appearance synchronization", () => {
     fireEvent.change(screen.getByLabelText("Theme"), {
       target: { value: "christmas" },
     });
-    for (let step = 0; step < 3; step += 1) {
-      fireEvent.click(screen.getByRole("button", { name: /^Continue/ }));
-    }
+    fireEvent.click(screen.getByRole("button", { name: /^Continue/ }));
     fireEvent.click(screen.getByRole("button", { name: /Enter StreamerAI/ }));
     await waitFor(() =>
       expect(api.completeSetup).toHaveBeenCalledWith(

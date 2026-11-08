@@ -18,7 +18,6 @@ import {
   type StreamerDatabase,
 } from "@streamer-ai/database";
 import type { ProviderFetch } from "../integrations/tmdb-api-client.js";
-import { encryptedHouseholdSettingKey } from "./encrypted-household.js";
 import {
   D1AccountSyncTransport,
   SyncAuthenticationError,
@@ -159,8 +158,8 @@ export class AccountSyncService {
 
   private enabled(accountId: string): boolean {
     return (
-      this.database.settings.get(encryptedHouseholdSettingKey(accountId)) ===
-        null &&
+      !this.database.settings.get(`household.pending.${accountId}`) &&
+      !this.database.settings.get(`household.mergeBusy.${accountId}`) &&
       !!this.database.accounts.get(accountId)?.cloudUserId &&
       this.database.settings.get<boolean>(
         `accountSyncPaused.${hash(accountId)}`,
@@ -181,6 +180,10 @@ export class AccountSyncService {
     await this.#running.get(accountId);
     this.#states.delete(accountId);
     return this.status(accountId);
+  }
+
+  async idle(accountId: string): Promise<void> {
+    await this.#running.get(accountId);
   }
 
   profileStatus(accountId: string, profileId: string): { paused: boolean } {
@@ -359,11 +362,7 @@ export class AccountSyncService {
   /** Persisted capture runs synchronously, so an offline change and its baseline cannot be separated. */
   capture(accountId: string): void {
     this.database.accounts.getRequired(accountId);
-    if (
-      this.database.settings.get(encryptedHouseholdSettingKey(accountId)) !==
-      null
-    )
-      return;
+    if (this.database.settings.get(`household.pending.${accountId}`)) return;
     this.database.transaction(() => {
       const ledger = this.ledger(accountId);
       const current = new Map<string, AccountSyncOperation>();
@@ -387,15 +386,6 @@ export class AccountSyncService {
         });
         current.set(entryKey(operation), operation);
       };
-      for (const item of this.database.sourceFeedback.list(accountId)) {
-        collect(
-          "source-feedback",
-          ACCOUNT_SYNC_SCOPE,
-          item.id,
-          item.payload,
-          item.updatedAt,
-        );
-      }
       for (const profile of profiles) {
         collect(
           "profile",
@@ -490,6 +480,15 @@ export class AccountSyncService {
             item.updatedAt,
           );
         }
+      }
+      for (const item of this.database.sourceFeedback.list(accountId)) {
+        collect(
+          "source-feedback",
+          ACCOUNT_SYNC_SCOPE,
+          item.id,
+          item.payload,
+          item.updatedAt,
+        );
       }
       for (const [key, operation] of current) {
         const previous = ledger.entries[key];

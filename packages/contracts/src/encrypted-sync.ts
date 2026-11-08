@@ -4,6 +4,7 @@ import { IntegrationIdSchema } from "./integrations.js";
 import { SupportedLocaleSchema } from "./locales.js";
 import { MediaSourcePreferencesSchema } from "./media-source-preferences.js";
 import { SourceFeedbackSchema } from "./source-feedback.js";
+import { ContentModeSchema } from "./media.js";
 
 export const ENCRYPTED_HOUSEHOLD_VERSION = 1 as const;
 export const ENCRYPTED_HOUSEHOLD_MAX_BYTES = 16 * 1024 * 1024;
@@ -124,6 +125,73 @@ const profile = z
     library: z.array(library).max(100_000),
     history: z.array(history).max(100_000),
     progress: z.array(progress).max(100_000),
+    conversations: z
+      .array(
+        z
+          .object({
+            sourceId: id,
+            mode: ContentModeSchema,
+            state: z.enum(["active", "completed", "needs-setup", "failed"]),
+            context: z.unknown(),
+            createdAt: timestamp,
+            updatedAt: timestamp,
+            completedAt: timestamp.nullable(),
+            messages: z
+              .array(
+                z
+                  .object({
+                    role: z.enum(["system", "user", "assistant", "tool"]),
+                    content: z.unknown(),
+                    requestId: id.nullable(),
+                    createdAt: timestamp,
+                  })
+                  .strict(),
+              )
+              .max(100_000),
+          })
+          .strict(),
+      )
+      .max(100_000)
+      .default([]),
+    sourceSelections: z
+      .array(
+        z
+          .object({
+            titleId: id,
+            seasonNumber: z.number().int().nonnegative().nullable(),
+            episodeNumber: z.number().int().positive().nullable(),
+            sourceId: z.string().min(1).max(1000),
+            aiPick: z
+              .object({
+                sourceId: z.string().min(1).max(1000),
+                reason: z.string().max(4000),
+              })
+              .optional(),
+          })
+          .strict(),
+      )
+      .max(100_000)
+      .default([]),
+    titlePriorities: z
+      .array(
+        z
+          .object({
+            titleId: id,
+            manualHigh: z.boolean(),
+            autoHigh: z.boolean(),
+            opens: z.array(z.number()).max(100_000),
+            plays: z
+              .array(
+                z.object({ at: z.number(), episode: z.string().optional() }),
+              )
+              .max(100_000),
+            nextCheckAt: z.number().nullable(),
+            highChecks: z.number().int().nonnegative().optional(),
+          })
+          .strict(),
+      )
+      .max(100_000)
+      .default([]),
   })
   .strict();
 

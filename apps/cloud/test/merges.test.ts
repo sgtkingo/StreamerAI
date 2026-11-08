@@ -187,8 +187,9 @@ it("preserves the email identity and device, applies explicit profile selection 
       })
     ).json(),
   ).toEqual({ ok: true });
+  expect((await f.request("/v1/sync/snapshot", { token })).status).toBe(403);
   const snapshot = (await (
-    await f.request("/v1/sync/snapshot", { token })
+    await f.request("/v1/sync/snapshot", { account: "b" })
   ).json()) as { operations: Array<{ profileId: string; action: string }> };
   expect(snapshot.operations).toEqual(
     expect.arrayContaining([

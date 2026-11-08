@@ -1,5 +1,4 @@
-import { StrictMode } from "react";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { InstallationAccess } from "./InstallationAccess";
 
@@ -8,45 +7,108 @@ afterEach(() => {
   window.history.replaceState({}, "", "/");
 });
 
-it("consumes the installer handoff once and removes the key from the address before claiming", async () => {
-  const secret = "a".repeat(64);
-  window.history.replaceState({}, "", `/#setup=${secret}`);
-  let addressAtRequest = "";
-  const fetcher = vi.fn(async () => {
-    addressAtRequest = window.location.href;
-    return Response.json({ role: "owner" });
-  });
+it("links initial administration to household setup without asking for an installation key", () => {
+  render(
+    <InstallationAccess
+      administration
+      status={{
+        enabled: true,
+        claimed: false,
+        paired: false,
+        role: null,
+        householdReady: false,
+      }}
+      onConnected={vi.fn()}
+    />,
+  );
+  expect(
+    screen.getByRole("link", { name: "Set up your household" }),
+  ).toHaveAttribute("href", "/admin");
+  expect(screen.queryByLabelText("One-time setup key")).not.toBeInTheDocument();
+});
+
+it("shows a local QR address and a six-digit pairing code without cloud sign-in", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (path: string) => {
+      if (path.endsWith("/pair"))
+        return Response.json({
+          requestId: "pending",
+          code: "123456",
+          expiresAt: new Date(Date.now() + 300_000).toISOString(),
+          qrCodeDataUrl: "data:image/png;base64,AA==",
+          verificationUriComplete:
+            "http://localhost:3000/admin/pair?code=123456",
+        });
+      return Response.json({ status: "pending" });
+    }),
+  );
+  render(
+    <InstallationAccess
+      status={{ enabled: true, claimed: true, paired: false, role: null }}
+      onConnected={vi.fn()}
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Show pairing code" }));
+  expect(await screen.findByLabelText("Pairing code 123456")).toHaveTextContent(
+    "123 456",
+  );
+  expect(screen.getByRole("img", { name: /Scan to approve/ })).toBeVisible();
+  expect(
+    screen.getByRole("link", { name: /admin\/pair\?code=123456/ }),
+  ).toHaveAttribute("href", "http://localhost:3000/admin/pair?code=123456");
+});
+
+it("authorizes a playback client using the household PIN without granting administration", async () => {
+  const fetcher = vi.fn(async () => Response.json({ ok: true }));
   vi.stubGlobal("fetch", fetcher);
   const connected = vi.fn();
   render(
-    <StrictMode>
-      <InstallationAccess
-        status={{ enabled: true, claimed: false, paired: false, role: null }}
-        onConnected={connected}
-      />
-    </StrictMode>,
+    <InstallationAccess
+      status={{ enabled: true, claimed: true, paired: false, role: null }}
+      onConnected={connected}
+    />,
   );
-  await waitFor(() => expect(connected).toHaveBeenCalledTimes(1));
-  expect(fetcher).toHaveBeenCalledTimes(1);
-  expect(addressAtRequest).not.toContain(secret);
-  expect(window.location.hash).toBe("");
-  const options = fetcher.mock.calls[0] as unknown as [string, RequestInit];
-  expect(JSON.parse(String(options[1].body))).toEqual({ token: secret });
+  fireEvent.click(
+    screen.getByRole("button", { name: "Sign in on this device" }),
+  );
+  fireEvent.change(screen.getByLabelText("Household Master PIN"), {
+    target: { value: "01234567" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Connect this device" }));
+  await waitFor(() => expect(connected).toHaveBeenCalledOnce());
+  expect(fetcher).toHaveBeenCalledWith(
+    "/api/v1/installation/authorize",
+    expect.objectContaining({
+      body: JSON.stringify({
+        masterPin: "01234567",
+        deviceName: "Home browser",
+        admin: false,
+      }),
+    }),
+  );
 });
 
-it("clears malformed setup fragments and offers retry without sending a claim", async () => {
-  window.history.replaceState({}, "", "/#setup=invalid");
-  const fetcher = vi.fn();
-  vi.stubGlobal("fetch", fetcher);
-  await act(async () => {
-    render(
-      <InstallationAccess
-        status={{ enabled: true, claimed: false, paired: false, role: null }}
-        onConnected={vi.fn()}
-      />,
-    );
-  });
-  expect(screen.getByRole("alert")).toHaveTextContent("setup link is invalid");
-  expect(fetcher).not.toHaveBeenCalled();
-  expect(window.location.hash).toBe("");
+it("directs an unpaired client to administration until household setup finishes", () => {
+  render(
+    <InstallationAccess
+      status={{
+        enabled: true,
+        claimed: true,
+        paired: false,
+        role: null,
+        householdReady: false,
+      }}
+      onConnected={vi.fn()}
+    />,
+  );
+  expect(
+    screen.getByRole("heading", { name: "Your household is not ready yet" }),
+  ).toBeVisible();
+  expect(
+    screen.getByRole("link", { name: "Open household administration" }),
+  ).toHaveAttribute("href", "/admin");
+  expect(
+    screen.queryByRole("button", { name: "Show pairing code" }),
+  ).not.toBeInTheDocument();
 });

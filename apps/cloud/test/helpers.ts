@@ -22,7 +22,7 @@ export function masterPinVerifier(pin = "12345678") {
 }
 const initializedLegacyVerifier = masterPinVerifier();
 
-export function fixture() {
+export function fixture(options: { households?: boolean } = {}) {
   const sqlite = new Database(":memory:");
   sqlite.pragma("foreign_keys = ON");
   for (const migration of [
@@ -36,7 +36,10 @@ export function fixture() {
     "0008_profile_source_feedback.sql",
     "0009_encrypted_checkpoint.sql",
     "0010_account_pins.sql",
+    "0011_households.sql",
   ]) {
+    if (migration === "0011_households.sql" && options.households === false)
+      continue;
     sqlite.exec(
       readFileSync(
         new URL(`../migrations/${migration}`, import.meta.url),

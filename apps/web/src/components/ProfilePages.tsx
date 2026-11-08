@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import type {
   PlaybackPreferences,
   UpdateViewerProfile,
@@ -9,14 +9,8 @@ import { safeErrorMessage } from "../api/client";
 import { PlaybackLanguageFields } from "./PlaybackLanguageFields";
 import { AudioOutputPicker } from "./AudioOutputPicker";
 import { useToasts } from "./ToastProvider";
-import { IntegrationManager } from "./IntegrationManager";
-import { AgentBackendSettings } from "./AgentBackendSettings";
 import { AppearanceSettings } from "../theme/AppearanceSettings";
 import { ProfilePinSettings } from "./ProfilePin";
-import { AccountSettings } from "./AccountSettings";
-import { SupportPanel } from "./SupportPanel";
-import { InstallationDevices } from "./InstallationAccess";
-import { AccountSecurity } from "./AccountSecurity";
 
 export type ProfilePage =
   "settings" | "preferences" | "account" | "profile" | "support" | "statistics";
@@ -52,10 +46,7 @@ export function ProfilePages({
   onProfileUpdated,
   onRerunOnboarding,
   onSwitchAccount,
-  onSignOut,
-  onDeleteProfile,
   onBackHome,
-  onIntegrationsChanged,
 }: ProfilePagesProps) {
   const [playback, setPlayback] = useState<PlaybackPreferences>(
     profile.playback,
@@ -64,18 +55,9 @@ export function ProfilePages({
   const [selectedGenres, setSelectedGenres] = useState(profile.genres);
   const [prompt, setPrompt] = useState(profile.prompt);
   const [saving, setSaving] = useState(false);
-  const [deleteConfirmationOpen, setDeleteConfirmationOpen] = useState(false);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
-  const deleteDialogRef = useRef<HTMLDivElement>(null);
   const { showToast } = useToasts();
-
-  const dismissDeleteConfirmation = useCallback(() => {
-    if (document.activeElement instanceof HTMLElement) {
-      document.activeElement.blur();
-    }
-    setDeleteConfirmationOpen(false);
-  }, []);
 
   useEffect(() => {
     if (notice) showToast(notice, "success");
@@ -84,46 +66,6 @@ export function ProfilePages({
   useEffect(() => {
     if (error) showToast(error, "error");
   }, [error, showToast]);
-  const [deleting, setDeleting] = useState(false);
-
-  useEffect(() => {
-    if (!deleteConfirmationOpen) return;
-
-    const dialog = deleteDialogRef.current;
-    const cancelButton = dialog?.querySelector<HTMLButtonElement>(
-      ".profile-delete-dialog__cancel",
-    );
-    cancelButton?.focus();
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        if (deleting) return;
-        event.preventDefault();
-        dismissDeleteConfirmation();
-        return;
-      }
-      if (event.key !== "Tab" || !dialog) return;
-
-      const buttons = Array.from(
-        dialog.querySelectorAll<HTMLButtonElement>("button:not(:disabled)"),
-      );
-      const first = buttons[0];
-      const last = buttons[buttons.length - 1];
-      if (!first || !last) return;
-
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    };
-
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [deleteConfirmationOpen, deleting, dismissDeleteConfirmation]);
-
   const save = async (patch: UpdateViewerProfile, closeOnSuccess = false) => {
     setSaving(true);
     setError("");
@@ -141,17 +83,6 @@ export function ProfilePages({
       setError(safeErrorMessage(reason));
     } finally {
       setSaving(false);
-    }
-  };
-
-  const forgetProfile = async () => {
-    setDeleting(true);
-    setError("");
-    try {
-      await onDeleteProfile();
-    } catch (reason) {
-      setError(safeErrorMessage(reason));
-      setDeleting(false);
     }
   };
 
@@ -176,7 +107,6 @@ export function ProfilePages({
       </h1>
       {page === "settings" && (
         <div className="profile-page__sections">
-          <InstallationDevices />
           <section className="profile-page__section" id="settings-interface">
             <p className="eyebrow">01 / Interface</p>
             <h2>Language</h2>
@@ -237,32 +167,15 @@ export function ProfilePages({
               will live here.
             </p>
           </section>
-          <section className="profile-page__section" id="settings-integrations">
-            <p className="eyebrow">05 / Integrations</p>
-            <h2>Connected services</h2>
+          <section className="profile-page__section">
+            <h2>Household services and devices</h2>
             <p>
-              Manage the services shared by all profiles on this account.
-              Connecting or disconnecting a service affects every profile.
+              Server connections, cloud services, backups and device access are
+              managed in household administration.
             </p>
-            <IntegrationManager
-              api={api}
-              context="settings"
-              profileId={profile.id}
-              onConnectionChange={onIntegrationsChanged}
-            />
-          </section>
-          <section className="profile-page__section" id="settings-ai-agent">
-            <p className="eyebrow">06 / Agent adapters</p>
-            <h2>AI agent</h2>
-            <p>
-              Choose one connection and how much time it spends thinking. You
-              can also let an external agent use StreamerAI through MCP.
-            </p>
-            <AgentBackendSettings
-              api={api}
-              profileId={profile.id}
-              onChanged={() => onIntegrationsChanged()}
-            />
+            <a className="button button--secondary" href="/admin">
+              Open household administration
+            </a>
           </section>
           <div className="profile-page__actions">
             <button
@@ -271,14 +184,6 @@ export function ProfilePages({
               onClick={onRerunOnboarding}
             >
               Run onboarding again
-            </button>
-            <button
-              className="button button--logout"
-              type="button"
-              disabled={deleting || saving}
-              onClick={() => setDeleteConfirmationOpen(true)}
-            >
-              {deleting ? "Deleting profile…" : "Forget and delete profile"}
             </button>
             <button
               className="button button--primary"
@@ -348,21 +253,11 @@ export function ProfilePages({
       )}
 
       {page === "account" && (
-        <div className="profile-page__sections">
-          <AccountSettings api={api} profile={profile} onSignOut={onSignOut} />
-          <section className="profile-page__section" id="account-sync-services">
-            <p className="eyebrow">Account services</p>
-            <h2>Cloud synchronization</h2>
-            <IntegrationManager
-              api={api}
-              context="settings"
-              category="sync"
-              profileId={profile.id}
-              onConnectionChange={onIntegrationsChanged}
-            />
-          </section>
-          <AccountSecurity api={api} />
-        </div>
+        <section className="profile-page__section">
+          <a className="button button--primary" href="/admin">
+            Open household administration
+          </a>
+        </section>
       )}
 
       {page === "profile" && (
@@ -395,9 +290,11 @@ export function ProfilePages({
       )}
 
       {page === "support" && (
-        <div className="profile-page__sections">
-          <SupportPanel />
-        </div>
+        <section className="profile-page__section">
+          <a className="button button--primary" href="/admin#support">
+            Open household administration
+          </a>
+        </section>
       )}
 
       {page === "statistics" && (
@@ -422,52 +319,6 @@ export function ProfilePages({
               </span>
             </div>
           </section>
-        </div>
-      )}
-
-      {deleteConfirmationOpen && page === "settings" && (
-        <div
-          className="profile-delete-backdrop"
-          onMouseDown={(event) => {
-            if (!deleting && event.target === event.currentTarget) {
-              dismissDeleteConfirmation();
-            }
-          }}
-        >
-          <div
-            aria-describedby="profile-delete-description"
-            aria-labelledby="profile-delete-title"
-            aria-modal="true"
-            className="profile-delete-dialog"
-            ref={deleteDialogRef}
-            role="alertdialog"
-          >
-            <p className="eyebrow">Permanent action</p>
-            <h2 id="profile-delete-title">Forget and delete profile?</h2>
-            <p id="profile-delete-description">
-              This will permanently delete {profile.name}'s profile and its
-              local data, and free its profile medallion. This action cannot be
-              undone.
-            </p>
-            <div className="profile-delete-dialog__actions">
-              <button
-                className="button button--secondary profile-delete-dialog__cancel"
-                type="button"
-                disabled={deleting}
-                onClick={dismissDeleteConfirmation}
-              >
-                Cancel
-              </button>
-              <button
-                className="button button--logout"
-                type="button"
-                disabled={deleting}
-                onClick={() => void forgetProfile()}
-              >
-                {deleting ? "Deleting profile…" : "Forget and delete"}
-              </button>
-            </div>
-          </div>
         </div>
       )}
     </main>

@@ -51,24 +51,18 @@ const props = {
   onIntegrationsChanged: vi.fn(),
 };
 
-it("places profile and support sections on their own pages", () => {
+it("keeps household administration out of playback profile pages", () => {
   const view = render(<ProfilePages {...props} page="settings" />);
   expect(screen.queryByText("Security")).not.toBeInTheDocument();
-  expect(screen.queryByText("Profile privacy")).not.toBeInTheDocument();
-  expect(screen.getByText("Services: all")).toBeVisible();
-  expect(screen.queryByText("Report a problem")).not.toBeInTheDocument();
+  expect(screen.queryByText("Services: all")).not.toBeInTheDocument();
+  expect(
+    screen.getByRole("link", { name: "Open household administration" }),
+  ).toHaveAttribute("href", "/admin");
   view.rerender(<ProfilePages {...props} page="account" />);
-  expect(screen.getByText("Security")).toBeVisible();
+  expect(screen.queryByText("Security")).not.toBeInTheDocument();
   expect(
-    screen.queryByRole("button", { name: "Choose another profile" }),
-  ).not.toBeInTheDocument();
-  expect(screen.queryByText("Profile privacy")).not.toBeInTheDocument();
-  expect(screen.queryByText("Profile photo")).not.toBeInTheDocument();
-  expect(
-    screen.getByRole("heading", { name: "Cloud synchronization" }),
-  ).toBeVisible();
-  expect(screen.getByText("Services: sync")).toBeVisible();
-  expect(screen.queryByText("Report a problem")).not.toBeInTheDocument();
+    screen.getByRole("link", { name: "Open household administration" }),
+  ).toHaveAttribute("href", "/admin");
   view.rerender(<ProfilePages {...props} page="profile" />);
   fireEvent.click(
     screen.getByRole("button", { name: "Choose another profile" }),
@@ -76,6 +70,4 @@ it("places profile and support sections on their own pages", () => {
   expect(props.onSwitchAccount).toHaveBeenCalledOnce();
   expect(screen.getByText("Profile privacy")).toBeVisible();
   expect(screen.getByText("Profile photo")).toBeVisible();
-  view.rerender(<ProfilePages {...props} page="support" />);
-  expect(screen.getByText("Report a problem")).toBeVisible();
 });

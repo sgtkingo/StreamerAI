@@ -9,9 +9,11 @@ export default tseslint.config(
       "**/dist/**",
       "**/coverage/**",
       "**/node_modules/**",
-      ".flight/**",
+      "**/.flight/**",
+      "**/.wrangler/**",
       "tmp/**",
-      "tmp/**",
+      "apps/client/release/**",
+      "apps/client/android/**/build/**",
       "apps/web/public/**",
     ],
   },
@@ -30,7 +32,12 @@ export default tseslint.config(
     },
   },
   {
-    files: ["apps/server/**/*.{ts,tsx}", "packages/**/*.{ts,tsx}"],
+    files: [
+      "apps/server/**/*.{ts,tsx}",
+      "packages/**/*.{ts,tsx}",
+      "apps/client/src/{main,preload,settings,security}.ts",
+      "apps/client/scripts/*.mjs",
+    ],
     languageOptions: { globals: globals.node },
   },
   {
@@ -38,7 +45,11 @@ export default tseslint.config(
     languageOptions: { globals: globals.node },
   },
   {
-    files: ["apps/web/src/**/*.{ts,tsx}", "apps/web/vite.config.ts"],
+    files: [
+      "apps/web/src/**/*.{ts,tsx}",
+      "apps/web/vite.config.ts",
+      "apps/client/src/renderer.ts",
+    ],
     languageOptions: { globals: globals.browser },
   },
   {

@@ -134,8 +134,8 @@ function ProfilePinRecovery({
     >
       <h2>Reset profile PIN</h2>
       <p>
-        A request will be sent to the signed-in account. Confirm the reset for{" "}
-        {profile.name} in your account portal.
+        Ask the household owner to confirm the reset for {profile.name} in
+        household administration on this server.
       </p>
       {request ? (
         <>
@@ -145,9 +145,11 @@ function ProfilePinRecovery({
             target="_blank"
             rel="noopener noreferrer"
           >
-            Open account portal
+            Open household administration
           </a>
-          <p role="status">{outcome || "Waiting for account confirmation…"}</p>
+          <p role="status">
+            {outcome || "Waiting for household owner confirmation…"}
+          </p>
         </>
       ) : (
         !error && <p role="status">Sending request…</p>
@@ -340,8 +342,8 @@ export function ProfilePinDialog({
         </div>
         {!supportsOwnerReset && (
           <p className="settings-note">
-            A PIN cannot be reset without an online account with synchronization
-            enabled.
+            Ask the household owner to reset this profile's PIN in household
+            administration.
           </p>
         )}
         {supportsOwnerReset && (
@@ -351,7 +353,7 @@ export function ProfilePinDialog({
             disabled={pending}
             onClick={() => setRecovering(true)}
           >
-            Forgot PIN? Verify account
+            Forgot PIN? Ask household owner
           </button>
         )}
       </form>
@@ -521,8 +523,8 @@ export function ProfilePinSettings({
       </form>
       {profile.pinEnabled && !supportsOwnerReset && (
         <p className="settings-note">
-          A PIN cannot be reset without an online account with synchronization
-          enabled.
+          Ask the household owner to reset this profile's PIN in household
+          administration.
         </p>
       )}
       {profile.pinEnabled && supportsOwnerReset && (
@@ -532,7 +534,7 @@ export function ProfilePinSettings({
           disabled={pending}
           onClick={() => setRecovering(true)}
         >
-          Forgot PIN? Verify account
+          Forgot PIN? Ask household owner
         </button>
       )}
       {recovering && (

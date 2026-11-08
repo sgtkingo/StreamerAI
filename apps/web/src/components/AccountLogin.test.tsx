@@ -3,6 +3,7 @@ import { StrictMode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DeviceAuthorization, StreamerApi } from "../api/client";
 import { AccountLogin } from "./AccountLogin";
+import { ApiError } from "../api/client";
 
 afterEach(() => vi.useRealTimers());
 
@@ -17,116 +18,123 @@ const grant: DeviceAuthorization = {
 };
 
 describe("device sign-in", () => {
-  it("lets the user choose a recovered local account", async () => {
+  it("stops polling after a terminal cloud error and offers a new code", async () => {
+    vi.useFakeTimers();
     const api = {
-      startLocalSession: vi.fn().mockResolvedValue({
-        account: { id: "recovered", cloudLinked: false },
-      }),
       startDeviceAuthorization: vi.fn().mockResolvedValue(grant),
+      pollDeviceAuthorization: vi
+        .fn()
+        .mockRejectedValue(
+          new ApiError(
+            "Cloud services are unavailable.",
+            503,
+            "HOUSEHOLD_CLOUD_UNAVAILABLE",
+          ),
+        ),
     } as unknown as StreamerApi;
-    render(
-      <AccountLogin
-        api={api}
-        allowLocal
-        recoveredLocalAccounts={[{ id: "recovered" }]}
-        onAuthenticated={vi.fn()}
-      />,
-    );
-    await act(async () =>
-      fireEvent.click(
-        screen.getByRole("button", { name: /Prefer to continue/ }),
-      ),
-    );
-    fireEvent.change(screen.getByLabelText("Local account"), {
-      target: { value: "recovered" },
+    const approved = vi.fn();
+    render(<AccountLogin api={api} onAuthenticated={approved} />);
+    await act(async () => {
+      await Promise.resolve();
     });
-    await act(async () =>
-      fireEvent.click(
-        screen.getByRole("button", {
-          name: /Continue with selected local account/,
-        }),
-      ),
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Cloud services are unavailable.",
     );
-    expect(api.startLocalSession).toHaveBeenCalledWith("recovered");
+    expect(
+      screen.getByRole("button", { name: "Get a new code" }),
+    ).toBeVisible();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(20000);
+    });
+    expect(api.pollDeviceAuthorization).toHaveBeenCalledOnce();
+    expect(approved).not.toHaveBeenCalled();
   });
-  it("clears an online pairing error when choosing a local account", async () => {
-    const onAuthenticated = vi.fn();
+  it("offers one household creation flow without a local account selector", async () => {
     const api = {
-      startDeviceAuthorization: vi
-        .fn()
-        .mockRejectedValue(new Error("Online pairing unavailable")),
-      startLocalSession: vi
-        .fn()
-        .mockResolvedValue({ account: { id: "local" } }),
+      startLocalSession: vi.fn().mockResolvedValue({}),
+      startDeviceAuthorization: vi.fn(),
     } as unknown as StreamerApi;
+    const onAuthenticated = vi.fn();
     render(
       <AccountLogin
         api={api}
         allowLocal
-        recoveredLocalAccounts={[{ id: "recovered" }]}
+        recoveredLocalAccounts={[{ id: "old" }]}
         onAuthenticated={onAuthenticated}
       />,
     );
+    expect(screen.queryByLabelText("Local account")).not.toBeInTheDocument();
     await act(async () =>
       fireEvent.click(
-        screen.getByRole("button", { name: "Connect this device" }),
+        screen.getByRole("button", { name: "Create a household" }),
       ),
     );
-    await act(async () => {});
-    expect(screen.getByRole("alert")).toHaveTextContent(
-      "Unable to complete sign-in",
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: /Prefer to continue/ }));
-    expect(screen.getByLabelText("Local account")).toBeVisible();
-    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-
-    fireEvent.change(screen.getByLabelText("Local account"), {
-      target: { value: "recovered" },
-    });
-    await act(async () =>
-      fireEvent.click(
-        screen.getByRole("button", {
-          name: /Continue with selected local account/,
-        }),
-      ),
-    );
-    expect(api.startLocalSession).toHaveBeenCalledWith("recovered");
+    expect(api.startLocalSession).toHaveBeenCalledWith();
+    expect(api.startDeviceAuthorization).not.toHaveBeenCalled();
     expect(onAuthenticated).toHaveBeenCalledOnce();
   });
-  it("ignores a pairing poll failure after switching to local account selection", async () => {
-    vi.useFakeTimers();
-    let rejectPoll!: (reason: Error) => void;
+  it("opens backup import without creating a PIN", async () => {
     const api = {
-      startDeviceAuthorization: vi.fn().mockResolvedValue(grant),
-      pollDeviceAuthorization: vi.fn().mockImplementation(
-        () =>
-          new Promise((_resolve, reject) => {
-            rejectPoll = reject;
-          }),
-      ),
-      startLocalSession: vi.fn(),
+      startLocalSession: vi.fn().mockResolvedValue({}),
+      startDeviceAuthorization: vi.fn(),
     } as unknown as StreamerApi;
+    const onRestoreBackup = vi.fn();
     render(
       <AccountLogin
         api={api}
         allowLocal
-        recoveredLocalAccounts={[{ id: "recovered" }]}
+        onRestoreBackup={onRestoreBackup}
         onAuthenticated={vi.fn()}
       />,
     );
     await act(async () =>
+      fireEvent.click(screen.getByRole("button", { name: "Import a backup" })),
+    );
+    expect(onRestoreBackup).toHaveBeenCalledOnce();
+    expect(
+      screen.queryByLabelText("Confirm Master PIN"),
+    ).not.toBeInTheDocument();
+  });
+  it("clears a cloud error when creating a household", async () => {
+    const api = {
+      startDeviceAuthorization: vi
+        .fn()
+        .mockRejectedValue(new Error("Cloud unavailable")),
+      startLocalSession: vi.fn().mockResolvedValue({}),
+    } as unknown as StreamerApi;
+    render(<AccountLogin api={api} allowLocal onAuthenticated={vi.fn()} />);
+    await act(async () =>
+      fireEvent.click(screen.getByRole("button", { name: "Sign in to cloud" })),
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Unable to complete sign-in",
+    );
+    await act(async () =>
       fireEvent.click(
-        screen.getByRole("button", { name: "Connect this device" }),
+        screen.getByRole("button", { name: "Create a household" }),
       ),
     );
-    await act(async () => {});
-    await act(async () => vi.advanceTimersByTimeAsync(5000));
-    expect(api.pollDeviceAuthorization).toHaveBeenCalledOnce();
-    fireEvent.click(screen.getByRole("button", { name: /Prefer to continue/ }));
-    await act(async () => rejectPoll(new Error("Pairing failed")));
-    expect(screen.getByLabelText("Local account")).toBeVisible();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+  it("hides cloud sign-in when the server has no cloud service", () => {
+    const api = { startLocalSession: vi.fn() } as unknown as StreamerApi;
+    render(
+      <AccountLogin
+        api={api}
+        allowLocal
+        allowCloud={false}
+        onAuthenticated={vi.fn()}
+      />,
+    );
+    expect(
+      screen.queryByRole("button", { name: "Sign in to cloud" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Create a household" }),
+    ).toBeVisible();
   });
   it("labels a failed local session as a local account error", async () => {
     const api = {
@@ -138,11 +146,11 @@ describe("device sign-in", () => {
     render(<AccountLogin api={api} allowLocal onAuthenticated={vi.fn()} />);
     await act(async () =>
       fireEvent.click(
-        screen.getByRole("button", { name: /Prefer to continue/ }),
+        screen.getByRole("button", { name: "Create a household" }),
       ),
     );
     expect(screen.getByRole("alert")).toHaveTextContent(
-      "Unable to open local account",
+      "Unable to open household",
     );
   });
   it("opens a local account without starting online pairing", async () => {
@@ -159,7 +167,7 @@ describe("device sign-in", () => {
     await act(async () =>
       fireEvent.click(
         screen.getByRole("button", {
-          name: /Prefer to continue without signing in/,
+          name: "Create a household",
         }),
       ),
     );
@@ -222,7 +230,7 @@ describe("device sign-in", () => {
     await act(async () => vi.advanceTimersByTimeAsync(10000));
     expect(api.pollDeviceAuthorization).not.toHaveBeenCalled();
     expect(
-      screen.getByRole("button", { name: "Connect this device" }),
+      screen.getByRole("button", { name: "Sign in to cloud" }),
     ).toBeVisible();
   });
 
@@ -293,9 +301,7 @@ describe("device sign-in", () => {
       "Unable to complete sign-in",
     );
     await act(async () =>
-      fireEvent.click(
-        screen.getByRole("button", { name: "Connect this device" }),
-      ),
+      fireEvent.click(screen.getByRole("button", { name: "Sign in to cloud" })),
     );
     expect(screen.getByLabelText("Pairing code ABCD-1234")).toBeVisible();
   });
@@ -316,12 +322,10 @@ describe("device sign-in", () => {
     render(
       <AccountLogin api={api} allowLocal onAuthenticated={onAuthenticated} />,
     );
-    fireEvent.click(
-      screen.getByRole("button", { name: "Connect this device" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Sign in to cloud" }));
     await act(async () =>
       fireEvent.click(
-        screen.getByRole("button", { name: /Prefer to continue/ }),
+        screen.getByRole("button", { name: "Create a household" }),
       ),
     );
     await act(async () => resolve(grant));

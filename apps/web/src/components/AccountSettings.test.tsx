@@ -125,32 +125,52 @@ describe("account management", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("requires a preview and explicit choice before pairing an online owner for local profiles", async () => {
+  it("connects cloud services without creating a second household or signing out", async () => {
     const api = {
       getAccount: vi.fn().mockResolvedValue({
         ...overview,
         account: { ...overview.account, cloudLinked: false },
         manageUrl: null,
       }),
-      getProfiles: vi.fn().mockResolvedValue({ items: [profile] }),
-      startDeviceAuthorization: vi.fn(),
+      startDeviceAuthorization: vi.fn().mockResolvedValue({
+        deviceCode: "grant",
+        userCode: "ABCD-1234",
+        verificationUri: "https://example.com/device",
+        verificationUriComplete: "https://example.com/device",
+        expiresAt: new Date(Date.now() + 300000).toISOString(),
+        interval: 5,
+      }),
+      logout: vi.fn(),
     } as unknown as StreamerApi;
     render(<AccountSettings api={api} profile={profile} />);
     fireEvent.click(
-      await screen.findByRole("button", { name: "Review local profiles" }),
-    );
-    expect(await screen.findByText("Profiles to connect: Alex")).toBeVisible();
-    expect(
-      screen.getByRole("button", { name: "Choose online owner" }),
-    ).toBeDisabled();
-    expect(api.startDeviceAuthorization).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("checkbox"));
-    fireEvent.click(
-      screen.getByRole("button", { name: "Choose online owner" }),
+      await screen.findByRole("button", { name: "Connect cloud" }),
     );
     expect(
-      screen.getByRole("heading", { name: "Welcome to StreamerAI." }),
+      await screen.findByRole("heading", { name: "Connect cloud services" }),
     ).toBeVisible();
+    await waitFor(() =>
+      expect(api.startDeviceAuthorization).toHaveBeenCalledWith({
+        adoptLocalAccount: true,
+      }),
+    );
+    expect(api.logout).not.toHaveBeenCalled();
+  });
+  it("disconnects cloud while preserving the household session", async () => {
+    const api = {
+      getAccount: vi.fn().mockResolvedValue({
+        ...overview,
+        account: { ...overview.account, cloudLinked: true },
+      }),
+      disconnectCloud: vi.fn().mockResolvedValue({ ok: true }),
+      logout: vi.fn(),
+    } as unknown as StreamerApi;
+    render(<AccountSettings api={api} profile={profile} />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Disconnect cloud" }),
+    );
+    await waitFor(() => expect(api.disconnectCloud).toHaveBeenCalledOnce());
+    expect(api.logout).not.toHaveBeenCalled();
   });
   it("sends ownership management to the hosted portal and revokes devices", async () => {
     const api = {

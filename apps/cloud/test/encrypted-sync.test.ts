@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  DEFAULT_APPEARANCE_PREFERENCES,
+  DEFAULT_PLAYBACK_PREFERENCES,
   type EncryptedHouseholdEnvelope,
   type MasterPinHouseholdBackup,
 } from "@streamer-ai/contracts";
@@ -13,6 +15,7 @@ afterEach(() => {
   f.close();
 });
 const path = "/v1/sync/v2/checkpoint";
+let householdId: string;
 function envelope(): MasterPinHouseholdBackup {
   const cipher = {
     algorithm: "aes-256-gcm" as const,
@@ -23,7 +26,7 @@ function envelope(): MasterPinHouseholdBackup {
   const inner: EncryptedHouseholdEnvelope = {
     format: "streamerai-encrypted-household",
     version: 1,
-    datasetId: crypto.randomUUID(),
+    datasetId: householdId,
     keyVersion: 1,
     recoveryVersion: 1,
     snapshotId: crypto.randomUUID(),
@@ -72,10 +75,53 @@ async function token(account = "a"): Promise<string> {
       },
     })
   ).json()) as { access_token: string };
+  householdId = crypto.randomUUID();
+  expect(
+    (
+      await f.request("/v1/households", {
+        method: "POST",
+        token: redeemed.access_token,
+        data: { householdId, name: "Home", serverId: crypto.randomUUID() },
+      })
+    ).status,
+  ).toBe(200);
   return redeemed.access_token;
 }
 
 describe("opaque encrypted recovery checkpoints", () => {
+  it("binds checkpoints to one household identity and does not claim a failed write", async () => {
+    const server = await token();
+    const first = envelope();
+    const write = (
+      expectedRevision: number,
+      backup: MasterPinHouseholdBackup,
+    ) =>
+      f.request(path, {
+        method: "PUT",
+        token: server,
+        data: { expectedRevision, envelope: backup },
+      });
+    expect((await write(2, first)).status).toBe(409);
+    expect(
+      await (
+        await f.request("/v1/households/" + householdId, { token: server })
+      ).json(),
+    ).toMatchObject({
+      household: { id: householdId, hasBackup: false, revision: 0 },
+    });
+    expect((await write(0, first)).status).toBe(200);
+    expect(
+      await (
+        await f.request("/v1/households/" + householdId, { token: server })
+      ).json(),
+    ).toMatchObject({
+      household: { id: first.envelope.datasetId, hasBackup: true, revision: 1 },
+    });
+    const other = envelope();
+    other.envelope.datasetId = crypto.randomUUID();
+    expect((await write(1, other)).status).toBe(409);
+    expect((await write(1, first)).status).toBe(200);
+  });
   it("isolates households, authenticates writers and retains revision tombstones", async () => {
     const server = await token();
     expect((await f.request(path)).status).toBe(401);
@@ -137,7 +183,7 @@ describe("opaque encrypted recovery checkpoints", () => {
     expect(await (await write(3)).json()).toEqual({ revision: 4 });
   });
 
-  it("rejects plaintext fields and oversize bodies, and stops old plaintext sync after activation or deletion", async () => {
+  it("rejects plaintext backup fields and oversize bodies while keeping account synchronization available", async () => {
     const server = await token();
     const encrypted = envelope();
     const invalid = await f.request(path, {
@@ -151,7 +197,7 @@ describe("opaque encrypted recovery checkpoints", () => {
     expect(invalid.status).toBe(400);
     expect(
       f.sqlite
-        .prepare("SELECT count(*) AS n FROM cloud_encrypted_checkpoint")
+        .prepare("SELECT count(*) AS n FROM cloud_household_checkpoint")
         .get(),
     ).toEqual({ n: 0 });
     expect(
@@ -184,25 +230,42 @@ describe("opaque encrypted recovery checkpoints", () => {
         })
       ).status,
     ).toBe(200);
-    const legacy = () =>
+    const { audioOutputDeviceId: _device, ...playback } =
+      DEFAULT_PLAYBACK_PREFERENCES;
+    const sync = () =>
       f.request("/v1/sync/push", {
         method: "POST",
         token: server,
-        data: { operations: [] },
+        data: {
+          operations: [
+            {
+              id: crypto.randomUUID(),
+              profileId: "viewer",
+              entityId: "viewer",
+              kind: "profile",
+              action: "upsert",
+              updatedAt: new Date(f.now()).toISOString(),
+              payload: {
+                name: "Viewer",
+                locale: "en",
+                genres: [],
+                playback,
+                appearance: DEFAULT_APPEARANCE_PREFERENCES,
+                onboardingComplete: true,
+              },
+            },
+          ],
+        },
       });
-    expect(await (await legacy()).json()).toEqual({
-      error: "encrypted_sync_required",
-    });
+    expect((await sync()).status).toBe(200);
     await f.request(path, {
       method: "DELETE",
       token: server,
       data: { expectedRevision: 1, confirm: "delete-encrypted-checkpoint" },
     });
-    expect(await (await legacy()).json()).toEqual({
-      error: "encrypted_sync_required",
-    });
+    expect((await sync()).status).toBe(200);
     const stored = JSON.stringify(
-      f.sqlite.prepare("SELECT * FROM cloud_encrypted_checkpoint").all(),
+      f.sqlite.prepare("SELECT * FROM cloud_household_checkpoint").all(),
     );
     expect(stored).not.toContain("DO-NOT-STORE");
   });
@@ -220,7 +283,7 @@ describe("opaque encrypted recovery checkpoints", () => {
     ).toBe(200);
     expect(
       f.sqlite
-        .prepare("SELECT count(*) AS n FROM cloud_encrypted_checkpoint")
+        .prepare("SELECT count(*) AS n FROM cloud_household_checkpoint")
         .get(),
     ).toEqual({ n: 0 });
     expect((await f.request(path, { token: server })).status).toBe(401);
@@ -247,7 +310,7 @@ describe("opaque encrypted recovery checkpoints", () => {
     ).toEqual({ n: 0 });
     expect(
       f.sqlite
-        .prepare("SELECT count(*) AS n FROM cloud_encrypted_checkpoint")
+        .prepare("SELECT count(*) AS n FROM cloud_household_checkpoint")
         .get(),
     ).toEqual({ n: 1 });
   });

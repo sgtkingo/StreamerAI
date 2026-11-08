@@ -3,6 +3,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openStreamerDatabase } from "@streamer-ai/database";
+import { MasterPinService } from "../src/services/master-pin.js";
+import { NonPersistentMemorySecretStore } from "../src/stores/secret-store.js";
 import { createApp } from "../src/app.js";
 import { readRuntimeConfig } from "../src/runtime-config.js";
 
@@ -20,7 +22,10 @@ it("opens a restored cloud-owned legacy household entirely offline after local o
     requiresLocalOwnerRecovery: true,
   });
   let network = 0;
+  const secrets = new NonPersistentMemorySecretStore();
+  await new MasterPinService(secrets).setupLocal("local", "01234567");
   const app = createApp({
+    secretStore: secrets,
     environment: "test",
     logger: false,
     database,
@@ -29,7 +34,6 @@ it("opens a restored cloud-owned legacy household entirely offline after local o
       network++;
       throw new Error("Offline");
     },
-    installationBootstrapToken: "a".repeat(64),
     runtimeConfig: readRuntimeConfig({
       NODE_ENV: "test",
       STREAMERAI_ACCESS_MODE: "paired",
@@ -42,9 +46,9 @@ it("opens a restored cloud-owned legacy household entirely offline after local o
     database.profiles.update("default", { name: "Recovered viewer" });
     const claim = await app.inject({
       method: "POST",
-      url: "/api/v1/installation/claim",
+      url: "/api/v1/installation/authorize",
       headers,
-      payload: { token: "a".repeat(64) },
+      payload: { masterPin: "01234567", admin: true },
     });
     const ownerCookie = String(claim.headers["set-cookie"]).split(";", 1)[0]!;
     const status = await app.inject({
@@ -59,6 +63,7 @@ it("opens a restored cloud-owned legacy household entirely offline after local o
       headers: { ...headers, cookie: ownerCookie },
       payload: {
         recoveredAccountId: status.json().recoveredLocalAccounts[0].id,
+        masterPin: "01234567",
       },
     });
     expect(login.statusCode).toBe(200);

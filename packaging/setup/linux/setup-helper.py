@@ -18,7 +18,6 @@ from pathlib import Path, PurePosixPath
 
 STATE = Path("/var/lib/streamerai")
 CA_FILE = STATE / "gateway/pki/authorities/local/root.crt"
-BOOTSTRAP_FILE = STATE / "data/installation-bootstrap.key"
 CERT_TARGET = Path("/usr/local/share/ca-certificates/streamerai-local.crt")
 MANAGED = Path("/opt/streamerai/ollama")
 MODEL_STATE = Path("/var/lib/streamerai-ollama")
@@ -88,8 +87,7 @@ def certificate():
     return pem, hashlib.sha256(der).hexdigest()
 
 
-def bootstrap(expected_fingerprint):
-    import pwd
+def open_administration(expected_fingerprint):
     pem, fingerprint = certificate()
     if not re.fullmatch(r"[a-f0-9]{64}", expected_fingerprint) or fingerprint != expected_fingerprint:
         raise ValueError("The local CA changed; review its fingerprint again")
@@ -105,12 +103,7 @@ def bootstrap(expected_fingerprint):
         run(["/usr/sbin/update-ca-certificates"], timeout=120)
     finally:
         temporary.unlink(missing_ok=True)
-    token = None
-    if BOOTSTRAP_FILE.exists():
-        token = protected_file(BOOTSTRAP_FILE, pwd.getpwnam("streamerai").pw_uid).decode("ascii").strip()
-        if not re.fullmatch(r"[a-f0-9]{64}", token):
-            raise ValueError("Invalid one-time setup key")
-    emit(status="ready", fingerprint=fingerprint, url="https://localhost:8443/" + ("#setup=" + token if token else ""))
+    emit(status="ready", fingerprint=fingerprint, url="https://localhost:8443/admin")
 
 
 class TrustedRedirects(urllib.request.HTTPRedirectHandler):
@@ -305,8 +298,8 @@ def main():
     if args == ["inspect-ca"]:
         _, fingerprint = certificate()
         emit(status="certificate", fingerprint=fingerprint)
-    elif len(args) == 2 and args[0] == "bootstrap":
-        bootstrap(args[1])
+    elif len(args) == 2 and args[0] == "open-administration":
+        open_administration(args[1])
     elif args == ["install-ollama"]:
         install_runtime()
     elif args == ["start-ollama"]:

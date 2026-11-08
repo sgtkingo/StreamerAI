@@ -1,10 +1,24 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import type { StreamerApi } from "../api/client";
+import { AccountLogin } from "./AccountLogin";
+import { DigitSlotsInput } from "./DigitSlotsInput";
 
 export interface InstallationStatus {
   enabled: boolean;
   claimed: boolean;
   paired: boolean;
   role: "owner" | "viewer" | null;
+  serverId?: string;
+  clientId?: string;
+  householdId?: string;
+  householdReady?: boolean;
+  householdName?: string;
+  masterPinEnabled?: boolean;
+  cloudConfigured?: boolean;
+  cloudLinked?: boolean;
+  cloudRecoveryAuthorized?: boolean;
+  setupAvailable?: boolean;
+  setupAuthorized?: boolean;
 }
 async function call<T>(path: string, body?: unknown): Promise<T> {
   const response = await fetch(`/api/v1/installation/${path}`, {
@@ -24,71 +38,32 @@ async function call<T>(path: string, body?: unknown): Promise<T> {
   return response.json() as Promise<T>;
 }
 export const getInstallationStatus = () => call<InstallationStatus>("status");
+export const beginHouseholdSetup = () =>
+  call<{ setupAuthorized: boolean }>("setup", {});
 export function InstallationAccess({
   status,
   onConnected,
+  api,
+  administration = false,
 }: {
   status: InstallationStatus;
   onConnected(): void;
+  api?: StreamerApi;
+  administration?: boolean;
 }) {
-  const [token, setToken] = useState("");
   const [name, setName] = useState("Home browser");
   const [request, setRequest] = useState<{
     requestId: string;
     code: string;
     expiresAt: string;
+    qrCodeDataUrl?: string;
+    verificationUriComplete?: string;
   } | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const setupHandoff = useRef<{ token: string; job?: Promise<unknown> } | null>(
-    null,
-  );
-  useEffect(() => {
-    if (status.claimed) return;
-    if (!setupHandoff.current) {
-      const fragment = new URLSearchParams(window.location.hash.slice(1));
-      const setup = fragment.get("setup");
-      if (setup === null) return;
-      fragment.delete("setup");
-      const rest = fragment.toString();
-      window.history.replaceState(
-        window.history.state,
-        "",
-        `${window.location.pathname}${window.location.search}${rest ? `#${rest}` : ""}`,
-      );
-      if (!/^[a-f0-9]{64}$/.test(setup)) {
-        setError(
-          "The installation setup link is invalid. Reopen StreamerAI from its installer.",
-        );
-        return;
-      }
-      setupHandoff.current = { token: setup };
-    }
-    const handoff = setupHandoff.current;
-    if (!handoff) return;
-    // The ref also deduplicates React StrictMode's effect replay. Nothing is
-    // stored in browser storage, query parameters, or logging.
-    handoff.job ??= call("claim", { token: handoff.token });
-    handoff.token = "";
-    setBusy(true);
-    let active = true;
-    void handoff.job
-      .then(() => {
-        if (active) onConnected();
-      })
-      .catch(() => {
-        if (active)
-          setError(
-            "Server setup could not be completed. Reopen StreamerAI from its installer or enter your one-time key.",
-          );
-      })
-      .finally(() => {
-        if (active) setBusy(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, [status.claimed, onConnected]);
+  const [pin, setPin] = useState("");
+  const [signIn, setSignIn] = useState(false);
+  const [cloudLogin, setCloudLogin] = useState(false);
   useEffect(() => {
     if (!request) return;
     let active = true;
@@ -118,11 +93,7 @@ export function InstallationAccess({
     setBusy(true);
     setError("");
     try {
-      if (!status.claimed) {
-        await call("claim", { token: token.trim() });
-        setToken("");
-        onConnected();
-      } else setRequest(await call("pair", { name }));
+      setRequest(await call("pair", { name }));
     } catch (reason) {
       setError(
         reason instanceof Error ? reason.message : "Access unavailable.",
@@ -131,79 +102,220 @@ export function InstallationAccess({
       setBusy(false);
     }
   };
+  const authorize = async () => {
+    if (busy || !/^\d{8}$/.test(pin)) return;
+    setBusy(true);
+    setError("");
+    try {
+      const input = {
+        masterPin: pin,
+        deviceName: name.trim() || "Home browser",
+        admin: administration,
+      };
+      if (api?.authorizeInstallation) await api.authorizeInstallation(input);
+      else await call("authorize", input);
+      setPin("");
+      onConnected();
+    } catch (reason) {
+      setError(
+        reason instanceof Error ? reason.message : "Authorization failed.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+  if (
+    !administration &&
+    (status.householdReady === false ||
+      (!status.claimed && status.householdReady !== true))
+  )
+    return (
+      <main className="installation-screen">
+        <p className="eyebrow">StreamerAI home server</p>
+        <h1>
+          {status.claimed
+            ? "Your household is not ready yet"
+            : "Set up your household first"}
+        </h1>
+        <p>
+          The server owner can create a household or import a backup in
+          household administration.
+        </p>
+        <a className="button button--primary" href="/admin">
+          Open household administration
+        </a>
+      </main>
+    );
+  if (cloudLogin && api)
+    return (
+      <AccountLogin
+        api={api}
+        compact
+        adminLogin
+        onCancel={() => setCloudLogin(false)}
+        onAuthenticated={onConnected}
+      />
+    );
+  const localPairUrl =
+    request?.verificationUriComplete ??
+    (request
+      ? new URL(
+          `/admin/pair?code=${encodeURIComponent(request.code)}`,
+          window.location.origin,
+        ).href
+      : "");
   return (
     <main className="installation-screen">
-      <p className="eyebrow">StreamerAI · Home server</p>
+      <p className="eyebrow">StreamerAI home server</p>
       <h1>
-        {status.claimed ? "Connect this device" : "Set up the server owner"}
+        {administration ? "Household administration" : "Connect this device"}
       </h1>
       <p>
-        {status.claimed
-          ? "Request access, then ask the server owner to compare your code and approve this device in Settings."
-          : "The StreamerAI installer prepares your owner access automatically. You can also enter a one-time setup key from your server administrator."}
+        {administration
+          ? "Enter this household's Master PIN to administer this server."
+          : "Pair this browser with your home server. Your device stays connected when the cloud is unavailable."}
       </p>
-      {!request && (
+      {administration && !status.claimed && status.householdReady !== true ? (
+        <a className="button button--primary" href="/admin">
+          Set up your household
+        </a>
+      ) : administration || signIn ? (
         <form
+          className="form-stack"
           onSubmit={(event) => {
             event.preventDefault();
-            void submit();
+            void authorize();
           }}
         >
-          <label className="field">
-            <span>{status.claimed ? "Device name" : "One-time setup key"}</span>
-            {status.claimed ? (
-              <input
-                value={name}
-                maxLength={80}
-                required
-                onChange={(event) => setName(event.target.value)}
-              />
-            ) : (
-              <input
-                type="password"
-                value={token}
-                autoComplete="off"
-                required
-                onChange={(event) => setToken(event.target.value)}
-              />
-            )}
-          </label>
+          <DigitSlotsInput
+            label="Household Master PIN"
+            value={pin}
+            onChange={setPin}
+            disabled={busy}
+          />
           <button
             className="button button--primary"
             type="submit"
-            disabled={busy}
+            disabled={busy || !/^\d{8}$/.test(pin)}
           >
             {busy
-              ? "Connecting…"
-              : status.claimed
-                ? "Request access"
-                : "Claim server"}
+              ? "Authorizing?"
+              : administration
+                ? "Open administration"
+                : "Connect this device"}
           </button>
+          {!administration && (
+            <button
+              className="button button--ghost"
+              type="button"
+              onClick={() => {
+                setSignIn(false);
+                setPin("");
+              }}
+            >
+              Use a pairing code instead
+            </button>
+          )}
         </form>
-      )}
-      {request && (
-        <div role="status">
-          <p>Compare this code with the server owner:</p>
-          <p className="installation-code">{request.code}</p>
-          <p>Waiting for approval. This code expires in five minutes.</p>
+      ) : (
+        <>
+          {!request && (
+            <form
+              className="form-stack"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void submit();
+              }}
+            >
+              <label className="field">
+                <span>Device name</span>
+                <input
+                  value={name}
+                  maxLength={80}
+                  required
+                  onChange={(event) => setName(event.target.value)}
+                />
+              </label>
+              <button
+                className="button button--primary"
+                type="submit"
+                disabled={busy}
+              >
+                {busy ? "Preparing code?" : "Show pairing code"}
+              </button>
+            </form>
+          )}
+          {request && (
+            <div className="local-device-pairing" role="status">
+              {request.qrCodeDataUrl && (
+                <img
+                  src={request.qrCodeDataUrl}
+                  width={208}
+                  height={208}
+                  alt="Scan to approve this device on your home server"
+                />
+              )}
+              <p>
+                Open household administration on an approved device and compare
+                this code:
+              </p>
+              <p
+                className="installation-code"
+                aria-label={`Pairing code ${request.code}`}
+              >
+                {request.code.replace(/(\d{3})(\d{3})/, "$1 $2")}
+              </p>
+              <a href={localPairUrl}>{localPairUrl}</a>
+              <p>Waiting for approval. This code expires in five minutes.</p>
+              <button
+                className="button button--secondary"
+                type="button"
+                onClick={() => setRequest(null)}
+              >
+                Get a new code
+              </button>
+            </div>
+          )}
           <button
             className="button button--secondary"
             type="button"
-            onClick={() => setRequest(null)}
+            onClick={() => setSignIn(true)}
           >
-            Cancel
+            Sign in on this device
           </button>
-        </div>
+        </>
+      )}
+      {administration &&
+        status.claimed &&
+        status.cloudConfigured &&
+        status.cloudLinked !== false &&
+        api?.startDeviceAuthorization && (
+          <button
+            className="button button--secondary"
+            type="button"
+            onClick={() => setCloudLogin(true)}
+          >
+            Sign in with cloud account
+          </button>
+        )}
+      {!administration && (
+        <p>
+          <a href="/admin">Open household administration</a>
+        </p>
       )}
       {error && <p role="alert">{error}</p>}
     </main>
   );
 }
 
-export function InstallationDevices() {
+export function InstallationDevices({
+  initialCode = "",
+}: {
+  initialCode?: string;
+}) {
   const [data, setData] = useState<{
     devices: { id: string; name: string; role: string; current: boolean }[];
-    pending: { id: string; name: string }[];
+    pending: { id: string; name: string; code?: string }[];
   } | null>(null);
   const [owner, setOwner] = useState(false);
   const [codes, setCodes] = useState<Record<string, string>>({});
@@ -247,8 +359,8 @@ export function InstallationDevices() {
       <p className="eyebrow">Server access</p>
       <h2>Approved devices</h2>
       <p>
-        Devices need approval before they can use this home server. Cloud
-        account sign-in is separate.
+        Devices need approval before they can use this home server. Each paired
+        device receives its own revocable access to this household.
       </p>
       {data?.pending.map((item) => (
         <div className="deployment-card" key={item.id}>
@@ -256,12 +368,14 @@ export function InstallationDevices() {
           <label className="field">
             <span>Code shown on the requesting device</span>
             <input
-              value={codes[item.id] ?? ""}
-              maxLength={8}
+              value={
+                codes[item.id] ?? (item.code === initialCode ? initialCode : "")
+              }
+              maxLength={6}
               onChange={(event) =>
                 setCodes({
                   ...codes,
-                  [item.id]: event.target.value.toUpperCase(),
+                  [item.id]: event.target.value.replace(/\D/g, "").slice(0, 6),
                 })
               }
             />
@@ -273,7 +387,9 @@ export function InstallationDevices() {
               onClick={() =>
                 void action("decision", {
                   requestId: item.id,
-                  code: codes[item.id],
+                  code:
+                    codes[item.id] ??
+                    (item.code === initialCode ? initialCode : ""),
                   approve: true,
                 })
               }
@@ -298,15 +414,18 @@ export function InstallationDevices() {
             {device.name} · {device.role}
             {device.current ? " · This device" : ""}
           </span>
-          {device.role !== "owner" && (
-            <button
-              className="button button--secondary"
-              type="button"
-              onClick={() => void action("revoke", { deviceId: device.id })}
-            >
-              Revoke access
-            </button>
-          )}
+          {!device.current &&
+            (device.role !== "owner" ||
+              (data?.devices.filter((item) => item.role === "owner").length ??
+                0) > 1) && (
+              <button
+                className="button button--secondary"
+                type="button"
+                onClick={() => void action("revoke", { deviceId: device.id })}
+              >
+                Revoke access
+              </button>
+            )}
         </div>
       ))}
       {error && <p role="alert">{error}</p>}

@@ -33,6 +33,7 @@ body[data-page="login"] h1{font-size:clamp(28px,5vw,38px);letter-spacing:-.04em}
 .login-tip{margin:24px 0;padding:18px 20px;border:1px solid #34384a;border-radius:14px;color:#b6b9c6;font-size:13px;line-height:1.6;background:#ffffff03}
 .login-tip h2{font-size:14px;font-weight:600;margin:0 0 8px;color:#d2d5df}.login-tip p{margin:0;color:inherit}
 .account-uid{display:flex;align-items:center;gap:10px;flex-wrap:wrap;color:#aeb3c8;font-size:.85rem}.account-uid code{font:inherit;letter-spacing:0;overflow-wrap:anywhere;color:#e0e1eb}.account-uid button{margin:0;padding:5px 9px;font-size:.8rem}
+.household-uid{display:block;margin:8px 0;font:400 .8rem system-ui,sans-serif;letter-spacing:0;overflow-wrap:anywhere;color:#aeb3c8}#households-list{display:grid;gap:12px}.operation-form select{width:100%;min-width:0}.operation-form input{min-width:0}#household-requests .approval-card{overflow-wrap:anywhere}
 .account-uid .copy-uid{display:grid;place-items:center;width:36px;height:36px;padding:0;color:#c8cbd6;transition:color .2s,border-color .2s,background-color .2s}
 .copy-uid:hover{color:#fff;border-color:#a7a2ff;background:#a7a2ff1a}.copy-uid svg{grid-area:1/1;width:18px;height:18px;transition:opacity .18s,transform .22s}.copy-uid__check{opacity:0;transform:scale(.6)}.copy-uid[data-copied="true"]{color:#8bdbab;border-color:#61ae80;background:#61ae801a}.copy-uid[data-copied="true"] .copy-uid__copy{opacity:0;transform:scale(.6)}.copy-uid[data-copied="true"] .copy-uid__check{opacity:1;transform:scale(1);animation:copy-uid-pop .32s ease-out}
 @keyframes copy-uid-pop{50%{transform:scale(1.2)}}
@@ -56,7 +57,7 @@ export function page(
   const content =
     kind === "login"
       ? `
-    <h1>Přihlášení ke StreamerAI</h1><p>Přihlaste se a připojte domácí server nebo TV ke svému účtu.</p><p id="delete-success" role="status" hidden>Váš online účet byl smazán. Místní data zůstala na domácích serverech.</p><p id="merge-success" role="status" hidden>Účty byly sloučeny. Přihlaste se ke společnému účtu.</p>
+    <h1>Přihlášení ke StreamerAI</h1><p>Přihlaste se a připojte domácí server ke svému účtu.</p><p id="delete-success" role="status" hidden>Váš online účet byl smazán. Místní data zůstala na domácích serverech.</p><p id="merge-success" role="status" hidden>Účty byly sloučeny. Přihlaste se ke společnému účtu.</p>
     <section class="login-card"><div role="group" aria-label="Přihlášení přes třetí stranu"><p class="auth-label">S vaším stávajícím účtem</p><button id="google" class="google-button"><svg aria-hidden="true" viewBox="0 0 24 24" width="20" height="20"><path fill="#4285F4" d="M21.6 12.23c0-.71-.06-1.39-.18-2.05H12v3.88h5.38a4.6 4.6 0 0 1-2 3.02v2.51h3.24c1.9-1.75 2.98-4.33 2.98-7.36Z"/><path fill="#34A853" d="M12 22c2.7 0 4.96-.9 6.62-2.41l-3.24-2.51c-.9.6-2.05.96-3.38.96-2.6 0-4.8-1.76-5.59-4.12H3.07v2.59A10 10 0 0 0 12 22Z"/><path fill="#FBBC05" d="M6.41 13.92a6 6 0 0 1 0-3.84V7.49H3.07a10 10 0 0 0 0 9.02l3.34-2.59Z"/><path fill="#EA4335" d="M12 5.96c1.47 0 2.79.5 3.82 1.49l2.87-2.87A9.6 9.6 0 0 0 12 2a10 10 0 0 0-8.93 5.49l3.34 2.59C7.2 7.72 9.4 5.96 12 5.96Z"/></svg><span>Pokračovat přes Google</span></button></div><div class="auth-divider"><span>nebo e-mailem</span></div>
     ${
       emailAvailable
@@ -70,19 +71,19 @@ export function page(
         : "<p>E-mailové přihlášení zatím není dostupné.</p>"
     }
       </section>
-    <aside class="login-tip" aria-labelledby="login-tip-title"><h2 id="login-tip-title">Věděli jste, že?</h2><p>StreamerAI můžete používat také bez registrace. Otevřete svou domácí instalaci a zvolte pokračování s místním účtem. Zde spravujete online účet a párování zařízení.</p></aside>
+    <aside class="login-tip" aria-labelledby="login-tip-title"><h2 id="login-tip-title">Věděli jste, že?</h2><p>StreamerAI můžete používat také bez registrace. Na domácím serveru založte domácnost bez cloudu. Zde spravujete online účet a vlastnictví připojených domácností. Televize a další zařízení se párují přímo s domácím serverem.</p></aside>
   `
       : kind === "device"
         ? `
-    <h1>Připojit zařízení</h1><p id="identity"></p>
-    <section id="code-section"><form id="code-form"><label for="user-code">Kód z TV nebo domácího serveru</label>
+    <h1>Připojit domácí server</h1><p id="identity"></p>
+    <section id="code-section"><form id="code-form"><label for="user-code">Kód z domácího serveru</label>
       <input id="user-code" name="user_code" autocomplete="off" autocapitalize="characters" maxlength="16" placeholder="ABCD-EFGH" required>
       <button type="submit">Ověřit kód</button></form></section>
     <section id="approval" hidden><h2 id="device-name"></h2><p>Na svém zařízení ověřte stejný kód:</p><code id="display-code"></code>
-      <p id="grant-description">Povolené zařízení získá přístup k profilům, knihovně, historii a rozkoukanosti vašeho účtu. Připojení platí 30 dní a můžete jej kdykoliv zrušit.</p>
+      <p id="grant-description">Povolené zařízení získá přístup k profilům, knihovně, historii a rozkoukanosti vybrané domácnosti. Připojení platí 30 dní a můžete jej kdykoliv zrušit.</p>
       <p>Potvrďte pouze zařízení, které máte u sebe. Neschvalujte neočekávané žádosti ani kódy zaslané cizí osobou.</p>
       <button id="approve">Kód souhlasí, připojit</button><button id="deny" class="secondary">Zamítnout</button></section>
-    <p><a href="/account">Spravovat účet a zařízení</a></p>
+    <p><a href="/account">Spravovat účet a domácnosti</a></p>
   `
         : `
     <h1>Váš účet StreamerAI</h1><p id="identity"></p><div class="account-uid"><span>UID účtu:</span><code id="account-uid"></code><button id="copy-account-uid" class="secondary copy-uid" type="button" aria-label="Kopírovat UID účtu" title="Kopírovat UID účtu"><svg class="copy-uid__copy" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg><svg class="copy-uid__check" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 4.5 4.5L19 7"/></svg></button><span id="copy-account-uid-status" class="copy-uid-status" role="status" aria-live="polite"></span></div>
@@ -93,19 +94,13 @@ export function page(
       <p id="email-feedback" role="status" aria-live="polite"></p>
       <form id="enable-email-form" hidden><label for="enable-email-otp">Osmimístný ověřovací kód</label><input id="enable-email-otp" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{8}" maxlength="8" required><button type="submit">Potvrdit e-mailové přihlášení</button></form>
       <small id="reauth-help" class="account-help" role="status" aria-live="polite" hidden>Pro změnu způsobů přihlášení je potřeba čerstvé ověření účtu. <a id="reauthenticate" href="/login">Přihlaste se znovu</a>.</small></section>
-    <section class="account-section"><h2>Čekající párování</h2><p class="section-intro">Potvrďte pouze žádosti ze zařízení, které znáte.</p><div id="pairings" class="pairing-list"></div><a class="account-link" href="/device">Zadat párovací kód ručně</a></section>
-    <section class="account-section"><h2>Připojená zařízení</h2><div id="devices" class="device-list"></div><a class="account-link" href="/device">Připojit další zařízení</a></section>
-    <section class="account-section"><h2>Čekající ke schválení</h2><p class="section-intro">Žádosti o převod profilů a sloučení účtů.</p><div id="transfers" class="approval-list"></div></section>
-    <section class="account-section"><h2>Obnovení PINů</h2><p class="section-intro">Zapomenutý PIN profilu můžete odebrat po ověření účtu. Na domácím serveru zvolte „Forgot PIN?“ nebo zadáním Master PINu.</p><p class="section-intro">Potvrďte pouze reset profilu, o který jste právě požádali na domácím serveru.</p><div id="pin-resets" class="pairing-list"></div><button id="refresh-pin-resets" class="secondary" type="button">Obnovit žádosti</button></section>
-    <section class="account-section"><h2>Účty a profily</h2><p class="section-intro">Spravujte Master PIN, převádějte profily nebo spojte své účty. Žádosti o převod a sloučení potvrdí vlastník druhého účtu.</p>
-      <details class="operation-form" id="master-pin-settings"><summary>Master PIN</summary><p>Osmimístný Master PIN odemkne libovolný profil a šifruje místní zálohy. Po změně používají nové zálohy nový PIN; starší zálohy vyžadují původní PIN.</p><button id="enroll-master-pin" class="secondary" type="button">Potvrdit stávající PIN pro změny na domácím serveru</button><button id="change-master-pin" type="button">Změnit / resetovat Master PIN</button></details>
-      <details class="operation-form"><summary>Převést profil</summary><p>Přenese se synchronizovaná knihovna, historie a rozkoukanost. Před převodem spusťte synchronizaci na zdrojovém serveru; nesynchronizované změny a místní přihlašovací údaje ke službám se nepřenášejí. PIN nastavíte znovu na cílovém serveru.</p>
-        <form id="transfer-form"><label for="profile">Profil k převodu</label><select id="profile" required></select>
-        <label for="target-email">E-mail nebo UID cílového účtu</label><input id="target-email" type="text" autocomplete="off" maxlength="320" required>
-        <button type="submit">Odeslat žádost o převod</button></form></details>
-      <details class="operation-form"><summary>Sloučit účty</summary><p>Před sloučením synchronizujte profily na obou domácích serverech. Druhý vlastník potvrdí sloučení a vybere profily, které zůstanou zachovány. Spojený účet může obsahovat nejvýše pět profilů.</p>
-        <form id="merge-form"><label for="merge-target">E-mail nebo UID druhého účtu</label><input id="merge-target" type="text" autocomplete="off" maxlength="320" required>
-        <button type="submit">Odeslat žádost o sloučení</button></form></details>
+
+    <section id="households" class="account-section"><h2>Domácnosti</h2><p class="section-intro">Každá domácnost patří jednomu domácímu serveru a má vlastní profily, data a Master PIN. Zařízení, PINy a správce spravujte přímo na příslušném serveru.</p><div id="households-list" class="device-list"></div><a class="account-link" href="/device">Připojit domácí server</a><button id="refresh-households" class="secondary" type="button">Obnovit domácnosti</button></section>
+    <section id="requests" class="account-section"><h2>Žádosti ke schválení</h2><p class="section-intro">Převod vlastnictví domácnosti, převod profilu a sloučení vždy potvrzuje cílový vlastník.</p><div id="household-requests" class="approval-list"></div></section>
+    <section class="account-section"><h2>Správa domácností</h2>
+      <details class="operation-form"><summary>Převést vlastnictví domácnosti</summary><form id="household-owner-form"><label for="owner-household">Domácnost</label><select id="owner-household" required></select><label for="household-target-account">E-mail nebo UID nového vlastníka</label><input id="household-target-account" maxlength="320" required><button type="submit">Požádat o převod</button></form></details>
+      <details class="operation-form"><summary>Převést profil mezi domácnostmi</summary><p>Přenese se synchronizovaná knihovna, historie, rozkoukanost a nastavení profilu. Přihlašovací údaje ke službám zůstávají v původní domácnosti. Před převodem synchronizujte oba servery.</p><form id="household-profile-form"><label for="profile-household">Zdrojová domácnost</label><select id="profile-household" required></select><label for="household-profile">Profil</label><select id="household-profile" required></select><label for="profile-target-household">UID cílové domácnosti</label><input id="profile-target-household" maxlength="36" required><button type="submit">Požádat o převod profilu</button></form></details>
+      <details class="operation-form"><summary>Sloučit domácnosti</summary><p>Cílová domácnost smí obsahovat nejvýše pět profilů. Šifrované zálohy a místní přihlašovací údaje vyžadují dokončení importu na domácím serveru; schválení je samo nepřepíše.</p><form id="household-merge-form"><label for="merge-household">Zdrojová domácnost</label><select id="merge-household" required></select><label for="merge-target-household">UID cílové domácnosti</label><input id="merge-target-household" maxlength="36" required><button type="submit">Požádat o sloučení</button></form></details>
     </section>
     <p id="operation-reauth" role="status" hidden>Pro tuto akci je potřeba nové ověření. <a id="operation-reauth-link" href="/login">Přihlaste se znovu</a>.</p>
     <div class="account-final-actions"><button id="signout" class="secondary">Odhlásit</button><button id="delete-account" class="danger-button" type="button">Smazat účet</button></div>
@@ -113,45 +108,22 @@ export function page(
     <dialog id="confirm-dialog" class="confirm-dialog" aria-labelledby="confirm-title" aria-describedby="confirm-description"><h2 id="confirm-title"></h2><p id="confirm-description"></p><div class="dialog-actions"><button id="confirm-cancel" class="secondary" type="button">Zrušit</button><button id="confirm-action" class="danger-button" type="button"></button></div></dialog>
     <dialog id="profiles-dialog" class="confirm-dialog" aria-labelledby="profiles-title" aria-describedby="profiles-description"><h2 id="profiles-title"></h2><p id="profiles-description"></p><div id="profiles-list" class="profile-picks"></div><p id="profiles-count" class="approval-note" role="status"></p><p id="profiles-error" class="selection-error" role="alert" hidden>Vyberte alespoň jeden a nejvýše pět profilů.</p><div class="dialog-actions"><button id="profiles-cancel" class="secondary" type="button">Zrušit</button><button id="profiles-confirm" type="button">Potvrdit výběr</button></div></dialog>
   `;
-  return `<!doctype html><html lang="cs"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>StreamerAI — účet</title><link rel="stylesheet" href="/assets/auth.css"><script src="/assets/auth.js" defer></script></head><body data-page="${kind}"><main><div class="brand">STREAMER AI</div>${content}<dialog id="master-pin-dialog" class="confirm-dialog" aria-labelledby="master-pin-title"><h2 id="master-pin-title">Master PIN</h2><p>Zvolte 8 číslic pro odemykání všech profilů a šifrování místních záloh. PIN si bezpečně uschovejte. Starší zálohy zůstávají chráněné původním PINem.</p><form id="master-pin-form"><label for="master-pin">Nový Master PIN (8 číslic)</label><input id="master-pin" type="password" inputmode="numeric" autocomplete="new-password" pattern="[0-9]{8}" minlength="8" maxlength="8" required><label for="master-pin-confirmation">Potvrzení Master PINu</label><input id="master-pin-confirmation" type="password" inputmode="numeric" autocomplete="new-password" pattern="[0-9]{8}" minlength="8" maxlength="8" required><p id="master-pin-error" role="alert"></p><div class="dialog-actions"><button id="master-pin-cancel" class="secondary" type="button">Zrušit</button><button id="master-pin-save" type="submit">Uložit Master PIN</button></div></form></dialog><dialog id="enroll-pin-dialog" class="confirm-dialog" aria-labelledby="enroll-pin-title"><h2 id="enroll-pin-title">Potvrďte současný Master PIN</h2><p>Jednorázově povolíte změnu PINu z domácí aplikace. Váš PIN se tím nezmění.</p><form id="enroll-pin-form"><label for="enroll-pin">Současný Master PIN (8 číslic)</label><input id="enroll-pin" type="password" inputmode="numeric" autocomplete="off" pattern="[0-9]{8}" minlength="8" maxlength="8" required><p id="enroll-pin-error" role="alert"></p><div class="dialog-actions"><button id="enroll-pin-cancel" class="secondary" type="button">Zrušit</button><button id="enroll-pin-save" type="submit">Potvrdit PIN</button></div></form></dialog><p id="message" role="status" aria-live="polite"></p><footer>Přihlašovací údaje k mediálním službám zůstávají na domácím serveru.</footer></main></body></html>`;
+  return `<!doctype html><html lang="cs"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>StreamerAI — účet</title><link rel="stylesheet" href="/assets/auth.css"><script src="/assets/auth.js" defer></script></head><body data-page="${kind}"><main><div class="brand">STREAMER AI</div>${content}<p id="message" role="status" aria-live="polite"></p><footer>Přihlašovací údaje k mediálním službám zůstávají na domácím serveru.</footer></main></body></html>`;
 }
 
 export const browserScript = String.raw`
 (() => {
   const el = (id) => document.getElementById(id);
-  function attachMasterPinSlots(id) {
-    const input = el(id);
-    if (!input) return;
-    const entry = document.createElement('div');
-    entry.className = 'master-pin-entry';
-    const slots = document.createElement('div');
-    slots.className = 'master-pin-entry__slots';
-    slots.setAttribute('aria-hidden', 'true');
-    const cells = Array.from({length: 8}, () => {
-      const cell = document.createElement('span');
-      cell.className = 'master-pin-entry__slot';
-      slots.append(cell);
-      return cell;
-    });
-    input.parentElement.insertBefore(entry, input);
-    entry.append(slots, input);
-    input.classList.add('master-pin-entry__input');
-    const update = () => {
-      const digits = input.value.replace(/\D/g, '').slice(0, 8);
-      if (input.value !== digits) input.value = digits;
-      cells.forEach((cell, index) => {
-        cell.textContent = index < digits.length ? '●' : '';
-      });
-    };
-    input.addEventListener('input', update);
-    input.form?.addEventListener('reset', () => queueMicrotask(update));
-    update();
-  }
-  attachMasterPinSlots('master-pin');
-  attachMasterPinSlots('master-pin-confirmation');
-  attachMasterPinSlots('enroll-pin');
   const message = (text, inline) => { el('message').textContent = inline ? '' : text; if(inline && el(inline))el(inline).textContent=text; };
   const errors = {
+    household_scope_required:'Nejprve připojte domácí server ke konkrétní domácnosti.',
+    household_scope_forbidden:'Toto připojení patří jiné domácnosti.',
+    household_conflict:'Domácnost již patří jinému účtu.',
+    household_request_changed:'Data domácnosti se změnila. Synchronizujte servery a vytvořte novou žádost.',
+    household_request_unavailable:'Žádost již není dostupná nebo vypršela.',
+    household_merged:'Tato domácnost již byla sloučena.',
+    transfer_data_conflict:'Cílová domácnost obsahuje odlišná data stejného profilu. Dokončete import na domácím serveru.',
+    local_pin_management:'PINy spravujte na svém domácím serveru.',
     master_pin_setup_required:'Nejprve nastavte osmimístný Master PIN.',
     master_pin_initialization_required:'Obnovte stránku pro dokončení zabezpečení účtu a zopakujte připojení zařízení.',
     invalid_master_pin_verifier:'Master PIN se nepodařilo připravit. Obnovte stránku a zkuste to znovu.',
@@ -219,61 +191,29 @@ export const browserScript = String.raw`
     try {const data=await api('/v1/account');el('identity').textContent=data.name+' · '+data.email;return data;}
     catch(error){if(error.code==='unauthorized'){location.replace('/login'+(safeCode?'?user_code='+encodeURIComponent(safeCode):(approvalQuery||accountQuery)));return null;}throw error;}
   }
-  async function makeMasterPinVerifier(pin) {
-    const hex = bytes => Array.from(new Uint8Array(bytes), byte => byte.toString(16).padStart(2, '0')).join('');
-    const salt = hex(crypto.getRandomValues(new Uint8Array(16)));
-    const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(pin), 'PBKDF2', false, ['deriveBits']);
-    const hash = hex(await crypto.subtle.deriveBits({name:'PBKDF2', hash:'SHA-256', salt:new TextEncoder().encode(salt), iterations:600000}, key, 256));
-    const changeSalt = hex(crypto.getRandomValues(new Uint8Array(16)));
-    const changeHash = hex(await crypto.subtle.deriveBits({name:'PBKDF2', hash:'SHA-256', salt:new TextEncoder().encode(changeSalt), iterations:600000}, key, 256));
-    return {salt, hash, version:crypto.randomUUID(), changeSalt, changeHash};
-  }
-  async function initializeMasterPin() {
-    const digits = [];
-    while (digits.length < 8) {
-      for (const byte of crypto.getRandomValues(new Uint8Array(16))) {
-        if (byte < 250) digits.push(byte % 10);
-        if (digits.length === 8) break;
-      }
-    }
-    const verifier = await makeMasterPinVerifier(digits.join(''));
-    await api('/v1/account/master-pin', {method:'PUT', body:JSON.stringify({initialize:true, verifier})});
-  }
-  function editMasterPin(required) {
-    return new Promise(resolve=>{
-      const dialog=el('master-pin-dialog');const form=el('master-pin-form');form.reset();el('master-pin-error').textContent='';el('master-pin-cancel').hidden=required;
-      let saved=false;let saving=false;const cancel=()=>{if(!saving)dialog.close();};const escape=event=>{if(required||saving)event.preventDefault();};
-      const submit=async(event)=>{event.preventDefault();if(saving)return;const pin=el('master-pin').value;const confirmation=el('master-pin-confirmation').value;if(!/^\d{8}$/.test(pin)||pin!==confirmation){el('master-pin-error').textContent='Zadejte dvakrát stejný osmimístný PIN.';return;}saving=true;el('master-pin-save').disabled=true;el('master-pin-cancel').disabled=true;try{const verifier=await makeMasterPinVerifier(pin);await api('/v1/account/master-pin',{method:'PUT',body:JSON.stringify({verifier})});saved=true;dialog.close();}catch(error){if(error.code==='reauth_required'){location.assign('/login'+(safeCode?'?user_code='+encodeURIComponent(safeCode):accountQuery));return;}el('master-pin-error').textContent=error.message;}finally{saving=false;el('master-pin-save').disabled=false;el('master-pin-cancel').disabled=false;}};
-      const finish=()=>{form.removeEventListener('submit',submit);el('master-pin-cancel').removeEventListener('click',cancel);dialog.removeEventListener('cancel',escape);dialog.removeEventListener('close',finish);form.reset();resolve(saved);};
-      form.addEventListener('submit',submit);el('master-pin-cancel').addEventListener('click',cancel);dialog.addEventListener('cancel',escape);dialog.addEventListener('close',finish);dialog.showModal();el('master-pin').focus();
-    });
-  }
-  async function refreshPinResets() {
-    const data=await api('/v1/account/pin-resets');el('pin-resets').replaceChildren();
-    if(!data.requests.length){const p=document.createElement('p');p.className='empty-state';p.textContent='Žádné čekající žádosti o reset PINu.';el('pin-resets').append(p);}
-    data.requests.forEach(request=>{const div=document.createElement('div');div.className='pairing-row';const info=document.createElement('div');info.className='pairing-info';const name=document.createElement('strong');name.textContent=request.profile_name;const detail=document.createElement('p');detail.textContent=request.device_name+' · Platí do '+new Date(request.expires_at).toLocaleTimeString('cs-CZ');info.append(name,detail);div.append(info);[true,false].forEach(approve=>div.append(button(approve?'Povolit reset':'Zamítnout',async()=>{if(!await confirmAction(approve?'Resetovat PIN profilu?':'Zamítnout reset?', 'Profil „'+request.profile_name+'“ na zařízení „'+request.device_name+'“.',approve?'Povolit reset':'Zamítnout'))return;try{await api('/v1/account/pin-resets/'+encodeURIComponent(request.id)+'/decision',{method:'POST',body:JSON.stringify({approve})});await refreshPinResets();}catch(error){operationError(error);}},!approve)));el('pin-resets').append(div);});
+
+  async function refreshHouseholdProfiles() {
+    const id=el('profile-household').value;el('household-profile').replaceChildren();
+    if(!id)return;
+    const data=await api('/v1/households/'+encodeURIComponent(id)+'/profiles');
+    data.profiles.forEach(profile=>{const option=document.createElement('option');option.value=profile.id;option.textContent=profile.name;el('household-profile').append(option);});
   }
   async function refreshPortal() {
-    const [devices,profiles,transfers,pending,merges]=await Promise.all([api('/v1/devices'),api('/v1/profiles'),api('/v1/transfers'),api('/v1/device/pending'),api('/v1/merges')]);
-    el('devices').replaceChildren();
-    if(!devices.devices.length){const p=document.createElement('p');p.className='empty-state';p.textContent='Zatím nemáte připojená zařízení.';el('devices').append(p);}
-    devices.devices.forEach(device=>{
-      const revoked=!!device.revoked_at;const expired=device.expires_at<=Date.now();
-      const div=document.createElement('div');div.className='device-row';const info=document.createElement('div');info.className='device-info';const name=document.createElement('strong');name.textContent=device.name;const status=document.createElement('p');status.textContent=revoked?'Odpojeno':expired?'Přihlášení vypršelo':'Připojeno';info.append(name,status);div.append(info);
-      const remove=button('',async()=>{if(!await confirmAction('Odebrat zařízení?', 'Zařízení „'+device.name+'“ ztratí přístup k tomuto účtu. Pro další použití ho budete muset znovu připojit.', 'Odebrat zařízení'))return;await api('/v1/devices/'+encodeURIComponent(device.id),{method:'DELETE'});await refreshPortal();});remove.className='icon-button';remove.setAttribute('aria-label','Odebrat zařízení '+device.name);remove.title='Odebrat zařízení';remove.innerHTML='<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M10 11v6m4-6v6M5 7l1 13h12l1-13M9 7V4h6v3"/></svg>';div.append(remove);el('devices').append(div);
-    });
-    el('pairings').replaceChildren();
-    if(!pending.pairings.length){const p=document.createElement('p');p.className='empty-state';p.textContent='Žádná žádost přiřazená k tomuto účtu. Nové zařízení nejprve otevřete přes QR kód nebo zadejte jeho kód.';el('pairings').append(p);}
-    pending.pairings.forEach(pairing=>{const div=document.createElement('div');div.className='pairing-row';const info=document.createElement('div');info.className='pairing-info';const name=document.createElement('strong');name.textContent=pairing.device_name;const detail=document.createElement('p');detail.textContent=(pairing.purpose==='pin-reset'?'Obnovení PINu · ':'Připojení zařízení · ')+'Platí do '+new Date(pairing.expires_at).toLocaleTimeString('cs-CZ',{hour:'2-digit',minute:'2-digit'});info.append(name,detail);const review=document.createElement('a');review.href='/device';review.textContent='Ověřit kód';review.setAttribute('aria-label','Ověřit kód zařízení '+pairing.device_name);div.append(info,review);div.append(button('Zamítnout',async()=>{if(!await confirmAction('Zamítnout žádost?', 'Žádost zařízení „'+pairing.device_name+'“ bude zamítnuta.', 'Zamítnout'))return;await api('/v1/device/pending/'+encodeURIComponent(pairing.id)+'/decision',{method:'POST',body:JSON.stringify({approve:false})});await refreshPortal();},true));el('pairings').append(div);});
-    el('profile').replaceChildren();profiles.profiles.forEach(profile=>{const option=document.createElement('option');option.value=profile.id;option.textContent=profile.name;el('profile').append(option);});
-    el('transfers').replaceChildren();
-    if(!transfers.transfers.length&&!merges.merges.length)row(el('transfers'),'Žádné čekající žádosti.');
-    transfers.transfers.forEach(transfer=>{
-      const div=row(el('transfers'),'Převod profilu „'+transfer.profile_name+'“ · '+(transfer.source_email||transfer.source_account_id)+' → '+(transfer.target_email||transfer.target_account_id));div.className='approval-card';const expiry=document.createElement('small');expiry.textContent='Platí do '+new Date(transfer.expires_at).toLocaleString('cs-CZ');div.append(expiry);
-      if(transfer.incoming){const accept=button('Zkontrolovat převod',async()=>{const choices=[...profiles.profiles.map(p=>({...p,ownerLabel:'Váš účet'})),{id:transfer.profile_id,name:transfer.profile_name,ownerLabel:'Převáděný profil'}];const ids=await chooseProfiles('Přijmout profil','Vyberte profily, které zůstanou na vašem účtu. Nevybrané profily budou smazány z cloudu i synchronizovaných instalací.',choices,transfer.profile_id);if(!ids)return;await api('/v1/transfers/'+encodeURIComponent(transfer.id)+'/accept',{method:'POST',body:JSON.stringify({removeProfileIds:profiles.profiles.filter(p=>!ids.includes(p.id)).map(p=>p.id)})});message('Profil byl převeden. Na domácím serveru spusťte synchronizaci.');await refreshPortal();});const decline=button('Zamítnout',async()=>{if(!await confirmAction('Zamítnout převod?','Profil zůstane u původního účtu.','Zamítnout'))return;await api('/v1/transfers/'+encodeURIComponent(transfer.id)+'/decline',{method:'POST',body:'{}'});message('Převod byl zamítnut.');await refreshPortal();},true);div.append(accept,decline);if(!approvalOpened&&approval==='transfer.'+transfer.id){approvalOpened=true;queueMicrotask(()=>{(intent==='decline'?decline:accept).focus();if(intent)(intent==='decline'?decline:accept).click();});}}
-    });
-    merges.merges.forEach(merge=>{const div=row(el('transfers'),'Sloučení účtů · '+(merge.source_email||merge.source_account_id)+' → '+(merge.target_email||merge.target_account_id)+' · Zachované UID: '+merge.target_account_id);div.className='approval-card';const expiry=document.createElement('small');expiry.textContent='Platí do '+new Date(merge.expires_at).toLocaleString('cs-CZ');div.append(expiry);if(merge.incoming){const accept=button('Zkontrolovat sloučení',async()=>{const choices=merge.profiles.map(p=>({...p,ownerLabel:p.account_id===merge.target_account_id?'Zachovaný účet':'Druhý účet'}));const ids=await chooseProfiles('Sloučit účty','Vyberte nejvýše pět profilů, které zůstanou po sloučení. Nevybrané profily budou smazány z cloudu i synchronizovaných instalací. Zachované UID: '+merge.target_account_id,choices);if(!ids)return;const result=await api('/v1/merges/'+encodeURIComponent(merge.id)+'/decision',{method:'POST',body:JSON.stringify({approve:true,profileIds:ids,expectedProfileIds:choices.map(p=>p.id)})});if(portalAccount.id!==result.accountId){location.replace('/login?account_id='+encodeURIComponent(result.accountId)+'&merged=1');return;}message('Účty byly sloučeny. Zachované UID: '+result.accountId+'.');await refreshPortal();});const decline=button('Zamítnout',async()=>{if(!await confirmAction('Zamítnout sloučení?','Účty zůstanou oddělené.','Zamítnout'))return;await api('/v1/merges/'+encodeURIComponent(merge.id)+'/decision',{method:'POST',body:JSON.stringify({approve:false})});message('Sloučení bylo zamítnuto.');await refreshPortal();},true);div.append(accept,decline);if(!approvalOpened&&approval==='merge.'+merge.id){approvalOpened=true;queueMicrotask(()=>{(intent==='decline'?decline:accept).focus();if(intent)(intent==='decline'?decline:accept).click();});}}});
-    if(approval&&!approvalOpened){approvalOpened=true;message('Žádost není dostupná, vypršela nebo patří jinému účtu. Zkuste změnit účet.');}
+    const [data,requests]=await Promise.all([api('/v1/households'),api('/v1/household-requests')]);
+    el('households-list').replaceChildren();
+    if(!data.households.length){const p=document.createElement('p');p.className='empty-state';p.textContent='Zatím nemáte připojenou domácnost. Přihlaste cloudový účet na svém domácím serveru.';el('households-list').append(p);}
+    for(const household of data.households){
+      const card=document.createElement('div');card.className='approval-card';const name=document.createElement('strong');name.textContent=household.name;const id=document.createElement('code');id.className='household-uid';id.textContent=household.id;const status=document.createElement('p');status.textContent=household.mergedInto?'Sloučeno do '+household.mergedInto:household.hasBackup?'Šifrovaná záloha · '+new Date(household.lastBackupAt).toLocaleString('cs-CZ'):'Bez aktuální cloudové zálohy';card.append(name,id,status);
+      if(!household.mergedInto){card.append(button('Odpojit server',async()=>{if(!await confirmAction('Odpojit server od cloudu?','Místní domácnost i uložené cloudové zálohy zůstanou zachovány. Server se přestane synchronizovat, dokud jej znovu nepřipojíte.','Odpojit'))return;await api('/v1/households/'+encodeURIComponent(household.id)+'/connection',{method:'DELETE'});message('Připojení domácího serveru bylo odvoláno.');await refreshPortal();},true));}
+      const resets=await api('/v1/households/'+encodeURIComponent(household.id)+'/pin-resets');
+      for(const reset of resets.requests){const line=document.createElement('div');line.className='row';const text=document.createElement('p');text.textContent='Ověření vlastnictví · '+reset.profile_name+' · '+reset.device_name;line.append(text);for(const approve of [true,false])line.append(button(approve?'Povolit obnovu':'Zamítnout',async()=>{if(!await confirmAction('Ověření vlastnictví domácnosti',reset.profile_name+' · '+reset.device_name,approve?'Povolit':'Zamítnout'))return;await api('/v1/households/'+encodeURIComponent(household.id)+'/pin-resets/'+encodeURIComponent(reset.id)+'/decision',{method:'POST',body:JSON.stringify({approve})});await refreshPortal();},!approve));card.append(line);}
+      el('households-list').append(card);
+    }
+    for(const key of ['owner-household','profile-household','merge-household']){const select=el(key),previous=select.value;select.replaceChildren();data.households.filter(h=>!h.mergedInto).forEach(h=>{const option=document.createElement('option');option.value=h.id;option.textContent=h.name+' · '+h.id;select.append(option);});if([...select.options].some(o=>o.value===previous))select.value=previous;}
+    await refreshHouseholdProfiles();
+    el('household-requests').replaceChildren();
+    if(!requests.requests.length){const p=document.createElement('p');p.className='empty-state';p.textContent='Žádné čekající žádosti.';el('household-requests').append(p);}
+    for(const request of requests.requests){const div=row(el('household-requests'),({'ownership-transfer':'Převod vlastnictví','profile-transfer':'Převod profilu',merge:'Sloučení domácností'}[request.kind]||request.kind)+' · '+request.source_name+' → '+(request.target_name||request.target_email));div.className='approval-card';const expiry=document.createElement('small');expiry.textContent='Platí do '+new Date(request.expires_at).toLocaleString('cs-CZ');div.append(expiry);if(request.requiresLocalImport){const p=document.createElement('p');p.textContent='Schváleno. Dokončete import šifrované domácnosti na cílovém domácím serveru.';div.append(p);}else if(request.incoming){for(const approve of [true,false])div.append(button(approve?'Schválit':'Zamítnout',async()=>{if(!await confirmAction(approve?'Schválit žádost?':'Zamítnout žádost?',request.source_name+' → '+(request.target_name||request.target_email),approve?'Schválit':'Zamítnout'))return;const result=await api('/v1/household-requests/'+encodeURIComponent(request.id)+'/decision',{method:'POST',body:JSON.stringify({approve})});message(result.requiresLocalImport?'Schváleno. Dokončete import na cílovém domácím serveru.':'Žádost byla zpracována.');await refreshPortal();},!approve));}}
   }
   async function init() {
     if(document.body.dataset.page==='login'){
@@ -308,16 +248,10 @@ export const browserScript = String.raw`
     }
     const currentAccount=await account();if(!currentAccount)return;
     if(expectedAccount && currentAccount.id!==expectedAccount)throw new Error('V prohlížeči je přihlášen jiný účet než v domácí instalaci. Přihlaste se znovu ke stejnému účtu, který chcete propojit.');
-    const masterState=await api('/v1/account/master-pin');if(masterState.initializationRequired)await initializeMasterPin();if(masterState.setupRequired)await editMasterPin(true);
     const reauthenticate=el('reauthenticate');if(reauthenticate && /^[a-zA-Z0-9_-]{1,160}$/.test(currentAccount.id))reauthenticate.href='/login?account_id='+encodeURIComponent(currentAccount.id);
     const deleteReauthenticate=el('delete-reauthenticate');if(deleteReauthenticate && /^[a-zA-Z0-9_-]{1,160}$/.test(currentAccount.id))deleteReauthenticate.href='/login?account_id='+encodeURIComponent(currentAccount.id);
     if(document.body.dataset.page==='account'){
       portalAccount=currentAccount;
-      if(location.hash==='#master-pin-settings')el('master-pin-settings').open=true;
-      el('enroll-master-pin').addEventListener('click',async()=>{try{const setup=await api('/v1/account/master-pin/enroll');if(!setup.required){message('Změna Master PINu z domácího serveru je již povolena.');return;}const dialog=el('enroll-pin-dialog');const form=el('enroll-pin-form');form.reset();el('enroll-pin-error').textContent='';dialog.showModal();el('enroll-pin').focus();const cancel=()=>dialog.close();const submit=async(event)=>{event.preventDefault();const pin=el('enroll-pin').value;if(!/^\d{8}$/.test(pin))return;el('enroll-pin-save').disabled=true;el('enroll-pin-cancel').disabled=true;try{const hex=bytes=>Array.from(new Uint8Array(bytes),byte=>byte.toString(16).padStart(2,'0')).join('');const key=await crypto.subtle.importKey('raw',new TextEncoder().encode(pin),'PBKDF2',false,['deriveBits']);const proof=hex(await crypto.subtle.deriveBits({name:'PBKDF2',hash:'SHA-256',salt:new TextEncoder().encode(setup.salt),iterations:600000},key,256));const changeSalt=hex(crypto.getRandomValues(new Uint8Array(16)));const changeHash=hex(await crypto.subtle.deriveBits({name:'PBKDF2',hash:'SHA-256',salt:new TextEncoder().encode(changeSalt),iterations:600000},key,256));await api('/v1/account/master-pin/enroll',{method:'POST',body:JSON.stringify({version:setup.version,proof,changeSalt,changeHash})});dialog.close();message('PIN byl potvrzen. Nyní jej můžete změnit na domácím serveru.');}catch(error){if(error.code==='reauth_required'){dialog.close();operationError(error);}else el('enroll-pin-error').textContent=error.code==='master_pin_incorrect'?'Master PIN není správný.':error.message;}finally{el('enroll-pin-save').disabled=false;el('enroll-pin-cancel').disabled=false;}};const finish=()=>{form.removeEventListener('submit',submit);el('enroll-pin-cancel').removeEventListener('click',cancel);dialog.removeEventListener('close',finish);form.reset();};form.addEventListener('submit',submit);el('enroll-pin-cancel').addEventListener('click',cancel);dialog.addEventListener('close',finish);}catch(error){operationError(error);}});
-      el('change-master-pin').addEventListener('click',()=>editMasterPin(false).then(saved=>{if(saved)message('Master PIN byl změněn. Na domácím serveru zadejte nový PIN před další zálohou.');}));
-      el('refresh-pin-resets').addEventListener('click',()=>refreshPinResets().catch(operationError));
-      await refreshPinResets();
       el('account-uid').textContent=currentAccount.id;
       if(approvalQuery)el('login-again').href='/login'+approvalQuery;
       let copyResetTimer;
@@ -336,15 +270,21 @@ export const browserScript = String.raw`
       el('unlink-google').addEventListener('click',()=>removeMethod(el('unlink-google'),'/v1/account/google-login','Odpojit Google?', 'Odpojíte všechna propojená přihlášení přes Google. K tomuto účtu se už nebudete moci přihlašovat přes Google.','Google byl odpojen.'));
       el('disable-email').addEventListener('click',()=>removeMethod(el('disable-email'),'/v1/account/email-login','Vypnout e-mailové přihlášení?', 'K tomuto účtu se už nebudete moci přihlašovat e-mailovým kódem.','E-mailové přihlášení bylo vypnuto.'));
       await refreshPortal();
-      el('transfer-form').addEventListener('submit',async(event)=>{event.preventDefault();const submit=event.target.querySelector('button[type=submit]');submit.disabled=true;el('operation-reauth').hidden=true;try{const result=await api('/v1/transfers',{method:'POST',body:JSON.stringify({profileId:el('profile').value,target:el('target-email').value.trim()})});message(sentMessage(result));event.target.reset();await refreshPortal();}catch(error){operationError(error);}finally{submit.disabled=false;}});
-      el('merge-form').addEventListener('submit',async(event)=>{event.preventDefault();const submit=event.target.querySelector('button[type=submit]');submit.disabled=true;el('operation-reauth').hidden=true;try{const result=await api('/v1/merges',{method:'POST',body:JSON.stringify({target:el('merge-target').value.trim()})});message(sentMessage(result));event.target.reset();await refreshPortal();}catch(error){operationError(error);}finally{submit.disabled=false;}});
+
+      el('refresh-households').addEventListener('click',()=>refreshPortal().catch(operationError));
+      el('profile-household').addEventListener('change',()=>refreshHouseholdProfiles().catch(operationError));
+      for(const [formId,sourceId,endpoint,makeBody] of [
+        ['household-owner-form','owner-household','ownership-transfer',()=>({targetAccountId:el('household-target-account').value.trim()})],
+        ['household-profile-form','profile-household','profile-transfers',()=>({profileId:el('household-profile').value,targetHouseholdId:el('profile-target-household').value.trim()})],
+        ['household-merge-form','merge-household','merge',()=>({targetHouseholdId:el('merge-target-household').value.trim()})]
+      ])el(formId).addEventListener('submit',async(event)=>{event.preventDefault();const submit=event.target.querySelector('button[type=submit]');submit.disabled=true;el('operation-reauth').hidden=true;try{await api('/v1/households/'+encodeURIComponent(el(sourceId).value)+'/'+endpoint,{method:'POST',body:JSON.stringify(makeBody())});message('Žádost byla vytvořena. Cílový vlastník ji potvrdí ve svém účtu.');await refreshPortal();}catch(error){operationError(error);}finally{submit.disabled=false;}});
       return;
     }
     el('user-code').value=safeCode;
     let verifiedCode='';
     async function verify(){const value=el('user-code').value;let data;try{data=await api('/v1/device/verify?user_code='+encodeURIComponent(value));await api('/v1/device/claim',{method:'POST',body:JSON.stringify({user_code:data.user_code})});}catch(error){if(error.code==='reauth_required'){location.assign('/login?user_code='+encodeURIComponent(value));return;}throw error;}verifiedCode=data.user_code;el('display-code').textContent=data.user_code;el('device-name').textContent=(data.purpose==='pin-reset'?'Obnovit PIN · ':'')+data.device_name;if(data.purpose==='pin-reset'){el('grant-description').textContent='Schvalujete reset PINu profilu „'+data.profile_name+'“ na tomto domácím serveru. Původní PIN bude možné nahradit. Toto oprávnění platí pouze 5 minut.';el('approve').textContent='Kód souhlasí, povolit reset PINu';}el('approval').hidden=false;el('code-section').hidden=true;message('');}
     el('code-form').addEventListener('submit',event=>{event.preventDefault();verify().catch(error=>message(error.message));});
-    async function approve(allow){el('approve').disabled=true;el('deny').disabled=true;try{await api('/v1/device/approve',{method:'POST',body:JSON.stringify({user_code:verifiedCode,approve:allow})});el('approval').hidden=true;message(allow?'Žádost byla schválena. Vraťte se k TV nebo domácímu serveru.':'Žádost byla zamítnuta.');}catch(error){if(error.code==='reauth_required'){location.assign('/login?user_code='+encodeURIComponent(verifiedCode));return;}message(error.message);el('approve').disabled=false;el('deny').disabled=false;}}
+    async function approve(allow){el('approve').disabled=true;el('deny').disabled=true;try{await api('/v1/device/approve',{method:'POST',body:JSON.stringify({user_code:verifiedCode,approve:allow})});el('approval').hidden=true;message(allow?'Žádost byla schválena. Vraťte se k domácímu serveru.':'Žádost byla zamítnuta.');}catch(error){if(error.code==='reauth_required'){location.assign('/login?user_code='+encodeURIComponent(verifiedCode));return;}message(error.message);el('approve').disabled=false;el('deny').disabled=false;}}
     el('approve').addEventListener('click',()=>approve(true));el('deny').addEventListener('click',()=>approve(false));
     if(safeCode)await verify();
   }

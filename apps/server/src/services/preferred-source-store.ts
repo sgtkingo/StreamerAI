@@ -9,6 +9,10 @@ interface StoredSelection {
   sourceId: string;
   revision: string;
   aiPick?: { sourceId: string; reason: string };
+  profileId?: string;
+  titleId?: string;
+  seasonNumber?: number | null;
+  episodeNumber?: number | null;
 }
 
 /** A viewer's last playable choice for one movie or exact episode. */
@@ -76,6 +80,10 @@ export class PreferredSourceStore {
     episode?: EpisodeSelection,
   ): void {
     this.database.settings.set(this.key(profileId, titleId, episode), {
+      profileId,
+      titleId,
+      seasonNumber: episode?.seasonNumber ?? null,
+      episodeNumber: episode?.episodeNumber ?? null,
       sourceId,
       revision: randomUUID(),
       aiPick: { sourceId, reason },
@@ -90,11 +98,32 @@ export class PreferredSourceStore {
   ): void {
     const current = this.selection(profileId, titleId, episode);
     this.database.settings.set(this.key(profileId, titleId, episode), {
+      profileId,
+      titleId,
+      seasonNumber: episode?.seasonNumber ?? null,
+      episodeNumber: episode?.episodeNumber ?? null,
       sourceId,
       revision: randomUUID(),
       ...(current.aiPick?.sourceId === sourceId
         ? { aiPick: current.aiPick }
         : {}),
     });
+  }
+  exportProfile(profileId: string) {
+    return this.database.settings
+      .listByPrefix<StoredSelection>("playback.preferred-source.")
+      .flatMap(({ value }) =>
+        value && value.profileId === profileId && value.titleId
+          ? [
+              {
+                titleId: value.titleId,
+                seasonNumber: value.seasonNumber ?? null,
+                episodeNumber: value.episodeNumber ?? null,
+                sourceId: value.sourceId,
+                aiPick: value.aiPick,
+              },
+            ]
+          : [],
+      );
   }
 }

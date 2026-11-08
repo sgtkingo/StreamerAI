@@ -311,7 +311,7 @@ describe("identity and device grants", () => {
       await (
         await f.request("/v1/account", { token: token.access_token })
       ).json(),
-    ).toEqual({ ...accounts.a, mergeAckRequired: false });
+    ).toEqual({ ...accounts.a, mergeAckRequired: false, householdId: null });
     const stored = f.sqlite
       .prepare("SELECT token_hash FROM cloud_device")
       .get() as { token_hash: string };

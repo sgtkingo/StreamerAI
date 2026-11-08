@@ -80,7 +80,6 @@ describe("owner-only encrypted household API", () => {
         database,
         secretStore: secrets,
         runtimeConfig,
-        installationBootstrapToken: "a".repeat(64),
       });
       instances.push(app);
       return { app, database, secrets };
@@ -100,17 +99,22 @@ describe("owner-only encrypted household API", () => {
         accountSecretKey("local", "integration.tmdb.read-token"),
         "PRIVATE-RECOVERY-TOKEN",
       );
-      const owner = async (app: ReturnType<typeof createApp>) => {
+      const owner = async (
+        app: ReturnType<typeof createApp>,
+        existing = false,
+      ) => {
         const response = await app.inject({
           method: "POST",
-          url: "/api/v1/installation/claim",
+          url: existing
+            ? "/api/v1/installation/authorize"
+            : "/api/v1/installation/setup",
           headers,
-          payload: { token: "a".repeat(64) },
+          payload: existing ? { masterPin: "01234567", admin: true } : {},
         });
         expect(response.statusCode).toBe(200);
         return String(response.headers["set-cookie"]).split(";", 1)[0]!;
       };
-      const originalOwner = await owner(original.app);
+      const originalOwner = await owner(original.app, true);
       const destinationOwner = await owner(destination.app);
       const denied = await original.app.inject({
         method: "POST",

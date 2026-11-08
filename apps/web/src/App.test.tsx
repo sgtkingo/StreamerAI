@@ -10,6 +10,7 @@ import userEvent from "@testing-library/user-event";
 import { StrictMode } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { App } from "./App";
+import { AdminApp } from "./components/AdminApp";
 import { ToastProvider } from "./components/ToastProvider";
 import type { IntegrationCatalogItem, StreamerApi } from "./api/client";
 import { DEFAULT_PLAYBACK_PREFERENCES } from "./playback-preferences";
@@ -409,7 +410,11 @@ describe("onboarding", () => {
   it("clears a TMDB token after connecting and never renders it in status UI", async () => {
     const user = userEvent.setup();
     const api = createApi();
-    render(<ToastProvider><App api={api} forceOnboarding /></ToastProvider>);
+    render(
+      <ToastProvider>
+        <App api={api} forceOnboarding />
+      </ToastProvider>,
+    );
 
     await user.click(screen.getByRole("button", { name: /start setup/i }));
     await user.type(screen.getByLabelText(/display name/i), "Alex");
@@ -440,7 +445,11 @@ describe("onboarding", () => {
   it("clears the Webshare password after local connection", async () => {
     const user = userEvent.setup();
     const api = createApi();
-    render(<ToastProvider><App api={api} forceOnboarding /></ToastProvider>);
+    render(
+      <ToastProvider>
+        <App api={api} forceOnboarding />
+      </ToastProvider>,
+    );
 
     await user.click(screen.getByRole("button", { name: /start setup/i }));
     await user.type(screen.getByLabelText(/display name/i), "Alex");
@@ -508,8 +517,31 @@ describe("onboarding", () => {
   });
 });
 
+function adminApi(api: StreamerApi) {
+  api.getInstallationStatus = vi.fn().mockResolvedValue({
+    enabled: true,
+    claimed: true,
+    paired: true,
+    role: "owner",
+    householdReady: true,
+  });
+  api.getAuthStatus = vi.fn().mockResolvedValue({
+    enabled: true,
+    authenticated: true,
+    householdReady: true,
+    cloudConfigured: false,
+    account: { id: "local", name: "Home", email: null, cloudLinked: false },
+  });
+  api.getAccount = vi.fn().mockResolvedValue({
+    account: { id: "local", name: "Home", email: null, cloudLinked: false },
+    devices: [],
+    manageUrl: null,
+  });
+  return api;
+}
+
 describe("profile navigation", () => {
-  it("shows already connected TMDB and Webshare in Settings", async () => {
+  it("shows already connected TMDB and Webshare in administration", async () => {
     const user = userEvent.setup();
     const api = createApi();
     const catalog = await api.getIntegrations();
@@ -520,12 +552,8 @@ describe("profile navigation", () => {
           : item,
       ),
     });
-    render(<App api={api} />);
-    await user.click(await screen.findByRole("button", { name: /alex/i }));
-    await user.click(
-      screen.getByRole("button", { name: /profile menu for alex/i }),
-    );
-    await user.click(screen.getByRole("menuitem", { name: "Settings" }));
+    render(<AdminApp api={adminApi(api)} />);
+    await user.click(await screen.findByRole("button", { name: /^Services$/ }));
 
     const databases = screen.getByRole("region", { name: "Movie databases" });
     const streams = screen.getByRole("region", { name: "Stream sources" });
@@ -612,12 +640,8 @@ describe("profile navigation", () => {
     const user = userEvent.setup();
     const api = createApi();
     window.history.replaceState({}, "", "/");
-    render(<App api={api} />);
-    await user.click(await screen.findByRole("button", { name: /alex/i }));
-    await user.click(
-      screen.getByRole("button", { name: /profile menu for alex/i }),
-    );
-    await user.click(screen.getByRole("menuitem", { name: "Settings" }));
+    render(<AdminApp api={adminApi(api)} />);
+    await user.click(await screen.findByRole("button", { name: /^Services$/ }));
     const section = screen.getByRole("region", { name: "AI agent" });
     expect(
       within(section).getByRole("heading", { name: "Local Agent" }),
@@ -642,63 +666,16 @@ describe("profile navigation", () => {
     );
   });
 
-  it("creates a second viewer from one of five profile medallions", async () => {
-    const user = userEvent.setup();
+  it("keeps profile creation in household administration", async () => {
     const api = createApi();
-    const primary = (await api.getProfiles()).items[0]!;
-    const guest = await api.createProfile({ name: "Guest", locale: "en" });
-    vi.mocked(api.createProfile).mockClear();
-    let created = false;
-    let completed = false;
-    vi.mocked(api.createProfile).mockImplementation(async () => {
-      created = true;
-      return guest;
-    });
-    vi.mocked(api.getProfiles).mockImplementation(async () => ({
-      items: created
-        ? [primary, { ...guest, onboardingComplete: completed }]
-        : [primary],
-      limit: 5,
-    }));
-    vi.mocked(api.completeSetup).mockImplementation(async (request) => {
-      if (request.profileId === guest.id) completed = true;
-    });
     render(<App api={api} />);
-    await user.click(
-      await screen.findByRole("button", { name: /add profile/i }),
-    );
-    await user.type(screen.getByLabelText("Profile name"), "Guest");
-    await user.click(screen.getByRole("button", { name: "Create profile" }));
-    await waitFor(() =>
-      expect(api.createProfile).toHaveBeenCalledWith({
-        name: "Guest",
-        locale: "en",
-      }),
-    );
+    await screen.findByRole("heading", { name: /who's watching/i });
     expect(
-      await screen.findByRole("button", { name: /start setup/i }),
-    ).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: /profile menu for guest/i }),
+      screen.queryByRole("button", { name: /add profile/i }),
     ).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Exit setup" }));
-    await user.click(
-      await screen.findByRole("button", { name: /guest.*finish setup/i }),
-    );
-    await user.click(screen.getByRole("button", { name: /start setup/i }));
-    expect(screen.getByLabelText("Display name")).toHaveValue("Guest");
-    await user.click(screen.getByRole("button", { name: /^continue/i }));
-    await user.click(screen.getByRole("button", { name: /^continue/i }));
-    await user.click(screen.getByRole("button", { name: /^continue/i }));
-    await user.click(screen.getByRole("button", { name: /enter streamer/i }));
-    await waitFor(() =>
-      expect(api.completeSetup).toHaveBeenCalledWith(
-        expect.objectContaining({ profileId: guest.id }),
-      ),
-    );
     expect(
-      await screen.findByRole("button", { name: /profile menu for guest/i }),
-    ).toBeInTheDocument();
+      screen.getByRole("link", { name: "Open household administration" }),
+    ).toHaveAttribute("href", "/admin");
   });
 
   it("reopens onboarding for the selected profile", async () => {
@@ -718,8 +695,6 @@ describe("profile navigation", () => {
     expect(
       screen.getByRole("combobox", { name: /^Primary audio language\b/ }),
     ).toHaveValue("cs");
-    await user.click(screen.getByRole("button", { name: /^continue/i }));
-    await user.click(screen.getByRole("button", { name: /^continue/i }));
     await user.click(screen.getByRole("button", { name: /^continue/i }));
     await user.click(screen.getByRole("button", { name: /enter streamer/i }));
     await waitFor(() =>

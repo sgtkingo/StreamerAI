@@ -11,7 +11,6 @@ import {
   string,
 } from "./http.js";
 import type { Account, Env, Principal, SessionReader } from "./types.js";
-import { requireMasterPin } from "./account-pins.js";
 
 const CLIENT_ID = "streamer-ai-home";
 const DEVICE_LIFETIME_SECONDS = 30 * 24 * 60 * 60;
@@ -28,6 +27,9 @@ interface DeviceGrant {
   expires_at: number;
   last_poll_at: number;
   interval_ms: number;
+  household_id: string | null;
+  household_name: string | null;
+  server_id: string | null;
 }
 
 export async function authenticate(
@@ -42,9 +44,11 @@ export async function authenticate(
     if (!match?.[1]) throw new HttpError(401, "unauthorized");
     const row = await env.DB.prepare(
       `
-      SELECT d.id AS device_id, d.purpose, d.merge_ack_required, u.id, u.email, u.name FROM cloud_device d
+      SELECT d.id AS device_id, d.purpose, d.merge_ack_required, d.household_id, u.id, u.email, u.name FROM cloud_device d
       JOIN "user" u ON u.id = d.account_id
+      LEFT JOIN cloud_household h ON h.id = d.household_id
       WHERE d.token_hash = ? AND d.revoked_at IS NULL AND d.expires_at > ?
+        AND (d.household_id IS NULL OR (h.account_id = d.account_id AND h.merged_into IS NULL))
     `,
     )
       .bind(await hash(match[1]), now)
@@ -53,12 +57,14 @@ export async function authenticate(
           device_id: string;
           purpose: "login" | "pin-reset";
           merge_ack_required: number;
+          household_id: string | null;
         }
       >();
     if (!row) throw new HttpError(401, "unauthorized");
     return {
       method: "device",
       deviceId: row.device_id,
+      householdId: row.household_id ?? undefined,
       purpose: row.purpose,
       mergeAckRequired: !!row.merge_ack_required,
       account: { id: row.id, email: row.email, name: row.name },
@@ -76,6 +82,22 @@ export async function authenticate(
 export function owner(principal: Principal): void {
   if (principal.method !== "browser")
     throw new HttpError(403, "browser_sign_in_required");
+}
+
+async function authorizeRequestedHousehold(
+  env: Env,
+  accountId: string,
+  householdId: string | null,
+) {
+  if (!householdId) return;
+  const household = await env.DB.prepare(
+    "SELECT account_id,merged_into FROM cloud_household WHERE id = ?",
+  )
+    .bind(householdId)
+    .first<{ account_id: string; merged_into: string | null }>();
+  if (household && household.account_id !== accountId)
+    throw new HttpError(403, "household_scope_forbidden");
+  if (household?.merged_into) throw new HttpError(409, "household_merged");
 }
 
 function userCode(): string {
@@ -106,14 +128,27 @@ export async function createGrant(
     throw new HttpError(400, "invalid_request");
   const profileName =
     purpose === "pin-reset" ? string(input.profile_name ?? "Profil", 80) : null;
+  const householdId =
+    input.household_id == null ? null : string(input.household_id, 160);
+  if (
+    householdId &&
+    !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(
+      householdId,
+    )
+  )
+    throw new HttpError(400, "invalid_household_id");
+  const householdName =
+    input.household_name == null ? null : string(input.household_name, 120);
+  const serverId =
+    input.server_id == null ? null : string(input.server_id, 160);
   const deviceCode = randomToken();
   const code = userCode();
   const displayCode = `${code.slice(0, 4)}-${code.slice(4)}`;
   await env.DB.prepare(
     `
     INSERT INTO cloud_device_grant
-    (device_hash, user_hash, client_id, device_name, purpose, profile_name, status, expires_at)
-    VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)
+    (device_hash, user_hash, client_id, device_name, purpose, profile_name, status, expires_at, household_id, household_name, server_id)
+    VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)
   `,
   )
     .bind(
@@ -124,6 +159,9 @@ export async function createGrant(
       purpose,
       profileName,
       now + GRANT_LIFETIME_SECONDS * 1000,
+      householdId,
+      householdName,
+      serverId,
     )
     .run();
   return json({
@@ -179,7 +217,6 @@ export async function redeemGrant(
   if (grant.status === "denied") throw new HttpError(400, "access_denied");
   if (grant.status !== "approved" || !grant.account_id)
     throw new HttpError(400, "authorization_pending");
-  await requireMasterPin(env, grant.account_id);
   const token = randomToken();
   const lifetime =
     grant.purpose === "pin-reset" ? 300 : DEVICE_LIFETIME_SECONDS;
@@ -194,8 +231,10 @@ export async function redeemGrant(
     ).bind(nonce, deviceHash, now),
     env.DB.prepare(
       `
-      INSERT INTO cloud_device (id, account_id, name, purpose, token_hash, created_at, expires_at)
-      SELECT ?, account_id, device_name, purpose, ?, ?, ? FROM cloud_device_grant
+      INSERT INTO cloud_device (id, account_id, name, purpose, token_hash, created_at, expires_at, household_id)
+      SELECT ?, account_id, device_name, purpose, ?, ?, ?,
+        (SELECT h.id FROM cloud_household h WHERE h.id = cloud_device_grant.household_id AND h.account_id = cloud_device_grant.account_id)
+      FROM cloud_device_grant
       WHERE device_hash = ? AND redeem_nonce = ? AND status = 'consumed'
     `,
     ).bind(
@@ -214,12 +253,18 @@ export async function redeemGrant(
     .bind(grant.account_id)
     .first<Account>();
   if (!account) throw new HttpError(400, "invalid_grant");
+  const scope = await env.DB.prepare(
+    "SELECT household_id FROM cloud_device WHERE id = ?",
+  )
+    .bind(deviceId)
+    .first<{ household_id: string | null }>();
   return json({
     access_token: token,
     token_type: "Bearer",
     expires_in: lifetime,
     purpose: grant.purpose,
     account,
+    household_id: scope?.household_id ?? null,
     device: { id: deviceId, name: grant.device_name },
   });
 }
@@ -243,7 +288,7 @@ export async function verifyGrant(
   );
   const grant = await env.DB.prepare(
     `
-    SELECT device_name, expires_at, purpose, profile_name FROM cloud_device_grant
+    SELECT device_name, expires_at, purpose, profile_name, household_id, household_name, server_id FROM cloud_device_grant
     WHERE user_hash = ? AND status = 'pending' AND expires_at > ?
       AND (account_id IS NULL OR account_id = ?)
   `,
@@ -254,8 +299,16 @@ export async function verifyGrant(
       expires_at: number;
       purpose: "login" | "pin-reset";
       profile_name: string | null;
+      household_id: string | null;
+      household_name: string | null;
+      server_id: string | null;
     }>();
   if (!grant) throw new HttpError(400, "invalid_or_expired_code");
+  await authorizeRequestedHousehold(
+    env,
+    principal.account.id,
+    grant.household_id,
+  );
   if (
     grant.purpose === "pin-reset" &&
     (!principal.authenticatedAt || principal.authenticatedAt < now - 300_000)
@@ -267,6 +320,9 @@ export async function verifyGrant(
     expires_at: grant.expires_at,
     purpose: grant.purpose,
     profile_name: grant.profile_name,
+    household_id: grant.household_id,
+    household_name: grant.household_name,
+    server_id: grant.server_id,
   });
 }
 
@@ -288,14 +344,19 @@ export async function approveGrant(
   const input = record(await body(request, 2048));
   if (typeof input.approve !== "boolean")
     throw new HttpError(400, "invalid_request");
-  if (input.approve) await requireMasterPin(env, principal.account.id);
   const code = normalizeCode(string(input.user_code, 32));
   const grant = await env.DB.prepare(
-    "SELECT purpose FROM cloud_device_grant WHERE user_hash = ? AND status = 'pending' AND expires_at > ? AND (account_id IS NULL OR account_id = ?)",
+    "SELECT purpose, household_id FROM cloud_device_grant WHERE user_hash = ? AND status = 'pending' AND expires_at > ? AND (account_id IS NULL OR account_id = ?)",
   )
     .bind(await hash(code), now, principal.account.id)
-    .first<{ purpose: "login" | "pin-reset" }>();
+    .first<{ purpose: "login" | "pin-reset"; household_id: string | null }>();
   if (!grant) throw new HttpError(400, "invalid_or_expired_code");
+  if (input.approve)
+    await authorizeRequestedHousehold(
+      env,
+      principal.account.id,
+      grant.household_id,
+    );
   if (
     grant.purpose === "pin-reset" &&
     (!principal.authenticatedAt || principal.authenticatedAt < now - 300_000)
@@ -406,18 +467,27 @@ export async function decidePendingGrant(
   if (typeof input.approve !== "boolean")
     throw new HttpError(400, "invalid_request");
   const grant = await env.DB.prepare(
-    "SELECT purpose, user_hash FROM cloud_device_grant WHERE redeem_nonce = ? AND account_id = ? AND status = 'pending' AND expires_at > ?",
+    "SELECT purpose, user_hash, household_id FROM cloud_device_grant WHERE redeem_nonce = ? AND account_id = ? AND status = 'pending' AND expires_at > ?",
   )
     .bind(id, principal.account.id, now)
-    .first<{ purpose: "login" | "pin-reset"; user_hash: string }>();
+    .first<{
+      purpose: "login" | "pin-reset";
+      user_hash: string;
+      household_id: string | null;
+    }>();
   if (!grant) throw new HttpError(400, "invalid_or_expired_code");
+  if (input.approve)
+    await authorizeRequestedHousehold(
+      env,
+      principal.account.id,
+      grant.household_id,
+    );
   // The list identifier alone cannot authorize approval; confirm the code too.
   if (
     input.approve &&
     (await hash(normalizeCode(string(input.user_code, 32)))) !== grant.user_hash
   )
     throw new HttpError(400, "invalid_or_expired_code");
-  if (input.approve) await requireMasterPin(env, principal.account.id);
   if (
     grant.purpose === "pin-reset" &&
     (!principal.authenticatedAt || principal.authenticatedAt < now - 300_000)

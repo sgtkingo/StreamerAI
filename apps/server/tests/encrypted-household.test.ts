@@ -130,14 +130,22 @@ describe("encrypted household recovery", () => {
     const master = new MasterPinService(original.secrets);
     await master.setupLocal("local", "01234567");
     const before = await original.service.exportLocalBackup("local");
-    expect(await master.changeLocal("local", "01234567", "87654321")).toBe(true);
+    expect(await master.changeLocal("local", "01234567", "87654321")).toBe(
+      true,
+    );
     const after = await original.service.exportLocalBackup("local");
     const oldFile = await resolveHouseholdBackup(before, "01234567");
     const newFile = await resolveHouseholdBackup(after, "87654321");
-    expect(original.service.preview(oldFile.envelope, oldFile.recoveryKey).profiles).toHaveLength(1);
-    expect(original.service.preview(newFile.envelope, newFile.recoveryKey).profiles).toHaveLength(1);
+    expect(
+      original.service.preview(oldFile.envelope, oldFile.recoveryKey).profiles,
+    ).toHaveLength(1);
+    expect(
+      original.service.preview(newFile.envelope, newFile.recoveryKey).profiles,
+    ).toHaveLength(1);
     const wrong = await resolveHouseholdBackup(before, "87654321");
-    expect(() => original.service.preview(wrong.envelope, wrong.recoveryKey)).toThrow("HOUSEHOLD_AUTHENTICATION_FAILED");
+    expect(() =>
+      original.service.preview(wrong.envelope, wrong.recoveryKey),
+    ).toThrow("HOUSEHOLD_AUTHENTICATION_FAILED");
   }, 15_000);
   it("requires a verified Master PIN for local files and restores them offline", async () => {
     const original = await source(),
@@ -504,6 +512,7 @@ describe("automatic Master PIN cloud backup", () => {
       "01234567",
     );
     let revision = 0;
+    let backupTime = now().getTime();
     const bodies: string[] = [];
     const transport = new EncryptedCheckpointTransport(
       "https://cloud.example.test",
@@ -520,7 +529,7 @@ describe("automatic Master PIN cloud backup", () => {
       original.service,
       transport,
       async () => ({ token: "device-token", deviceId: "server" }),
-      now,
+      () => new Date(backupTime),
     );
     expect(backup.status("local").cloudBackup.status).toBe("pending");
     await backup.sync("local");
@@ -535,9 +544,13 @@ describe("automatic Master PIN cloud backup", () => {
     expect(bodies).toHaveLength(1);
     backup.markDirty("local");
     await backup.sync("local");
+    expect(bodies).toHaveLength(1);
+    backupTime += 60 * 60_000;
+    await backup.sync("local");
     expect(bodies).toHaveLength(2);
     revision++;
     backup.markDirty("local");
+    backupTime += 60 * 60_000;
     await expect(backup.sync("local")).rejects.toThrow(
       "changed on another server",
     );

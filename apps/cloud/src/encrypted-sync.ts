@@ -17,25 +17,13 @@ export async function assertEncryptedMergeSupported(
   second: string,
 ): Promise<void> {
   const existing = await env.DB.prepare(
-    "SELECT 1 FROM cloud_encrypted_checkpoint WHERE account_id IN (?, ?) LIMIT 1",
+    `SELECT 1 FROM cloud_encrypted_checkpoint WHERE account_id IN (?, ?)
+     UNION ALL SELECT 1 FROM cloud_household WHERE account_id IN (?, ?) LIMIT 1`,
   )
-    .bind(first, second)
+    .bind(first, second, first, second)
     .first();
   if (existing)
     throw new HttpError(409, "encrypted_household_merge_requires_export");
-}
-
-/** Presence includes deletion tombstones: old clients must never resume plaintext upload. */
-export async function assertLegacySyncAllowed(
-  env: Env,
-  accountId: string,
-): Promise<void> {
-  const row = await env.DB.prepare(
-    "SELECT 1 FROM cloud_encrypted_checkpoint WHERE account_id = ?",
-  )
-    .bind(accountId)
-    .first();
-  if (row) throw new HttpError(409, "encrypted_sync_required");
 }
 
 export async function encryptedCheckpoint(

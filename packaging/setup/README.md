@@ -62,15 +62,11 @@ successful flow waits for the user to choose **Open StreamerAI**.
    with that exact CA in the certificate chain. It does not disable certificate
    verification globally or expose a LAN listener automatically. Services are
    verified as LocalService before their first start.
-4. The one-time owner key returns only through a per-run named pipe restricted
-   to the original user and local administrators. The browser receives it in
-   `/#setup=...`; the application immediately clears the fragment and submits the
-   claim. The key is not printed, passed to the elevated child in command
-   arguments or copied to browser storage. Opening the browser uses a temporary
-   setup URL; the client removes its fragment before submitting the claim.
-   A retained installation that already has an owner, or explicitly uses the
-   legacy access mode, opens the ordinary URL without generating a new owner key.
-   This decision uses bounded installation-status JSON over the same trusted CA.
+4. The installer opens `/admin` after checking bounded installation-status JSON
+   over the same trusted CA. A fresh server offers household creation, backup
+   import or cloud restore directly. A new household requires a new Master PIN;
+   imported households require their original backup PIN. The installer does
+   not generate, read or hand off an owner setup key.
 5. If requested, the normal user process downloads the pinned official Ollama
    installer, enforces its maximum byte length and SHA-256 and verifies Windows
    Authenticode publisher status before running it. The pinned descriptor was
@@ -107,7 +103,7 @@ CREATOR OWNER rules cannot grant a filtered administrator token write access.
 Program files retain Users/LocalService read and execute access. Existing private
 data is checked without recursively changing ownership of user data. Receipt
 resume checks the same private ownership, access rules and reparse ancestors
-before reading its receipt, CA or bootstrap key. A read-only diagnostic is
+before reading its receipt or CA. A read-only diagnostic is
 available as `setup.exe --check-managed-state PATH`.
 
 The bundled WinSW **2.12.0** uses separate service-account fields:

@@ -37,6 +37,7 @@ interface OnboardingProps {
   onRestored?: () => void | Promise<void>;
   masterPinRequired?: boolean;
   onMasterPinCreated?: () => void;
+  profileOnly?: boolean;
 }
 
 export function Onboarding({
@@ -49,6 +50,7 @@ export function Onboarding({
   onRestored,
   masterPinRequired = false,
   onMasterPinCreated,
+  profileOnly = false,
 }: OnboardingProps) {
   const { previewAppearance, rememberAppearance } = useTheme();
   const profileId = existingProfile?.id ?? "default";
@@ -160,6 +162,10 @@ export function Onboarding({
       return;
     }
     if (step === 1 && !profile.name.trim()) return;
+    if (profileOnly && step === 1) {
+      setStep(4);
+      return;
+    }
     if (step < steps.length - 1) {
       setStep((current) => current + 1);
       return;
@@ -256,24 +262,26 @@ export function Onboarding({
         <aside className="progress-panel">
           <p className="eyebrow">Setup</p>
           <ol aria-label="Setup progress">
-            {steps.map((label, index) => (
-              <li
-                key={label}
-                className={
-                  index === step
-                    ? "is-current"
-                    : index < step
-                      ? "is-complete"
-                      : ""
-                }
-                aria-current={index === step ? "step" : undefined}
-              >
-                <span aria-hidden="true">
-                  {index < step ? "✓" : String(index + 1).padStart(2, "0")}
-                </span>
-                {label}
-              </li>
-            ))}
+            {steps.map((label, index) =>
+              profileOnly && (index === 2 || index === 3) ? null : (
+                <li
+                  key={label}
+                  className={
+                    index === step
+                      ? "is-current"
+                      : index < step
+                        ? "is-complete"
+                        : ""
+                  }
+                  aria-current={index === step ? "step" : undefined}
+                >
+                  <span aria-hidden="true">
+                    {index < step ? "✓" : String(index + 1).padStart(2, "0")}
+                  </span>
+                  {label}
+                </li>
+              ),
+            )}
           </ol>
           <p className="progress-privacy">
             Home-server setup
@@ -306,7 +314,7 @@ export function Onboarding({
           {step === 1 && (
             <ProfileStep profile={profile} onChange={setProfile} />
           )}
-          {step === 2 && (
+          {step === 2 && !profileOnly && (
             <ConnectionsStep
               api={api}
               profileId={profileId}
@@ -318,7 +326,7 @@ export function Onboarding({
               onWebshareDisconnected={() => setWebshareState("not-configured")}
             />
           )}
-          {step === 3 && (
+          {step === 3 && !profileOnly && (
             <LocalAiStep
               api={api}
               profileId={profileId}
@@ -351,7 +359,9 @@ export function Onboarding({
                 onClick={() =>
                   creatingMasterPin
                     ? setCreatingMasterPin(false)
-                    : setStep((current) => current - 1)
+                    : setStep((current) =>
+                        profileOnly && current === 4 ? 1 : current - 1,
+                      )
                 }
                 disabled={signingIn || isCompleting}
               >

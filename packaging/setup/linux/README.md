@@ -20,11 +20,11 @@ remain on the setup page while work is running.
 
 The local privileged helper is root-owned and only accepts fixed operations.
 It can inspect the instance CA, trust that exact certificate after fingerprint
-confirmation, read the one-time bootstrap key, or prepare/start the selected local
+confirmation, open household administration, or prepare/start the selected local
 Ollama runtime. No path, download URL, command or model name is accepted from the
 GUI. Authorization uses the normal PolicyKit desktop dialog. The browser is
-always launched as the desktop user. Its one-time setup key is passed in a URL
-fragment consumed by the web client, never in an HTTP query or application log.
+always launched as the desktop user at `/admin`. Household creation and restore
+use the Master PIN in the web application; no installation key is passed.
 
 System CA trust and supported per-user NSS certificate stores are prepared
 automatically. Running/password-protected/browser-specific stores can need a

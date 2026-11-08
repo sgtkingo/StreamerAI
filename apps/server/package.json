@@ -19,6 +19,7 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
+    "@streamer-ai/discovery": "workspace:*",
     "@streamer-ai/contracts": "workspace:*",
     "@streamer-ai/database": "workspace:*",
     "fastify": "^5.6.1",

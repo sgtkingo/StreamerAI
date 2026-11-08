@@ -9,6 +9,8 @@ const DEFAULT_OLLAMA_MODEL = "qwen3.5:4b";
 export interface RuntimeConfig {
   readonly deployment?: {
     readonly accessMode: "paired" | "trusted-local";
+    readonly discoveryEnabled?: boolean;
+    readonly advertiseUrl?: string;
   };
   readonly accounts?: {
     readonly serviceUrl: string | null;
@@ -230,6 +232,24 @@ export function readRuntimeConfig(
 
   return {
     deployment: {
+      discoveryEnabled: env.STREAMERAI_DISCOVERY_ENABLED !== "false",
+      advertiseUrl: (() => {
+        const value = env.STREAMERAI_ADVERTISE_URL?.trim();
+        if (!value) return undefined;
+        const url = new URL(value);
+        if (
+          !["http:", "https:"].includes(url.protocol) ||
+          url.username ||
+          url.password ||
+          url.search ||
+          url.hash ||
+          url.pathname !== "/"
+        )
+          throw new Error(
+            "STREAMERAI_ADVERTISE_URL must be an HTTP(S) server origin.",
+          );
+        return url.origin;
+      })(),
       accessMode: (() => {
         const mode = env.STREAMERAI_ACCESS_MODE?.trim() || "trusted-local";
         if (mode !== "paired" && mode !== "trusted-local")

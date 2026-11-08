@@ -101,12 +101,16 @@ import { LocalAccessService } from "./services/local-access.js";
 import { EncryptedHouseholdService } from "./services/encrypted-household.js";
 import { EncryptedCheckpointTransport } from "./services/encrypted-sync-transport.js";
 import { AutomaticHouseholdBackup } from "./services/automatic-household-backup.js";
+import { HouseholdCloudService } from "./services/household-cloud.js";
+import { registerHouseholdMerge } from "./services/household-merge.js";
+import { HouseholdBackupScheduler } from "./services/household-backup-schedule.js";
+import { householdPendingKey } from "./services/household-state.js";
+import { startHouseholdDiscovery } from "./services/server-discovery.js";
 import { registerEncryptedHouseholdRoutes } from "./routes/encrypted-household.js";
 import { registerServerAiSetupRoutes } from "./routes/ollama-setup.js";
 import { ServerAiSetupService } from "./services/ollama-setup.js";
 
 export interface CreateAppOptions {
-  installationBootstrapToken?: string;
   accountServiceUrl?: string | null;
   accountFetch?: typeof fetch;
   environment?: string;
@@ -556,9 +560,11 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
     enabled: runtimeConfig.deployment?.accessMode === "paired",
     dataDirectory: runtimeConfig.server.dataDir,
     origin: runtimeConfig.accounts?.webOrigin ?? "http://localhost:5173",
-    bootstrapToken: options.installationBootstrapToken,
     now,
     onRevoke: () => playbackTicketStore.revokeActive(),
+    verifyMasterPin: (pin) => accountAuth.authorizeHouseholdPin(pin),
+    householdStatus: () => accountAuth.installationHouseholdStatus(),
+    advertiseUrl: runtimeConfig.deployment?.advertiseUrl,
   });
   localAccess.register(app);
   const accountSync: AccountSyncService | undefined = accountServiceUrl
@@ -622,12 +628,36 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
     database,
     stores.secretStore,
     now,
-    {
-      beforeEnable: async (accountId) => {
-        await accountSync?.setEnabled(accountId, false);
-      },
-    },
   );
+  new HouseholdCloudService({
+    database,
+    secrets: stores.secretStore,
+    auth: accountAuth,
+    localAccess,
+    serviceUrl: accountServiceUrl,
+    webOrigin: runtimeConfig.accounts?.webOrigin ?? "http://localhost:5173",
+    fetch: options.accountFetch,
+    now,
+  }).register(app);
+  const householdBackups = new HouseholdBackupScheduler(
+    database,
+    encryptedHousehold,
+    runtimeConfig.server.dataDir,
+    now,
+  );
+  householdBackups.register(
+    app,
+    (request) => accountAuth.account(request).id,
+    (request) => !localAccess.enabled || localAccess.isOwner(request),
+  );
+  const localBackupTimer =
+    environment === "test"
+      ? null
+      : setInterval(() => {
+          const household = database.accounts.getHousehold();
+          void householdBackups.tick(household.id);
+        }, 60_000);
+  localBackupTimer?.unref();
   const checkpointTransport = accountServiceUrl
     ? new EncryptedCheckpointTransport(
         accountServiceUrl,
@@ -643,11 +673,38 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
         now,
       )
     : undefined;
+  // A process interruption must not leave a completed local import blocking future synchronization.
+  for (const account of database.accounts.list())
+    database.settings.delete(`household.mergeBusy.${account.id}`);
+  registerHouseholdMerge(app, {
+    database,
+    household: encryptedHousehold,
+    cloud: checkpointTransport,
+    serviceUrl: accountServiceUrl,
+    fetch: options.accountFetch,
+    owner: (request) => !localAccess.enabled || localAccess.isOwner(request),
+    getCredential: (accountId) => accountAuth.getCredential(accountId),
+    beforeImport: async (accountId) => {
+      database.settings.set(`household.mergeBusy.${accountId}`, true);
+      await accountSync?.idle(accountId);
+      await automaticBackup?.idle(accountId);
+      return async () => {
+        database.settings.delete(`household.mergeBusy.${accountId}`);
+      };
+    },
+    adopt: (accountId, revision, datasetId) =>
+      automaticBackup?.adopt(accountId, revision, datasetId),
+  });
   registerEncryptedHouseholdRoutes(app, {
     service: encryptedHousehold,
     accountId: (request) => accountAuth.account(request).id,
     requireOwner: (request, reply) => {
-      if (!localAccess.enabled || localAccess.isOwner(request)) return true;
+      if (
+        !localAccess.enabled ||
+        localAccess.isOwner(request) ||
+        localAccess.isSetupSession(request)
+      )
+        return true;
       reply.code(403).send({
         error: {
           code: "INSTALLATION_OWNER_REQUIRED",
@@ -664,6 +721,10 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
       !!database.accounts.get(accountId)?.cloudUserId,
     cloudBackupAdopt: (accountId, revision, datasetId) =>
       automaticBackup?.adopt(accountId, revision, datasetId),
+    onRestored: async (accountId, datasetId, request, reply) => {
+      await accountAuth.completeHouseholdImport(accountId, datasetId);
+      await localAccess.finishSetup(request, reply);
+    },
   });
   app.addHook("onResponse", async (request, reply) => {
     if (
@@ -696,6 +757,16 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
       ? setInterval(() => {
           for (const account of database.accounts.list()) {
             if (!account.cloudUserId) continue;
+            if (
+              database.settings.get<{ kind: string }>(
+                householdPendingKey(account.id),
+              )?.kind === "register"
+            ) {
+              void accountAuth.resumeHousehold(account.id);
+              continue;
+            }
+            if (database.settings.get(householdPendingKey(account.id)))
+              continue;
             if (automaticBackup)
               void automaticBackup.sync(account.id).catch(() => undefined);
             if (accountSync.status(account.id).configured)
@@ -721,7 +792,26 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
     );
   });
 
+  let discoveryResponder:
+    Awaited<ReturnType<typeof startHouseholdDiscovery>> | undefined;
   app.addHook("onReady", async () => {
+    if (
+      environment !== "test" &&
+      runtimeConfig.deployment?.discoveryEnabled !== false
+    ) {
+      try {
+        discoveryResponder = await startHouseholdDiscovery(
+          database,
+          runtimeConfig.accounts?.webOrigin ?? "http://localhost:5173",
+          runtimeConfig.deployment?.advertiseUrl,
+        );
+      } catch {
+        app.log.warn(
+          { code: "LAN_DISCOVERY_UNAVAILABLE" },
+          "Automatic LAN discovery is unavailable; clients can still use the server address.",
+        );
+      }
+    }
     if (!(await stores.secretStore.isReady()))
       throw new Error("Account credential storage is not ready.");
     if (environment !== "test") {
@@ -961,6 +1051,8 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
   });
 
   app.addHook("onClose", async () => {
+    await discoveryResponder?.close();
+    if (localBackupTimer) clearInterval(localBackupTimer);
     if (accountSyncTimer) clearInterval(accountSyncTimer);
     await agent.close();
     if (availabilityTimer) clearInterval(availabilityTimer);

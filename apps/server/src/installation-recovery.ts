@@ -1,5 +1,3 @@
-import { randomBytes } from "node:crypto";
-import { writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { openStreamerDatabase } from "@streamer-ai/database";
@@ -7,7 +5,7 @@ import { acquireServerRuntimeLock } from "./services/runtime-lock.js";
 import { loadLocalEnvironment, readRuntimeConfig } from "./runtime-config.js";
 
 /** Local OS administration only; this operation is not available through HTTP. */
-export function resetInstallationOwner(dataDirectory: string): string {
+export function resetInstallationOwner(dataDirectory: string): void {
   const directory = resolve(dataDirectory);
   const lock = acquireServerRuntimeLock(directory);
   try {
@@ -15,8 +13,6 @@ export function resetInstallationOwner(dataDirectory: string): string {
       filename: resolve(directory, "streamer-ai.db"),
     });
     try {
-      const filename = resolve(directory, "installation-bootstrap.key");
-      writeFileSync(filename, randomBytes(32).toString("hex"), { mode: 0o600 });
       database.transaction(() => {
         database.settings.set("server.localAccess", {
           claimed: false,
@@ -26,7 +22,6 @@ export function resetInstallationOwner(dataDirectory: string): string {
           for (const session of database.auth.listDeviceHistory(account.id))
             database.auth.revokeSession(session.tokenHash);
       });
-      return filename;
     } finally {
       database.close();
     }
@@ -49,9 +44,9 @@ if (
     const directory =
       index >= 0 ? process.argv[index + 1] : readRuntimeConfig().server.dataDir;
     if (!directory) throw new Error("A server data directory is required.");
-    const filename = resetInstallationOwner(directory);
+    resetInstallationOwner(directory);
     process.stdout.write(
-      `Owner recovery prepared. Read the private setup key locally from ${filename}\n`,
+      "Device access revoked. Open /admin and sign in with your household Master PIN.\n",
     );
   }
 }

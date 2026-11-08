@@ -168,6 +168,23 @@ function title(db: StreamerDatabase) {
 }
 
 describe("account synchronization", () => {
+  it("waits for household setup and continues syncing alongside encrypted backups", async () => {
+    const cloud = new Cloud();
+    const { db, service } = installation(cloud);
+    db.settings.set("household.pending.local", { kind: "restore" });
+    service.capture("local");
+    expect((await service.sync("local")).configured).toBe(false);
+    expect(cloud.requests).toEqual([]);
+    expect(db.syncOutbox.listPending()).toEqual([]);
+    db.settings.delete("household.pending.local");
+    const { encryptedHouseholdSettingKey } =
+      await import("../src/services/encrypted-household.js");
+    db.settings.set(encryptedHouseholdSettingKey("local"), { version: 1 });
+    expect((await service.sync("local")).configured).toBe(true);
+    expect(cloud.pushed.some((operation) => operation.kind === "profile")).toBe(
+      true,
+    );
+  });
   it("discards an old cloud response after account deletion and re-pairing", async () => {
     const cloud = new Cloud();
     const { db, service } = installation(cloud);

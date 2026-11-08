@@ -13,8 +13,6 @@ import { ProfileChooser } from "./components/ProfileChooser";
 import { Onboarding } from "./components/onboarding/Onboarding";
 import { safeErrorMessage } from "./api/client";
 import { ThemeProvider } from "./theme/ThemeProvider";
-import { AccountLogin } from "./components/AccountLogin";
-import { MasterPinSetup } from "./components/MasterPinSetup";
 import { ProfilePinDialog } from "./components/ProfilePin";
 import {
   InstallationAccess,
@@ -120,6 +118,10 @@ export function App({ api = apiClient, forceOnboarding = false }: AppProps) {
           setAuth(status);
           accountEnabled = status.enabled;
           if (status.enabled && !status.authenticated) return;
+          if (status.householdRestoreRequired) {
+            setSetupState("complete");
+            return;
+          }
         } catch (reason) {
           if (active) setAuthError(safeErrorMessage(reason));
           return;
@@ -180,7 +182,15 @@ export function App({ api = apiClient, forceOnboarding = false }: AppProps) {
       setAuthVersion((value) => value + 1);
     };
     window.addEventListener("streamer:auth-required", expire);
-    return () => window.removeEventListener("streamer:auth-required", expire);
+    const refreshHousehold = () => setAuthVersion((value) => value + 1);
+    window.addEventListener("streamer:household-changed", refreshHousehold);
+    return () => {
+      window.removeEventListener("streamer:auth-required", expire);
+      window.removeEventListener(
+        "streamer:household-changed",
+        refreshHousehold,
+      );
+    };
   }, []);
 
   useEffect(() => {
@@ -193,19 +203,6 @@ export function App({ api = apiClient, forceOnboarding = false }: AppProps) {
     window.addEventListener("streamer:profile-locked", lock);
     return () => window.removeEventListener("streamer:profile-locked", lock);
   }, [loadProfiles]);
-
-  const signOut = async () => {
-    if (!api.logout) return;
-    await api.logout();
-    setActiveProfile(null);
-    setRerunProfile(null);
-    setLockedProfile(null);
-    setProfiles([]);
-    setAuth(null);
-    setSetupState("loading");
-    setAuthVersion((value) => value + 1);
-    window.history.pushState({}, "", "/");
-  };
 
   const selectProfile = (profile: ViewerProfile) => {
     if (profile.pinEnabled) {
@@ -249,6 +246,7 @@ export function App({ api = apiClient, forceOnboarding = false }: AppProps) {
     if (!forceOnboarding && installation?.enabled && !installation.paired)
       return (
         <InstallationAccess
+          api={api}
           status={installation}
           onConnected={() => {
             setInstallation(null);
@@ -256,38 +254,42 @@ export function App({ api = apiClient, forceOnboarding = false }: AppProps) {
           }}
         />
       );
+    if (!forceOnboarding && authError)
+      return (
+        <main className="installation-screen">
+          <h1>Home server unavailable</h1>
+          <p role="alert">{authError}</p>
+          <button
+            className="button button--primary"
+            type="button"
+            onClick={() => setAuthVersion((value) => value + 1)}
+          >
+            Try again
+          </button>
+          <a className="button button--secondary" href="/admin">
+            Open household administration
+          </a>
+        </main>
+      );
     if (
       !forceOnboarding &&
-      (authError || (auth?.enabled && !auth.authenticated))
-    ) {
-      return (
-        <AccountLogin
-          api={api}
-          allowLocal={auth?.localAvailable ?? true}
-          recoveredLocalAccounts={auth?.recoveredLocalAccounts}
-          error={authError}
-          onRetry={() => setAuthVersion((value) => value + 1)}
-          onAuthenticated={() => {
-            setAuth(null);
-            setSetupState("loading");
-            setAuthVersion((value) => value + 1);
-          }}
-        />
-      );
-    }
-    if (
-      auth?.masterPinSetupRequired &&
-      setupState === "complete" &&
-      api.setupMasterPin
+      auth &&
+      (!auth.authenticated ||
+        auth.householdRestoreRequired ||
+        auth.householdReady === false ||
+        auth.masterPinSetupRequired)
     )
       return (
-        <main className="account-login">
-          <MasterPinSetup
-            onSave={async (pin) => {
-              await api.setupMasterPin!(pin, pin);
-              setAuthVersion((value) => value + 1);
-            }}
-          />
+        <main className="installation-screen">
+          <Brand />
+          <h1>Your household is not ready yet</h1>
+          <p>
+            Open household administration to create a household or restore its
+            backup. Devices connect to this server after setup is complete.
+          </p>
+          <a className="button button--primary" href="/admin">
+            Open household administration
+          </a>
         </main>
       );
     if (setupState === "loading") {
@@ -306,34 +308,9 @@ export function App({ api = apiClient, forceOnboarding = false }: AppProps) {
           api={api}
           existingProfile={rerunProfile ?? undefined}
           onCancel={rerunProfile ? () => setRerunProfile(null) : undefined}
-          onSignIn={
-            auth?.cloudConfigured &&
-            auth.account?.cloudLinked === false &&
-            api.logout
-              ? signOut
-              : undefined
-          }
           onComplete={completeOnboarding}
-          allowRestore={
-            installation?.enabled === false || installation?.role === "owner"
-          }
-          masterPinRequired={auth?.masterPinSetupRequired ?? false}
-          onMasterPinCreated={() =>
-            setAuth((current) =>
-              current
-                ? {
-                    ...current,
-                    masterPinSetupRequired: false,
-                    masterPinEnabled: true,
-                  }
-                : current,
-            )
-          }
-          onRestored={async () => {
-            setRerunProfile(null);
-            setSetupState("loading");
-            setAuthVersion((value) => value + 1);
-          }}
+          allowRestore={false}
+          profileOnly={!forceOnboarding}
         />
       );
     }
@@ -358,12 +335,6 @@ export function App({ api = apiClient, forceOnboarding = false }: AppProps) {
             accountName={
               auth?.enabled ? (auth.account?.email ?? undefined) : undefined
             }
-            onSignOut={auth?.enabled ? signOut : undefined}
-            onCreate={async (name) => {
-              const created = await api.createProfile({ name, locale: "en" });
-              setProfiles((current) => [...current, created]);
-              setRerunProfile(created);
-            }}
           />
           {lockedProfile && (
             <ProfilePinDialog
@@ -404,7 +375,6 @@ export function App({ api = apiClient, forceOnboarding = false }: AppProps) {
             if (auth?.enabled) void loadProfiles();
             window.history.pushState({}, "", "/");
           }}
-          onSignOut={auth?.enabled ? signOut : undefined}
           onDeleteProfile={async () => {
             await api.deleteProfile(activeProfile.id);
             setProfiles((current) =>

@@ -9,7 +9,7 @@ import { safeErrorMessage } from "../api/client";
 interface ProfileChooserProps {
   profiles: ViewerProfile[];
   onSelect: (profile: ViewerProfile) => void;
-  onCreate: (name: string) => Promise<void>;
+  onCreate?: (name: string) => Promise<void>;
   error?: string;
   onRetry?: () => void;
   accountName?: string;
@@ -57,7 +57,7 @@ export function ProfileChooser({
 
   const create = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (!name.trim() || pending) return;
+    if (!onCreate || !name.trim() || pending) return;
     setPending(true);
     setCreateError("");
     try {
@@ -132,7 +132,7 @@ export function ProfileChooser({
                   {!profile.onboardingComplete && <small>Finish setup</small>}
                 </button>
               );
-            if (index === profiles.length)
+            if (onCreate && index === profiles.length)
               return (
                 <button
                   className="profile-medallion profile-medallion--add"
@@ -165,6 +165,11 @@ export function ProfileChooser({
           {profiles.length} of 5 profiles
           {accountName ? ` · ${accountName}` : ""}
         </small>
+        {!onCreate && (
+          <p>
+            <a href="/admin">Open household administration</a>
+          </p>
+        )}
       </div>
       {adding && (
         <div className="profile-chooser__overlay" role="presentation">

@@ -448,6 +448,15 @@ export class SettingsRepository {
         .run(assertShortString(key, "Setting key", 120)).changes > 0
     );
   }
+  listByPrefix<T = unknown>(prefix: string): { key: string; value: T }[] {
+    return (
+      this.database
+        .prepare(
+          "SELECT key,value_json FROM app_settings WHERE substr(key,1,?) = ? ORDER BY key",
+        )
+        .all(prefix.length, prefix) as { key: string; value_json: string }[]
+    ).map((row) => ({ key: row.key, value: parseJson<T>(row.value_json) }));
+  }
 }
 
 export class ProfilesRepository {
@@ -1442,6 +1451,54 @@ export class DiscoverySessionsRepository {
     private readonly database: BetterSqlite3.Database,
     private readonly clock: Clock,
   ) {}
+
+  listAllForProfile<TContext = unknown>(
+    profileId: string,
+  ): DiscoverySessionRecord<TContext>[] {
+    return (
+      this.database
+        .prepare(
+          "SELECT * FROM discovery_sessions WHERE profile_id = ? ORDER BY created_at, id",
+        )
+        .all(
+          assertShortString(profileId, "Profile id", 120),
+        ) as DiscoverySessionRow[]
+    ).map(discoverySessionFromRow<TContext>);
+  }
+
+  restorePortable(
+    input: DiscoverySessionRecord,
+    messages: DiscoveryMessageRecord[],
+  ): void {
+    this.database
+      .prepare(
+        "INSERT INTO discovery_sessions (id,profile_id,mode,state,context_json,created_at,updated_at,completed_at) VALUES (?,?,?,?,?,?,?,?)",
+      )
+      .run(
+        input.id,
+        input.profileId,
+        input.mode,
+        input.state,
+        stringifyJson(input.context, "Discovery context"),
+        input.createdAt,
+        input.updatedAt,
+        input.completedAt,
+      );
+    for (const message of messages)
+      this.database
+        .prepare(
+          "INSERT INTO discovery_messages (id,session_id,ordinal,role,content_json,request_id,created_at) VALUES (?,?,?,?,?,?,?)",
+        )
+        .run(
+          message.id,
+          input.id,
+          message.ordinal,
+          message.role,
+          stringifyJson(message.content, "Discovery message"),
+          message.requestId,
+          message.createdAt,
+        );
+  }
 
   create<TContext = Record<string, never>>(
     input: CreateDiscoverySessionInput<TContext>,

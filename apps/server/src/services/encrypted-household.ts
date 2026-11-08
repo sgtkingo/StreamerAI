@@ -18,6 +18,9 @@ import { MediaSourcePreferenceStore } from "./media-source-preferences.js";
 import { manualAgentSettingKey } from "../integrations/manual-agent-config.js";
 import { MasterPinService } from "./master-pin.js";
 import { protectHouseholdWithMasterPin } from "./master-pin-household-backup.js";
+import { householdId, householdIdKey } from "./household-state.js";
+import { PreferredSourceStore } from "./preferred-source-store.js";
+import { TitlePriorityStore } from "./title-priority-store.js";
 import {
   EncryptedHouseholdError,
   openHouseholdSnapshot,
@@ -75,7 +78,7 @@ export interface EncryptedHouseholdOptions {
 }
 
 const limitations = [
-  "Discovery conversations, custom title corrections and hashed title/source choices are not included in household format v1; use a full offline server backup to preserve them.",
+  "Catalog caches and installation-specific source availability are refreshed on the destination server.",
   "Local paths, audio output devices, inference endpoints/models, caches, media files and AI models require setup on the destination.",
   "Cloud sessions, device pairings, server identity and local vault/master keys are excluded; pair clients again.",
   "Imported provider credentials require validation when next used; expired or device-bound tokens may require sign-in.",
@@ -153,12 +156,6 @@ export class EncryptedHouseholdService {
 
   private async enable(accountId: string): Promise<void> {
     this.database.accounts.getRequired(accountId);
-    // Persist before yielding: legacy capture must stop even if activation later fails.
-    this.database.settings.set(
-      `accountSyncPaused.${hash(JSON.stringify(accountId))}`,
-      true,
-    );
-    await this.options.beforeEnable?.(accountId);
   }
 
   async activate(
@@ -174,7 +171,7 @@ export class EncryptedHouseholdService {
       const dataKey = randomBytes(32);
       const key = recoveryKey();
       const context = {
-        datasetId: randomUUID(),
+        datasetId: householdId(this.database, accountId),
         keyVersion: 1,
         recoveryVersion: 1,
       };
@@ -229,6 +226,16 @@ export class EncryptedHouseholdService {
       const titleIds = new Set<string>();
       const media = new MediaSourcePreferenceStore(this.database);
       const profiles = this.database.profiles.list(accountId).map((profile) => {
+        const sourceSelections = new PreferredSourceStore(
+          this.database,
+        ).exportProfile(profile.id);
+        const titlePriorities = new TitlePriorityStore(
+          this.database,
+          this.now,
+        ).exportProfile(profile.id);
+        for (const item of [...sourceSelections, ...titlePriorities])
+          if (this.database.titles.get(item.titleId))
+            titleIds.add(item.titleId);
         const library = this.database.library
           .list(profile.id)
           .map(
@@ -283,6 +290,27 @@ export class EncryptedHouseholdService {
           library,
           history,
           progress,
+          sourceSelections,
+          titlePriorities,
+          conversations: this.database.discoverySessions
+            .listAllForProfile(profile.id)
+            .map((session) => ({
+              sourceId: session.id,
+              mode: session.mode,
+              state: session.state,
+              context: session.context,
+              createdAt: session.createdAt,
+              updatedAt: session.updatedAt,
+              completedAt: session.completedAt,
+              messages: this.database.discoverySessions
+                .listMessages(session.id)
+                .map(({ role, content, requestId, createdAt }) => ({
+                  role,
+                  content,
+                  requestId,
+                  createdAt,
+                })),
+            })),
         };
       });
       const sourceFeedback = this.database.sourceFeedback
@@ -488,12 +516,12 @@ export class EncryptedHouseholdService {
       try {
         const finish = async (result: HouseholdImportResult) => {
           const master = new MasterPinService(this.secrets);
-          if (
-            restoredMasterPin &&
-            !this.database.accounts.getRequired(accountId).cloudUserId &&
-            !(await master.read(accountId))
-          )
+          if (restoredMasterPin && !(await master.read(accountId)))
             await master.setupLocal(accountId, restoredMasterPin);
+          this.database.settings.set(
+            householdIdKey(accountId),
+            opened.envelope.datasetId,
+          );
           return result;
         };
         await this.recoverImport(accountId);
@@ -544,65 +572,7 @@ export class EncryptedHouseholdService {
           const result = this.database.transaction(() => {
             const bootstrap = this.assertEmpty(accountId);
             if (bootstrap !== null) this.database.profiles.delete(bootstrap);
-            for (const title of opened.snapshot.titles) this.materialize(title);
-            const profileIds: string[] = [];
-            const media = new MediaSourcePreferenceStore(this.database);
-            for (const profile of opened.snapshot.profiles) {
-              const id = randomUUID();
-              this.database.profiles.create({
-                id,
-                accountId,
-                syncId: profile.syncId,
-                name: profile.name,
-                locale: profile.locale,
-                preferences: profile.preferences,
-              });
-              if (profile.pinHash !== null)
-                this.database.profiles.setPinHash(id, profile.pinHash);
-              const m = profile.mediaSourcePreferences;
-              media.set(
-                id,
-                m.providerOrder,
-                m.mode,
-                m.requireSeeking,
-                m.requireDirectPlay,
-              );
-              for (const item of profile.library)
-                this.database.library.upsert({ profileId: id, ...item });
-              for (const item of profile.history) {
-                const { sourceId: _source, ...event } = item;
-                this.database.history.append({
-                  id: randomUUID(),
-                  profileId: id,
-                  ...event,
-                });
-              }
-              for (const item of profile.progress)
-                this.database.playbackPositions.upsert({
-                  profileId: id,
-                  ...item,
-                });
-              for (const integration of profile.integrations) {
-                this.database.integrations.upsert(
-                  {
-                    id: integration.id,
-                    enabled: integration.enabled,
-                    setupStatus: integration.enabled ? "ready" : "disabled",
-                    healthStatus: "unknown",
-                    healthCode: "RESTORED_UNVERIFIED",
-                    lastCheckedAt: null,
-                  },
-                  id,
-                );
-              }
-              profileIds.push(id);
-            }
-            for (const feedback of opened.snapshot.sourceFeedback)
-              this.database.sourceFeedback.set(
-                accountId,
-                feedback.payload,
-                feedback.updatedAt,
-              );
+            const profileIds = this.importProfiles(accountId, opened.snapshot);
             const result: HouseholdImportResult = {
               profileIds,
               credentials: opened.snapshot.credentials.map((c) => c.key),
@@ -636,6 +606,223 @@ export class EncryptedHouseholdService {
         opened.dataKey.fill(0);
       }
     });
+  }
+
+  /** Import an approved household into this household without replacing its identity, PIN or services. */
+  async merge(
+    accountId: string,
+    envelope: unknown,
+    key: string,
+    operationId: string,
+  ): Promise<HouseholdImportResult> {
+    return this.exclusive(accountId, async () => {
+      await this.ready();
+      const opened = openHouseholdSnapshot(envelope, key);
+      const operationKey = `household.merge.${hash(accountId + ":" + operationId)}`;
+      const pendingKey = operationKey + ".pending";
+      try {
+        const installed = this.database.settings.get<Installed>(operationKey);
+        if (installed) {
+          if (installed.snapshotId !== opened.envelope.snapshotId)
+            throw new EncryptedHouseholdError("HOUSEHOLD_MERGE_CONFLICT");
+          return installed;
+        }
+        if (opened.envelope.datasetId === householdId(this.database, accountId))
+          throw new EncryptedHouseholdError("HOUSEHOLD_MERGE_CONFLICT");
+        if (
+          this.database.profiles.count(accountId) +
+            opened.snapshot.profiles.length >
+          5
+        )
+          throw new EncryptedHouseholdError("HOUSEHOLD_PROFILE_LIMIT");
+        const previous = this.database.settings.get<string[]>(pendingKey);
+        if (previous) {
+          for (const secretKey of previous)
+            await this.secrets.delete(secretKey);
+          this.database.settings.delete(pendingKey);
+        }
+        const credentials: EncryptedHouseholdSnapshot["credentials"] = [];
+        for (const credential of opened.snapshot.credentials) {
+          if (
+            !(await this.secrets.has(
+              accountSecretKey(accountId, credential.key),
+            ))
+          )
+            credentials.push(credential);
+        }
+        const secretKeys = credentials.map((c) =>
+          accountSecretKey(accountId, c.key),
+        );
+        this.database.settings.set(pendingKey, secretKeys);
+        try {
+          for (const credential of credentials)
+            await this.secrets.set(
+              accountSecretKey(accountId, credential.key),
+              credential.value,
+            );
+          const syncIds = new Map(
+            opened.snapshot.profiles.map((profile) => [
+              profile.syncId,
+              randomUUID(),
+            ]),
+          );
+          const snapshot: EncryptedHouseholdSnapshot = {
+            ...opened.snapshot,
+            profiles: opened.snapshot.profiles.map((profile) => ({
+              ...profile,
+              syncId: syncIds.get(profile.syncId)!,
+            })),
+            sourceFeedback: opened.snapshot.sourceFeedback.map((feedback) => ({
+              ...feedback,
+              payload: {
+                ...feedback.payload,
+                profileId:
+                  syncIds.get(feedback.payload.profileId) ??
+                  feedback.payload.profileId,
+              },
+            })),
+          };
+          return this.database.transaction(() => {
+            if (
+              this.database.profiles.count(accountId) +
+                snapshot.profiles.length >
+              5
+            )
+              throw new EncryptedHouseholdError("HOUSEHOLD_PROFILE_LIMIT");
+            const result: HouseholdImportResult = {
+              profileIds: this.importProfiles(accountId, snapshot),
+              credentials: credentials.map((c) => c.key),
+              limitations: [
+                ...snapshot.limitations,
+                "The destination household keeps its Master PIN and existing shared service credentials.",
+              ],
+            };
+            this.database.settings.set(operationKey, {
+              snapshotId: opened.envelope.snapshotId,
+              ...result,
+            });
+            this.database.settings.delete(pendingKey);
+            return result;
+          });
+        } catch (error) {
+          for (const secretKey of secretKeys)
+            await this.secrets.delete(secretKey);
+          this.database.settings.delete(pendingKey);
+          throw error;
+        }
+      } finally {
+        opened.dataKey.fill(0);
+      }
+    });
+  }
+
+  private importProfiles(
+    accountId: string,
+    snapshot: EncryptedHouseholdSnapshot,
+  ): string[] {
+    for (const title of snapshot.titles) this.materialize(title);
+    const profileIds: string[] = [];
+    const media = new MediaSourcePreferenceStore(this.database);
+    for (const profile of snapshot.profiles) {
+      const id = randomUUID();
+      this.database.profiles.create({
+        id,
+        accountId,
+        syncId: profile.syncId,
+        name: profile.name,
+        locale: profile.locale,
+        preferences: profile.preferences,
+      });
+      if (profile.pinHash !== null)
+        this.database.profiles.setPinHash(id, profile.pinHash);
+      const m = profile.mediaSourcePreferences;
+      media.set(
+        id,
+        m.providerOrder,
+        m.mode,
+        m.requireSeeking,
+        m.requireDirectPlay,
+      );
+      for (const item of profile.library)
+        this.database.library.upsert({ profileId: id, ...item });
+      for (const item of profile.history) {
+        const { sourceId: _source, ...event } = item;
+        this.database.history.append({
+          id: randomUUID(),
+          profileId: id,
+          ...event,
+        });
+      }
+      for (const item of profile.progress)
+        this.database.playbackPositions.upsert({
+          profileId: id,
+          ...item,
+        });
+      for (const integration of profile.integrations) {
+        this.database.integrations.upsert(
+          {
+            id: integration.id,
+            enabled: integration.enabled,
+            setupStatus: integration.enabled ? "ready" : "disabled",
+            healthStatus: "unknown",
+            healthCode: "RESTORED_UNVERIFIED",
+            lastCheckedAt: null,
+          },
+          id,
+        );
+      }
+      for (const conversation of profile.conversations) {
+        const sessionId = randomUUID();
+        this.database.discoverySessions.restorePortable(
+          {
+            id: sessionId,
+            profileId: id,
+            mode: conversation.mode,
+            state: conversation.state,
+            context: conversation.context,
+            createdAt: conversation.createdAt,
+            updatedAt: conversation.updatedAt,
+            completedAt: conversation.completedAt,
+          },
+          conversation.messages.map((message, index) => ({
+            ...message,
+            id: randomUUID(),
+            sessionId,
+            ordinal: index + 1,
+          })),
+        );
+      }
+      const sources = new PreferredSourceStore(this.database);
+      for (const selection of profile.sourceSelections) {
+        const episode =
+          selection.seasonNumber !== null && selection.episodeNumber !== null
+            ? {
+                seasonNumber: selection.seasonNumber,
+                episodeNumber: selection.episodeNumber,
+              }
+            : undefined;
+        if (selection.aiPick)
+          sources.setAi(
+            id,
+            selection.titleId,
+            selection.sourceId,
+            selection.aiPick.reason,
+            episode,
+          );
+        else sources.set(id, selection.titleId, selection.sourceId, episode);
+      }
+      const priorities = new TitlePriorityStore(this.database, this.now);
+      for (const priority of profile.titlePriorities)
+        priorities.restoreProfile(id, priority.titleId, priority);
+      profileIds.push(id);
+    }
+    for (const feedback of snapshot.sourceFeedback)
+      this.database.sourceFeedback.set(
+        accountId,
+        feedback.payload,
+        feedback.updatedAt,
+      );
+    return profileIds;
   }
 
   private materialize(title: AccountSyncTitle): void {

@@ -20,6 +20,7 @@ const workspaceDirectories = {
   "@streamer-ai/server": "apps/server",
   "@streamer-ai/contracts": "packages/contracts",
   "@streamer-ai/database": "packages/database",
+  "@streamer-ai/discovery": "packages/discovery",
 };
 
 function json(filename) {

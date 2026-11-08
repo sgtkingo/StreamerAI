@@ -121,6 +121,15 @@ function cloud() {
         device: { id: `device-${identity}-${now}`, name: "Browser" },
       });
     }
+    if (path === "/v1/households" && init?.method === "POST")
+      return Response.json({
+        ok: true,
+        household: {
+          id: body.householdId,
+          name: body.name,
+          accountId: tokens.get(token),
+        },
+      });
     if (path === "/v1/account/master-pin" && init?.method === "PUT") {
       const next = body.verifier as typeof masterVerifier & {
         changeHash: string;
@@ -857,7 +866,7 @@ describe("account authentication and profile boundaries", () => {
       ),
     ).toBe(true);
   });
-  it("lets an expired session choose a converted household without merging an existing local household", async () => {
+  it("makes the explicitly recovered household canonical for subsequent local sessions", async () => {
     const { app, database, login, advance, deleteCloud } = cloud();
     const local = await app.inject({
       method: "POST",
@@ -897,7 +906,9 @@ describe("account authentication and profile boundaries", () => {
       url: "/api/v1/auth/local",
       payload: { masterPin: "12345678" },
     });
-    expect(defaultLocal.json().account.id).toBe(localId);
+    expect(defaultLocal.json().account.id).toBe(original);
+    expect(database.accounts.getRequired(localId).id).toBe(localId);
+    expect(database.accounts.getHousehold().id).toBe(original);
     const invalid = await app.inject({
       method: "POST",
       url: "/api/v1/auth/local",
@@ -905,10 +916,22 @@ describe("account authentication and profile boundaries", () => {
     });
     expect(invalid.statusCode).toBe(404);
   });
-  it("reports account synchronization in the integration catalog and respects pause and account isolation", async () => {
+  it("reports synchronization consistently across sessions of the canonical household", async () => {
     const { app, login } = cloud();
     const signed = await login("owner-one");
     const headers = { cookie: signed };
+    // Legacy online fixtures have only a cached verifier. Confirm the current
+    // PIN once before exercising the canonical household's local session.
+    expect(
+      (
+        await app.inject({
+          method: "POST",
+          url: "/api/v1/account/master-pin/verify",
+          headers,
+          payload: { pin: "87654321" },
+        })
+      ).statusCode,
+    ).toBe(204);
     const profiles = await app.inject({ url: "/api/v1/profiles", headers });
     const profileId = profiles.json().items[0].id as string;
     const catalog = async () => {
@@ -926,6 +949,17 @@ describe("account authentication and profile boundaries", () => {
       configured: true,
       status: "connected",
     });
+    const localSession = await app.inject({
+      method: "POST",
+      url: "/api/v1/auth/local",
+      payload: { masterPin: "87654321" },
+    });
+    const localHeaders = { cookie: cookie(localSession) };
+    const localProfiles = await app.inject({
+      url: "/api/v1/profiles",
+      headers: localHeaders,
+    });
+    const localProfileId = localProfiles.json().items[0].id as string;
     const paused = await app.inject({
       method: "PUT",
       url: "/api/v1/account/sync",
@@ -938,29 +972,25 @@ describe("account authentication and profile boundaries", () => {
       configured: false,
       status: "action_required",
     });
-    const localSession = await app.inject({
+    const reopened = await app.inject({
       method: "POST",
       url: "/api/v1/auth/local",
-      payload: { masterPin: "12345678" },
+      payload: {},
     });
-    const localHeaders = { cookie: cookie(localSession) };
-    const localProfiles = await app.inject({
-      url: "/api/v1/profiles",
-      headers: localHeaders,
-    });
-    const localProfileId = localProfiles.json().items[0].id as string;
+    expect(reopened.statusCode).toBe(200);
+    expect(reopened.json().account.id).toBe(localSession.json().account.id);
     const localCatalog = await app.inject({
       url: `/api/v1/integrations?profileId=${localProfileId}`,
-      headers: localHeaders,
+      headers: { cookie: cookie(reopened) },
     });
     expect(
       localCatalog
         .json()
         .items.find((item: { id: string }) => item.id === "cloudflare-sync"),
     ).toMatchObject({
-      selected: false,
+      selected: true,
       configured: false,
-      status: "not_configured",
+      status: "action_required",
     });
     await app.inject({
       method: "PUT",
@@ -1008,9 +1038,19 @@ describe("account authentication and profile boundaries", () => {
       (await app.inject({ url: "/api/v1/account/connections" })).statusCode,
     ).toBe(401);
   });
-  it("opens an isolated household beside a claimed Google account without cloud credentials", async () => {
+  it("opens the canonical household locally without creating a parallel account", async () => {
     const { app, database, login } = cloud();
-    await login("owner-one");
+    const signed = await login("owner-one");
+    expect(
+      (
+        await app.inject({
+          method: "POST",
+          url: "/api/v1/account/master-pin/verify",
+          headers: { cookie: signed },
+          payload: { pin: "87654321" },
+        })
+      ).statusCode,
+    ).toBe(204);
     const owned = database.profiles.list("local")[0]!;
     database.profiles.update(owned.id, { name: "Private owner profile" });
     const entered = await app.inject({
@@ -1020,12 +1060,17 @@ describe("account authentication and profile boundaries", () => {
     });
     expect(entered.statusCode).toBe(200);
     const account = entered.json().account;
-    expect(account.id).not.toBe("local");
-    expect(account.cloudLinked).toBe(false);
+    expect(account.id).toBe("local");
+    expect(account.cloudLinked).toBe(true);
     const headers = { cookie: cookie(entered) };
     const profiles = await app.inject({ url: "/api/v1/profiles", headers });
     expect(profiles.statusCode).toBe(200);
-    expect(profiles.body).not.toContain("Private owner profile");
+    expect(profiles.json().items[0]).toMatchObject({
+      id: owned.id,
+      name: "Private owner profile",
+    });
+    expect(database.accounts.list()).toHaveLength(1);
+    expect(database.accounts.getHousehold().id).toBe("local");
     expect(
       (
         await app.inject({
@@ -1033,22 +1078,12 @@ describe("account authentication and profile boundaries", () => {
           headers,
         })
       ).statusCode,
-    ).toBe(404);
+    ).toBe(200);
     const overview = (
       await app.inject({ url: "/api/v1/account", headers })
     ).json();
-    expect(overview.manageUrl).toBeNull();
-    expect(overview.sync.configured).toBe(false);
-    expect(
-      (
-        await app.inject({
-          method: "POST",
-          url: `/api/v1/profiles/${profiles.json().items[0].id}/pin-reset`,
-          headers,
-          payload: {},
-        })
-      ).statusCode,
-    ).toBe(403);
+    expect(overview.manageUrl).toContain("https://accounts.example/account");
+    expect(overview.sync.configured).toBe(true);
     expect(
       (
         await app.inject({
@@ -1694,7 +1729,7 @@ describe("account authentication and profile boundaries", () => {
     ).toMatchObject({
       masterPinEnabled: true,
       masterPinSetupRequired: false,
-      ownerResetAvailable: false,
+      ownerResetAvailable: true,
     });
     expect(
       (

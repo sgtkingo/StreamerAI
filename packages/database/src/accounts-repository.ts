@@ -1,5 +1,4 @@
 import type BetterSqlite3 from "better-sqlite3";
-import { randomUUID } from "node:crypto";
 import { DatabaseValidationError } from "./errors.js";
 import {
   LOCAL_ACCOUNT_ID,
@@ -63,23 +62,26 @@ export class AccountsRepository {
     return this.getRequired(LOCAL_ACCOUNT_ID);
   }
 
-  /** A claimed legacy ID is never a guest account, even if its name is local. */
+  /** A server keeps one canonical household when cloud management is attached or detached. */
   getHousehold(): Account {
-    return this.database.transaction(() => {
-      const legacy = this.getLocal();
-      if (legacy.cloudUserId === null) return legacy;
-      const existing = this.database
+    const setting = this.database
+      .prepare(
+        "SELECT value_json FROM app_settings WHERE key = 'household.accountId'",
+      )
+      .get() as { value_json: string } | undefined;
+    return setting
+      ? this.getRequired(JSON.parse(setting.value_json) as string)
+      : this.getLocal();
+  }
+
+  detachCloudUser(id: string, expectedCloudUserId: string): boolean {
+    return (
+      this.database
         .prepare(
-          "SELECT * FROM accounts WHERE cloud_user_id IS NULL AND id LIKE 'household:%' ORDER BY created_at, id LIMIT 1",
+          "UPDATE accounts SET cloud_user_id = NULL, email = NULL, updated_at = ? WHERE id = ? AND cloud_user_id = ?",
         )
-        .get() as AccountRow | undefined;
-      return existing
-        ? account(existing)
-        : this.upsert({
-            id: `household:${randomUUID()}`,
-            name: "Local household",
-          });
-    })();
+        .run(this.clock().toISOString(), id, expectedCloudUserId).changes === 1
+    );
   }
 
   getByCloudUserId(id: string): Account | null {

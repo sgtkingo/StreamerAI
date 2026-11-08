@@ -393,9 +393,11 @@ export function IntegrationManager({
     refresh(true);
     const onFocus = () => refresh();
     window.addEventListener("focus", onFocus);
+    window.addEventListener("streamer:household-changed", onFocus);
     return () => {
       active = false;
       window.removeEventListener("focus", onFocus);
+      window.removeEventListener("streamer:household-changed", onFocus);
     };
   }, [api, discoveryRevision, profileId]);
 
@@ -413,9 +415,11 @@ export function IntegrationManager({
     };
     refresh();
     window.addEventListener("focus", refresh);
+    window.addEventListener("streamer:household-changed", refresh);
     return () => {
       active = false;
       window.removeEventListener("focus", refresh);
+      window.removeEventListener("streamer:household-changed", refresh);
     };
   }, [api, category, profileId]);
 

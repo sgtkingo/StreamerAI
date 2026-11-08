@@ -327,12 +327,11 @@ def main():
             GLib.idle_add(consent)
 
         def open_browser(self, fingerprint):
-            result = privileged("bootstrap", self.message, fingerprint)
+            result = privileged("open-administration", self.message, fingerprint)
             if not browser_certificates():
                 self.message("The system certificate is trusted. Your browser may ask for its own certificate approval; close and reopen it if needed.")
             else:
                 self.message("Opening your local server in the browser…")
-            # A one-time fragment stays out of HTTP request logs; the web client consumes it.
             url = result["url"]
             if not url.startswith("https://localhost:8443/"):
                 raise ValueError("Invalid local server address")

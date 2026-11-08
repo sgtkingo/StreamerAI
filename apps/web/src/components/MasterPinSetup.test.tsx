@@ -38,11 +38,11 @@ it("opens the local session before Welcome so backup recovery can use an existin
   render(<AccountLogin api={api} allowLocal onAuthenticated={authenticated} />);
   fireEvent.click(
     screen.getByRole("button", {
-      name: /Prefer to continue without signing in/,
+      name: "Create a household",
     }),
   );
   await waitFor(() => expect(authenticated).toHaveBeenCalledOnce());
-  expect(api.startLocalSession).toHaveBeenCalledWith(undefined);
+  expect(api.startLocalSession).toHaveBeenCalledWith();
   expect(
     screen.queryByRole("heading", { name: "Choose your Master PIN" }),
   ).not.toBeInTheDocument();

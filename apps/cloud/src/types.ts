@@ -18,6 +18,7 @@ export interface Principal {
   account: Account;
   method: "browser" | "device";
   deviceId?: string;
+  householdId?: string;
   purpose?: "login" | "pin-reset";
   mergeAckRequired?: boolean;
   authenticatedAt?: number;

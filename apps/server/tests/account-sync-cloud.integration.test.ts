@@ -9,6 +9,8 @@ import type { ProviderFetch } from "../src/integrations/tmdb-api-client.js";
 import { AccountSyncService } from "../src/services/account-sync.js";
 
 const DAY = 86_400_000;
+const HOUSEHOLD = "11111111-1111-4111-8111-111111111111";
+const OTHER_HOUSEHOLD = "22222222-2222-4222-8222-222222222222";
 let cloud: ReturnType<typeof fixture> | undefined;
 const databases: StreamerDatabase[] = [];
 afterEach(() => {
@@ -17,7 +19,11 @@ afterEach(() => {
   cloud = undefined;
 });
 
-async function pair(f: ReturnType<typeof fixture>) {
+async function pair(
+  f: ReturnType<typeof fixture>,
+  account = "a",
+  householdId = HOUSEHOLD,
+) {
   const grantResponse = await f.request("/v1/device/code", {
     method: "POST",
     data: {
@@ -31,7 +37,7 @@ async function pair(f: ReturnType<typeof fixture>) {
   };
   const approved = await f.request("/v1/device/approve", {
     method: "POST",
-    account: "a",
+    account,
     data: { user_code: grant.user_code, approve: true },
   });
   expect(approved.status).toBe(200);
@@ -48,6 +54,16 @@ async function pair(f: ReturnType<typeof fixture>) {
     access_token: string;
     device: { id: string };
   };
+  const registered = await f.request("/v1/households", {
+    method: "POST",
+    token: token.access_token,
+    data: {
+      householdId,
+      name: "Retention household",
+      serverId: "retention-integration",
+    },
+  });
+  expect(registered.status).toBe(200);
   return { token: token.access_token, deviceId: token.device.id };
 }
 
@@ -98,8 +114,9 @@ function title(database: StreamerDatabase, id: string, timestamp: string) {
 describe("home client and actual identity Worker retention protocol", () => {
   it("syncs independent votes from different profiles without overwriting them", async () => {
     const f = (cloud = fixture());
-    const fetcher: ProviderFetch = async (input, init) =>
-      f.worker.fetch(
+    const failures: unknown[] = [];
+    const fetcher: ProviderFetch = async (input, init) => {
+      const response = await f.worker.fetch(
         new Request(input, {
           method: init.method,
           headers: init.headers,
@@ -108,6 +125,14 @@ describe("home client and actual identity Worker retention protocol", () => {
         }),
         f.env,
       );
+      if (!response.ok)
+        failures.push({
+          path: new URL(input).pathname,
+          status: response.status,
+          body: await response.clone().json(),
+        });
+      return response;
+    };
     const credential = await pair(f);
     const first = installation(f, fetcher, async () => credential);
     const second = installation(f, fetcher, async () => credential);
@@ -138,7 +163,9 @@ describe("home client and actual identity Worker retention protocol", () => {
       profileId: b.syncId,
       vote: "down",
     });
-    expect((await first.service.sync("local")).status).toBe("idle");
+    const result = await first.service.sync("local");
+    expect(failures).toEqual([]);
+    expect(result.status).toBe("idle");
     expect((await second.service.sync("local")).status).toBe("idle");
     expect(
       second.database.sourceFeedback.list("local").map((item) => item.payload),
@@ -155,7 +182,7 @@ describe("home client and actual identity Worker retention protocol", () => {
       vote: null,
     });
     expect((await second.service.sync("local")).status).toBe("idle");
-    expect((await first.service.sync("local")).status).toBe("idle");
+    expect(await first.service.sync("local")).toMatchObject({ status: "idle" });
     expect(
       first.database.sourceFeedback.list("local").map((item) => item.payload),
     ).toEqual(
@@ -200,9 +227,9 @@ describe("home client and actual identity Worker retention protocol", () => {
       preferences: { sourceFeedbackEnabled: false },
     });
     first.database.sourceFeedback.set("local", vote);
-    expect((await first.service.sync("local")).status).toBe("idle");
+    expect(await first.service.sync("local")).toMatchObject({ status: "idle" });
     first.database.profiles.delete("rater");
-    expect((await first.service.sync("local")).status).toBe("idle");
+    expect(await first.service.sync("local")).toMatchObject({ status: "idle" });
     // A fresh snapshot must recover feedback even though its originating profile is gone.
     const second = installation(f, fetcher, async () => credential);
     expect((await second.service.sync("local")).status).toBe("idle");
@@ -219,7 +246,7 @@ describe("home client and actual identity Worker retention protocol", () => {
     f.advance(1000);
     first.database.sourceFeedback.set("local", { ...vote, vote: null });
     first.service.capture("local");
-    expect((await first.service.sync("local")).status).toBe("idle");
+    expect(await first.service.sync("local")).toMatchObject({ status: "idle" });
     expect((await second.service.sync("local")).status).toBe("idle");
     expect(
       second.database.sourceFeedback.list("local")[0]?.payload.vote,
@@ -228,19 +255,23 @@ describe("home client and actual identity Worker retention protocol", () => {
       (
         f.sqlite
           .prepare(
-            "SELECT COUNT(*) AS n FROM cloud_account_entity WHERE account_id = ?",
+            "SELECT COUNT(*) AS n FROM cloud_household_sync_account_entity WHERE account_id = ?",
           )
-          .get(accounts.a!.id) as { n: number }
+          .get(HOUSEHOLD) as { n: number }
       ).n,
     );
     expect(count).toBe(1);
-    const other = await f.request("/v1/sync/pull?after=0", { account: "b" });
+    const otherCredential = await pair(f, "b", OTHER_HOUSEHOLD);
+    const other = await f.request("/v1/sync/pull?after=0", {
+      token: otherCredential.token,
+    });
+    expect(other.status).toBe(200);
     expect(
       ((await other.json()) as { operations: unknown[] }).operations,
     ).toEqual([]);
     // The payload is only the judgement and opaque identifiers, never release names/URLs/secrets.
     const row = f.sqlite
-      .prepare("SELECT operation_json FROM cloud_account_entity")
+      .prepare("SELECT operation_json FROM cloud_household_sync_account_entity")
       .get() as { operation_json: string };
     expect(JSON.parse(row.operation_json).payload).toEqual({
       ...vote,
@@ -308,7 +339,7 @@ describe("home client and actual identity Worker retention protocol", () => {
       progressPercent: 12,
       updatedAt: new Date(f.now()).toISOString(),
     });
-    expect((await first.service.sync("local")).status).toBe("idle");
+    expect(await first.service.sync("local")).toMatchObject({ status: "idle" });
 
     const second = installation(f, fetcher, async () => secondCredential);
     second.database.profiles.create({
@@ -328,9 +359,9 @@ describe("home client and actual identity Worker retention protocol", () => {
 
     f.advance(1000);
     first.database.profiles.delete("removed");
-    expect((await first.service.sync("local")).status).toBe("idle");
+    expect(await first.service.sync("local")).toMatchObject({ status: "idle" });
     const before = f.sqlite
-      .prepare("SELECT COUNT(*) AS n FROM cloud_entity")
+      .prepare("SELECT COUNT(*) AS n FROM cloud_household_sync_entity")
       .get();
     f.advance(91 * DAY);
     // A returning installation reauthorizes its expired 30-day device token.
@@ -353,15 +384,21 @@ describe("home client and actual identity Worker retention protocol", () => {
 
     await f.worker.scheduled({} as never, f.env);
     expect(
-      f.sqlite.prepare("SELECT COUNT(*) AS n FROM cloud_sync_log").get(),
-    ).toEqual({ n: 0 });
-    expect(
       f.sqlite
-        .prepare("SELECT COUNT(*) AS n FROM cloud_operation_receipt")
+        .prepare("SELECT COUNT(*) AS n FROM cloud_household_sync_log")
         .get(),
     ).toEqual({ n: 0 });
     expect(
-      f.sqlite.prepare("SELECT COUNT(*) AS n FROM cloud_entity").get(),
+      f.sqlite
+        .prepare(
+          "SELECT COUNT(*) AS n FROM cloud_household_sync_operation_receipt",
+        )
+        .get(),
+    ).toEqual({ n: 0 });
+    expect(
+      f.sqlite
+        .prepare("SELECT COUNT(*) AS n FROM cloud_household_sync_entity")
+        .get(),
     ).toEqual(before);
     const start = responses.length;
     expect((await second.service.sync("local")).status).toBe("idle");
@@ -388,7 +425,7 @@ describe("home client and actual identity Worker retention protocol", () => {
     ).toBe(120);
     expect(second.database.syncOutbox.listPending()).toEqual([]);
 
-    expect((await first.service.sync("local")).status).toBe("idle");
+    expect(await first.service.sync("local")).toMatchObject({ status: "idle" });
     expect(first.database.profiles.get("alex")?.name).toBe("Alex offline");
     expect(first.database.profiles.list()).toHaveLength(1);
     expect(first.database.library.list("alex")).toHaveLength(2);
@@ -397,7 +434,7 @@ describe("home client and actual identity Worker retention protocol", () => {
     });
     expect(
       f.sqlite
-        .prepare("SELECT active FROM cloud_profile WHERE id = ?")
+        .prepare("SELECT active FROM cloud_household_sync_profile WHERE id = ?")
         .get(removed.syncId),
     ).toEqual({ active: 0 });
   });

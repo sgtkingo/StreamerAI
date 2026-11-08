@@ -25,6 +25,12 @@ export interface EncryptedHouseholdRouteOptions {
     revision: number,
     datasetId: string,
   ): void;
+  onRestored?(
+    accountId: string,
+    datasetId: string,
+    request: FastifyRequest,
+    reply: FastifyReply,
+  ): Promise<void>;
 }
 
 const base = "/api/v1/account/encrypted-household";
@@ -132,7 +138,7 @@ export function registerEncryptedHouseholdRoutes(
     const input = await recoverInput(request.body, false);
     return options.service.preview(input.envelope, input.recoveryKey);
   });
-  route("POST", "/restore", async (accountId, request) => {
+  route("POST", "/restore", async (accountId, request, reply) => {
     const input = await recoverInput(request.body, true);
     const cloudRevision = record(request.body).cloudRevision;
     if (cloudRevision !== undefined) {
@@ -168,6 +174,12 @@ export function registerEncryptedHouseholdRoutes(
         cloudRevision,
         input.envelope.datasetId,
       );
+    await options.onRestored?.(
+      accountId,
+      input.envelope.datasetId,
+      request,
+      reply,
+    );
     return result;
   });
   route("GET", "/cloud", async (accountId) => {

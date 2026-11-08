@@ -1,9 +1,21 @@
 import { createAuth } from "./auth.js";
-import { enrollMasterPinChange, masterPin, pinResets } from "./account-pins.js";
+import { encryptedCheckpoint } from "./encrypted-sync.js";
+import { detachHousehold, household, requireHousehold } from "./households.js";
+import { householdCheckpoint } from "./household-checkpoint.js";
 import {
-  assertLegacySyncAllowed,
-  encryptedCheckpoint,
-} from "./encrypted-sync.js";
+  householdPush,
+  householdPull,
+  householdSnapshot,
+  householdRetentionStatements,
+} from "./household-sync.js";
+import {
+  completeHouseholdMerge,
+  decideHouseholdRequest,
+  householdRequests,
+  importHouseholdMerge,
+  listHouseholdProfiles,
+} from "./household-management.js";
+import { householdResets } from "./household-resets.js";
 import {
   approveGrant,
   authenticate,
@@ -97,6 +109,7 @@ export function createWorker(
       // Keep ownership and sync tombstones: pruning these can resurrect transferred profiles.
       await env.DB.batch([
         ...retentionStatements(env, now),
+        ...householdRetentionStatements(env, now),
         env.DB.prepare(
           "DELETE FROM cloud_rate_limit WHERE expires_at < ?",
         ).bind(now),
@@ -257,6 +270,7 @@ async function route(
         ? {
             ...principal.account,
             mergeAckRequired: !!principal.mergeAckRequired,
+            householdId: principal.householdId ?? null,
           }
         : principal.account,
     );
@@ -284,21 +298,129 @@ async function route(
   }
   if (method === "GET" && path === "/v1/device/verify")
     return verifyGrant(request, env, principal, now);
-  if (path === "/v1/account/master-pin" && ["GET", "PUT"].includes(method))
-    return masterPin(request, env, principal, now);
+  if (/^\/v1\/account\/master-pin(?:\/enroll)?$/.test(path))
+    throw new HttpError(410, "local_pin_management");
+  if (path === "/v1/households" && ["GET", "POST"].includes(method))
+    return household(request, env, principal, now);
   if (
-    path === "/v1/account/master-pin/enroll" &&
-    ["GET", "POST"].includes(method)
+    ["/v1/household-requests", "/v1/households/requests"].includes(path) &&
+    method === "GET"
   )
-    return enrollMasterPinChange(request, env, principal, now);
-  if (path === "/v1/account/pin-resets" && ["GET", "POST"].includes(method))
-    return pinResets(request, env, principal, now);
-  const pinReset =
+    return householdRequests(request, env, principal, now);
+  const householdDecision =
+    /^\/v1\/household-requests\/([a-f0-9-]{36})\/decision$/.exec(path);
+  if (householdDecision?.[1] && method === "POST")
+    return decideHouseholdRequest(
+      request,
+      env,
+      principal,
+      now,
+      householdDecision[1],
+    );
+  const householdImport =
+    /^\/v1\/household-requests\/([a-f0-9-]{36})\/(import|complete)$/.exec(path);
+  if (
+    householdImport?.[1] &&
+    householdImport[2] === "import" &&
+    method === "GET"
+  )
+    return importHouseholdMerge(env, principal, now, householdImport[1]);
+  if (
+    householdImport?.[1] &&
+    householdImport[2] === "complete" &&
+    method === "POST"
+  )
+    return completeHouseholdMerge(
+      request,
+      env,
+      principal,
+      now,
+      householdImport[1],
+    );
+  const householdOperation =
+    /^\/v1\/households\/([a-f0-9-]{36})\/(ownership-transfer|profile-transfers|merge|profiles)$/.exec(
+      path,
+    );
+  if (householdOperation?.[1]) {
+    const id = householdOperation[1],
+      operation = householdOperation[2];
+    if (operation === "profiles" && method === "GET")
+      return listHouseholdProfiles(env, principal, id);
+    if (method === "POST" && operation !== "profiles")
+      return householdRequests(
+        request,
+        env,
+        principal,
+        now,
+        id,
+        operation === "profile-transfers"
+          ? "profile-transfer"
+          : (operation as "ownership-transfer" | "merge"),
+      );
+  }
+  const householdReset =
+    /^\/v1\/households\/([a-f0-9-]{36})\/pin-resets(?:\/([a-f0-9-]{36})\/(decision|consume))?$/.exec(
+      path,
+    );
+  if (householdReset?.[1])
+    return householdResets(
+      request,
+      env,
+      principal,
+      now,
+      householdReset[1],
+      householdReset[2],
+      householdReset[3],
+    );
+  if (path === "/v1/account/pin-resets" && principal.householdId)
+    return householdResets(request, env, principal, now, principal.householdId);
+  const accountReset =
     /^\/v1\/account\/pin-resets\/([a-f0-9-]{36})\/(decision|consume)$/.exec(
       path,
     );
-  if (method === "POST" && pinReset?.[1])
-    return pinResets(request, env, principal, now, pinReset[1], pinReset[2]);
+  if (accountReset?.[1] && principal.householdId)
+    return householdResets(
+      request,
+      env,
+      principal,
+      now,
+      principal.householdId,
+      accountReset[1],
+      accountReset[2],
+    );
+  const householdPath =
+    /^\/v1\/households\/([a-f0-9-]{36})(?:\/(connection|checkpoint))?$/.exec(
+      path,
+    );
+  if (householdPath?.[1]) {
+    const id = householdPath[1];
+    if (householdPath[2] === "connection" && method === "DELETE")
+      return detachHousehold(request, env, principal, now, id);
+    if (householdPath[2] === "checkpoint") {
+      await requireHousehold(env, principal, id);
+      return householdCheckpoint(
+        request,
+        env,
+        { ...principal, householdId: id },
+        now,
+      );
+    }
+    if (!householdPath[2] && ["GET", "PUT"].includes(method))
+      return household(request, env, principal, now, id);
+  }
+  if (
+    path.startsWith("/v1/sync/") &&
+    principal.method === "device" &&
+    !principal.householdId
+  )
+    throw new HttpError(403, "household_scope_required");
+  const selectedHousehold = new URL(request.url).searchParams.get(
+    "household_id",
+  );
+  if (path.startsWith("/v1/sync/") && selectedHousehold) {
+    await requireHousehold(env, principal, selectedHousehold);
+    principal.householdId = selectedHousehold;
+  }
   if (method === "POST" && path === "/v1/device/claim")
     return claimGrant(request, env, principal, now);
   if (method === "GET" && path === "/v1/device/pending")
@@ -343,15 +465,22 @@ async function route(
   if (method === "POST" && merge?.[1])
     return decideMerge(request, env, principal, merge[1], now);
   if (path === "/v1/sync/v2/checkpoint")
-    return encryptedCheckpoint(request, env, principal, now);
+    return principal.householdId
+      ? householdCheckpoint(request, env, principal, now)
+      : encryptedCheckpoint(request, env, principal, now);
   if (method === "POST" && path === "/v1/sync/push") {
-    await assertLegacySyncAllowed(env, principal.account.id);
-    return push(request, env, principal, now);
+    return principal.householdId
+      ? householdPush(request, env, principal, now)
+      : push(request, env, principal, now);
   }
   if (method === "GET" && path === "/v1/sync/pull")
-    return pull(request, env, principal);
+    return principal.householdId
+      ? householdPull(request, env, principal)
+      : pull(request, env, principal);
   if (method === "GET" && path === "/v1/sync/snapshot")
-    return snapshot(request, env, principal);
+    return principal.householdId
+      ? householdSnapshot(request, env, principal)
+      : snapshot(request, env, principal);
   throw new HttpError(404, "not_found");
 }
 

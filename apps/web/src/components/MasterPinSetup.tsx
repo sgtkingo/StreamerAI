@@ -4,8 +4,12 @@ import { DigitSlotsInput } from "./DigitSlotsInput";
 
 export function MasterPinSetup({
   onSave,
+  title = "Choose your Master PIN",
+  description,
 }: {
   onSave: (pin: string) => Promise<void>;
+  title?: string;
+  description?: string;
 }) {
   const [pin, setPin] = useState("");
   const [confirmation, setConfirmation] = useState("");
@@ -14,11 +18,15 @@ export function MasterPinSetup({
   return (
     <section className="account-login__card">
       <p className="eyebrow">Account security</p>
-      <h1>Choose your Master PIN</h1>
+      <h1>{title}</h1>
       <p>
-        Use 8 digits to unlock any profile and encrypt local backups. Keep it
-        somewhere safe: you need the current PIN to change it, and a forgotten
-        local account PIN cannot be recovered.
+        {description ?? (
+          <>
+            Use 8 digits to unlock any profile and encrypt local backups. Keep
+            it somewhere safe: you need the current PIN to change it, and a
+            forgotten local account PIN cannot be recovered.
+          </>
+        )}
       </p>
       <form
         className="form-stack"

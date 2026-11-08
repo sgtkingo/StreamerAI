@@ -1,19 +1,25 @@
-import {
-  createHash,
-  randomBytes,
-  randomUUID,
-  timingSafeEqual,
-} from "node:crypto";
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  unlinkSync,
-  writeFileSync,
-} from "node:fs";
-import { dirname, resolve } from "node:path";
+import { createHash, randomBytes, randomInt, randomUUID } from "node:crypto";
+import { existsSync, unlinkSync } from "node:fs";
+import { resolve } from "node:path";
+import { networkInterfaces } from "node:os";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { StreamerDatabase } from "@streamer-ai/database";
+import { toDataURL } from "qrcode";
+import { householdHasData, householdReadyKey } from "./household-state.js";
+
+/** A first-run browser can only create or restore a household until its PIN is verified. */
+const householdSetupRoutes = new Set([
+  "POST /api/v1/auth/local",
+  "GET /api/v1/account",
+  "GET /api/v1/profiles",
+  "POST /api/v1/account/master-pin",
+  "GET /api/v1/account/cloud/households",
+  "POST /api/v1/account/cloud/households/select",
+  "GET /api/v1/account/encrypted-household",
+  "POST /api/v1/account/encrypted-household/preview",
+  "POST /api/v1/account/encrypted-household/restore",
+  "GET /api/v1/account/encrypted-household/cloud",
+]);
 
 const COOKIE = "streamer_installation";
 const PAIR_COOKIE = "streamer_local_pair";
@@ -32,6 +38,7 @@ const record = (input: unknown): Record<string, unknown> =>
     : {};
 export interface InstallationDevice {
   id: string;
+  serverId: string;
   name: string;
   role: "owner" | "viewer";
   accountId: string;
@@ -40,6 +47,7 @@ export interface InstallationDevice {
   expiresAt: number;
   tokenHash: string;
   revoked: boolean;
+  setupPending?: boolean;
 }
 interface AccessState {
   claimed: boolean;
@@ -60,9 +68,16 @@ export interface LocalAccessOptions {
   enabled: boolean;
   dataDirectory: string;
   origin: string;
-  bootstrapToken?: string;
   now?: () => Date;
   onRevoke?: () => void;
+  verifyMasterPin?(pin: string): Promise<boolean>;
+  householdStatus?(): Promise<{
+    householdReady: boolean;
+    householdName: string;
+    masterPinEnabled: boolean;
+    cloudConfigured: boolean;
+  }>;
+  advertiseUrl?: string;
 }
 
 /** Installation authorization is independent of optional cloud identity. */
@@ -74,40 +89,21 @@ export class LocalAccessService {
     string,
     { count: number; until: number }
   >();
-  private readonly bootstrapFile: string;
-  private bootstrapHash: string | null = null;
   constructor(
     private readonly database: StreamerDatabase,
     private readonly options: LocalAccessOptions,
   ) {
     this.enabled = options.enabled;
     this.now = () => (options.now?.() ?? new Date()).getTime();
-    this.bootstrapFile = resolve(
+    if (!database.settings.get<string>("server.instanceId"))
+      database.settings.set("server.instanceId", randomUUID());
+    const retiredKey = resolve(
       options.dataDirectory,
       "installation-bootstrap.key",
     );
-    if (!this.enabled) return;
-    if (!database.settings.get<string>("server.instanceId"))
-      database.settings.set("server.instanceId", randomUUID());
-    if (!this.state().claimed) {
-      let token = options.bootstrapToken;
-      if (!token && existsSync(this.bootstrapFile))
-        token = readFileSync(this.bootstrapFile, "utf8").trim();
-      if (!token) {
-        token = randomBytes(32).toString("hex");
-        mkdirSync(dirname(this.bootstrapFile), {
-          recursive: true,
-          mode: 0o700,
-        });
-        writeFileSync(this.bootstrapFile, token, { flag: "wx", mode: 0o600 });
-      }
-      if (!/^[a-f0-9]{64}$/.test(token))
-        throw new Error(
-          "Installation bootstrap token must contain 64 hexadecimal characters.",
-        );
-      this.bootstrapHash = hash(token);
-    }
+    if (existsSync(retiredKey)) unlinkSync(retiredKey);
   }
+
   private state(): AccessState {
     return (
       this.database.settings.get<AccessState>(STATE) ?? {
@@ -119,6 +115,20 @@ export class LocalAccessService {
   private save(state: AccessState) {
     this.database.settings.set(STATE, state);
   }
+  householdAccountId(): string {
+    const selected = this.database.settings.get<string>("household.accountId");
+    return this.database.accounts.getRequired(
+      selected ?? this.database.accounts.getLocal().id,
+    ).id;
+  }
+  /** Cloud management changes do not replace the household or its paired clients. */
+  bindHousehold(accountId: string): void {
+    this.database.accounts.getRequired(accountId);
+    this.database.settings.set("household.accountId", accountId);
+    const state = this.state();
+    for (const device of state.devices) device.accountId = accountId;
+    this.save(state);
+  }
   actor(request: FastifyRequest): InstallationDevice | null {
     if (!this.enabled) return null;
     const token = readCookie(request, COOKIE);
@@ -127,21 +137,93 @@ export class LocalAccessService {
     const device = state.devices.find(
       (entry) => entry.tokenHash === hash(token),
     );
+    const serverId = this.database.settings.get<string>("server.instanceId");
     if (
       !device ||
+      !serverId ||
+      (device.serverId !== undefined && device.serverId !== serverId) ||
       device.revoked ||
       device.expiresAt <= this.now() ||
       device.lastSeenAt + 30 * 86_400_000 <= this.now()
     )
       return null;
-    if (device.lastSeenAt + 5 * 60_000 < this.now()) {
+    const accountId = this.householdAccountId();
+    if (
+      !device.serverId ||
+      device.accountId !== accountId ||
+      device.lastSeenAt + 5 * 60_000 < this.now()
+    ) {
+      device.serverId = serverId;
+      device.accountId = accountId;
       device.lastSeenAt = this.now();
       this.save(state);
     }
     return device;
   }
   isOwner(request: FastifyRequest): boolean {
-    return this.actor(request)?.role === "owner";
+    const actor = this.actor(request);
+    return actor?.role === "owner" && !actor.setupPending;
+  }
+  isSetupSession(request: FastifyRequest): boolean {
+    return (
+      this.actor(request)?.setupPending === true &&
+      this.database.settings.get(
+        householdReadyKey(this.householdAccountId()),
+      ) !== true
+    );
+  }
+  private async setupAvailable(): Promise<boolean> {
+    const status = await this.options.householdStatus?.();
+    return (
+      !!status &&
+      !status.masterPinEnabled &&
+      !status.householdReady &&
+      !householdHasData(this.database, this.householdAccountId())
+    );
+  }
+  async finishSetup(
+    request: FastifyRequest,
+    reply: FastifyReply,
+  ): Promise<void> {
+    const actor = this.actor(request);
+    if (!actor?.setupPending) return;
+    const status = await this.options.householdStatus?.();
+    if (!status?.masterPinEnabled || !status.householdReady)
+      throw new Error(
+        "The household Master PIN must be verified before authorizing administration.",
+      );
+    const state = this.state();
+    const current = state.devices.find((device) => device.id === actor.id)!;
+    delete current.setupPending;
+    current.expiresAt = this.now() + 90 * 86_400_000;
+    state.claimed = true;
+    state.devices = state.devices.filter((device) => !device.setupPending);
+    this.save(state);
+    this.cookie(reply, COOKIE, readCookie(request, COOKIE), 90 * 86_400);
+  }
+  authorizeClient(
+    request: FastifyRequest,
+    reply: FastifyReply,
+    role: "owner" | "viewer",
+    name: string,
+  ) {
+    const result = this.issue(
+      request,
+      reply,
+      role,
+      name,
+      this.householdAccountId(),
+    );
+    return {
+      ...result,
+      ok: true,
+      role,
+      serverId: this.database.settings.get<string>("server.instanceId"),
+      householdId: this.database.settings.get<string>(
+        `household.id.${this.householdAccountId()}`,
+      ),
+      clientId: result.id,
+    };
   }
   private budget(key: string, maximum: number): boolean {
     for (const [id, entry] of this.budgets)
@@ -171,18 +253,21 @@ export class LocalAccessService {
     role: "owner" | "viewer",
     name: string,
     accountId: string,
+    setupPending = false,
   ) {
     const token = randomBytes(32).toString("hex");
     const now = this.now();
     const device: InstallationDevice = {
       id: randomUUID(),
+      serverId: this.database.settings.get<string>("server.instanceId")!,
       tokenHash: hash(token),
       role,
       name,
       accountId,
       createdAt: now,
       lastSeenAt: now,
-      expiresAt: now + 90 * 86_400_000,
+      expiresAt: now + (setupPending ? 30 * 60_000 : 90 * 86_400_000),
+      ...(setupPending ? { setupPending: true } : {}),
       revoked: false,
     };
     const state = this.state();
@@ -191,20 +276,76 @@ export class LocalAccessService {
     );
     if (state.devices.length >= 100)
       throw new Error("Installation device limit reached.");
-    state.claimed = true;
+    if (!setupPending) state.claimed = true;
     state.devices.push(device);
     this.save(state);
-    this.cookie(reply, COOKIE, token, 90 * 86_400);
+    this.cookie(reply, COOKIE, token, setupPending ? 30 * 60 : 90 * 86_400);
     void request;
     return { id: device.id, role };
   }
   register(app: FastifyInstance) {
+    app.get("/api/v1/installation/discovery", async (request, reply) => {
+      reply.header("cache-control", "no-store");
+      const status = await this.options.householdStatus?.();
+      const origin = new URL(this.options.origin);
+      const host = request.headers.host;
+      return {
+        protocol: "streamerai-discovery",
+        version: 1,
+        serverId: this.database.settings.get<string>("server.instanceId"),
+        householdId:
+          this.database.settings.get<string>(
+            `household.id.${this.householdAccountId()}`,
+          ) ?? null,
+        name: status?.householdName ?? "StreamerAI home server",
+        url: `${origin.protocol}//${host ?? origin.host}`,
+      };
+    });
+    app.post("/api/v1/installation/authorize", async (request, reply) => {
+      reply.header("cache-control", "no-store");
+      if (
+        !this.budget(`authorize:${request.ip}`, 5) ||
+        !this.budget("authorize:global", 30)
+      )
+        return reply.code(429).send({
+          error: {
+            code: "PIN_RATE_LIMITED",
+            message: "Too many attempts. Try again later.",
+          },
+        });
+      const body = record(request.body);
+      if (
+        typeof body.masterPin !== "string" ||
+        !/^\d{8}$/.test(body.masterPin) ||
+        !(await this.options.verifyMasterPin?.(body.masterPin))
+      )
+        return reply.code(403).send({
+          error: {
+            code: "PIN_INCORRECT",
+            message: "The Master PIN is incorrect.",
+          },
+        });
+      const name =
+        typeof body.deviceName === "string"
+          ? body.deviceName.trim().slice(0, 80)
+          : "StreamerAI client";
+      return this.authorizeClient(
+        request,
+        reply,
+        body.admin === true ? "owner" : "viewer",
+        name || "StreamerAI client",
+      );
+    });
     if (!this.enabled) {
       app.get("/api/v1/installation/status", async () => ({
         enabled: false,
         claimed: false,
         paired: false,
         role: null,
+        clientId: null,
+        householdId: null,
+        ...(await this.options.householdStatus?.()),
+        cloudRecoveryAuthorized: false,
       }));
       return;
     }
@@ -238,9 +379,22 @@ export class LocalAccessService {
       const loopbackHealthHost =
         request.headers.host === "127.0.0.1:4400" &&
         ["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(request.ip);
-      if (requestedHost !== origin.host && !loopbackHealthHost)
+      const allowedHosts = new Set([origin.host]);
+      for (const addresses of Object.values(networkInterfaces()))
+        for (const address of addresses ?? []) {
+          if (address.family === "IPv4" && !address.internal)
+            allowedHosts.add(
+              `${address.address}${origin.port ? `:${origin.port}` : ""}`,
+            );
+        }
+      if (this.options.advertiseUrl)
+        allowedHosts.add(new URL(this.options.advertiseUrl).host);
+      if (!allowedHosts.has(requestedHost) && !loopbackHealthHost)
         return fail(reply, 403, "HOST_REJECTED");
-      if (request.headers.origin && request.headers.origin !== origin.origin)
+      if (
+        request.headers.origin &&
+        request.headers.origin !== `${origin.protocol}//${requestedHost}`
+      )
         return fail(reply, 403, "ORIGIN_REJECTED");
       if (
         !request.headers.origin &&
@@ -250,13 +404,25 @@ export class LocalAccessService {
       const publicPaths = new Set([
         "/api/v1/auth/status",
         "/api/v1/installation/status",
-        "/api/v1/installation/claim",
+        "/api/v1/installation/discovery",
+        "/api/v1/installation/authorize",
+        "/api/v1/account/cloud/device",
+        "/api/v1/account/cloud/device/poll",
+        "/api/v1/installation/setup",
         "/api/v1/installation/pair",
         "/api/v1/installation/poll",
         "/api/v1/health/live",
         "/api/v1/health/ready",
       ]);
-      if (!publicPaths.has(path) && !this.actor(request))
+      const actor = this.actor(request);
+      const setupRoute =
+        this.isSetupSession(request) &&
+        householdSetupRoutes.has(`${request.method} ${path}`);
+      if (
+        !publicPaths.has(path) &&
+        !setupRoute &&
+        (!actor || actor.setupPending)
+      )
         return fail(reply, 401, "INSTALLATION_ACCESS_REQUIRED");
       if (
         (path.startsWith("/api/v1/installation/") && !publicPaths.has(path)) ||
@@ -272,38 +438,50 @@ export class LocalAccessService {
       return {
         enabled: true,
         claimed: this.state().claimed,
-        paired: actor !== null,
-        role: actor?.role ?? null,
+        paired: actor !== null && !actor.setupPending,
+        role: actor && !actor.setupPending ? actor.role : null,
+        setupAuthorized: this.isSetupSession(request),
+        setupAvailable: await this.setupAvailable(),
+        clientId: actor?.id ?? null,
+        householdId: actor
+          ? this.database.settings.get<string>(
+              `household.id.${actor.accountId}`,
+            )
+          : null,
+        ...(await this.options.householdStatus?.()),
+        cloudRecoveryAuthorized:
+          !!actor &&
+          (this.database.settings.get<number>(
+            `household.cloudRecovery.${actor.id}`,
+          ) ?? 0) > this.now(),
         serverId: this.database.settings.get<string>("server.instanceId"),
       };
     });
-    app.post("/api/v1/installation/claim", async (request, reply) => {
-      if (
-        !this.budget(`claim:${request.ip}`, 5) ||
-        !this.budget("claim:global", 30)
-      )
+    app.post("/api/v1/installation/setup", async (request, reply) => {
+      reply.header("cache-control", "no-store");
+      if (this.isSetupSession(request)) return { setupAuthorized: true };
+      if (!this.budget(`setup:${request.ip}`, 10))
         return fail(reply, 429, "RATE_LIMITED");
-      const token = record(request.body).token;
+      if (!(await this.setupAvailable()))
+        return fail(reply, 409, "HOUSEHOLD_ALREADY_CONFIGURED");
       if (
-        this.state().claimed ||
-        !this.bootstrapHash ||
-        typeof token !== "string" ||
-        !timingSafeEqual(
-          Buffer.from(hash(token), "hex"),
-          Buffer.from(this.bootstrapHash, "hex"),
+        this.state().devices.some(
+          (device) =>
+            device.setupPending &&
+            !device.revoked &&
+            device.expiresAt > this.now(),
         )
       )
-        return fail(reply, 403, "CLAIM_REJECTED");
-      const result = this.issue(
+        return fail(reply, 409, "HOUSEHOLD_SETUP_IN_PROGRESS");
+      this.issue(
         request,
         reply,
         "owner",
-        "Server owner",
-        this.database.accounts.getLocal().id,
+        "Household setup",
+        this.householdAccountId(),
+        true,
       );
-      this.bootstrapHash = null;
-      if (existsSync(this.bootstrapFile)) unlinkSync(this.bootstrapFile);
-      return result;
+      return { setupAuthorized: true };
     });
     app.post("/api/v1/installation/pair", async (request, reply) => {
       for (const [id, item] of this.pending)
@@ -324,9 +502,7 @@ export class LocalAccessService {
       )
         return fail(reply, 400, "INVALID_DEVICE_NAME");
       const binding = randomBytes(32).toString("hex");
-      const code = [...randomBytes(8)]
-        .map((byte) => "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"[byte & 31])
-        .join("");
+      const code = randomInt(0, 1_000_000).toString().padStart(6, "0");
       const item: Pairing = {
         id: randomUUID(),
         code,
@@ -339,11 +515,20 @@ export class LocalAccessService {
       };
       this.pending.set(item.id, item);
       this.cookie(reply, PAIR_COOKIE, binding, 300);
+      const base = new URL(this.options.origin);
+      if (request.headers.host) base.host = request.headers.host;
+      const verificationUriComplete = new URL(`/admin/pair?code=${code}`, base)
+        .href;
       return {
         requestId: item.id,
         code,
         expiresAt: new Date(item.expiresAt).toISOString(),
         interval: 3,
+        verificationUriComplete,
+        qrCodeDataUrl: await toDataURL(verificationUriComplete, {
+          width: 240,
+          margin: 2,
+        }),
       };
     });
     app.post("/api/v1/installation/poll", async (request, reply) => {
@@ -372,7 +557,7 @@ export class LocalAccessService {
         reply,
         "viewer",
         item.name,
-        item.accountId ?? this.database.accounts.getLocal().id,
+        this.householdAccountId(),
       );
       return { status: "approved" };
     });
@@ -394,7 +579,12 @@ export class LocalAccessService {
           .filter(
             (item) => item.state === "pending" && item.expiresAt > this.now(),
           )
-          .map(({ id, name, expiresAt }) => ({ id, name, expiresAt })),
+          .map(({ id, name, code, expiresAt }) => ({
+            id,
+            name,
+            code,
+            expiresAt,
+          })),
       };
     });
     app.post("/api/v1/installation/decision", async (request, reply) => {
@@ -415,7 +605,7 @@ export class LocalAccessService {
         return fail(reply, 403, "CODE_MISMATCH");
       }
       item.state = body.approve === false ? "denied" : "approved";
-      item.accountId = this.actor(request)!.accountId;
+      item.accountId = this.householdAccountId();
       return { status: item.state };
     });
     app.post("/api/v1/installation/revoke", async (request, reply) => {

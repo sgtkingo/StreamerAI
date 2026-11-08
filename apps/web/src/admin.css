@@ -1,0 +1,121 @@
+.admin-shell {
+  min-height: 100vh;
+  background: var(--black);
+}
+.admin-header {
+  display: flex;
+  align-items: center;
+  gap: 28px;
+  padding: 22px clamp(20px, 4vw, 60px);
+  border-bottom: 1px solid var(--border);
+  background: var(--deep-black);
+}
+.admin-header > span {
+  color: var(--slate);
+  font-size: 14px;
+}
+.admin-header > a {
+  margin-left: auto;
+  color: var(--white);
+  font-size: 13px;
+}
+.admin-layout {
+  display: grid;
+  grid-template-columns: 210px minmax(0, 1fr);
+  max-width: 1400px;
+  margin: auto;
+}
+.admin-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 34px 20px;
+}
+.admin-nav button {
+  padding: 12px 16px;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--slate);
+  text-align: left;
+  cursor: pointer;
+}
+.admin-nav button:hover,
+.admin-nav button[aria-current="page"] {
+  color: var(--white);
+  background: var(--surface-raised);
+}
+.admin-content {
+  display: grid;
+  align-content: start;
+  gap: 20px;
+  min-width: 0;
+  padding: 30px clamp(18px, 4vw, 56px) 80px;
+}
+.admin-content > h1 {
+  margin: 0 0 8px;
+  font-size: clamp(30px, 4vw, 44px);
+  font-weight: 500;
+  letter-spacing: -0.04em;
+}
+.admin-content .profile-page__section {
+  min-width: 0;
+}
+.admin-profile {
+  margin-block: 18px;
+  padding: 18px 0;
+  border-bottom: 1px solid var(--border);
+}
+.admin-profile > .deployment-actions {
+  margin-top: 10px;
+}
+.admin-recovery {
+  max-width: 860px;
+  margin: 48px auto;
+  padding: 24px;
+}
+.local-device-pairing {
+  display: grid;
+  justify-items: start;
+  gap: 20px;
+  max-width: 640px;
+  margin-block: 28px;
+}
+.local-device-pairing > p {
+  margin: 0;
+}
+.local-device-pairing > img {
+  padding: 12px;
+  border-radius: 10px;
+  background: white;
+}
+.local-device-pairing > a {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.local-device-pairing .installation-code {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.16em;
+}
+@media (max-width: 760px) {
+  .admin-header {
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .admin-header > span {
+    flex-basis: 100%;
+    order: 2;
+  }
+  .admin-layout {
+    display: block;
+  }
+  .admin-nav {
+    flex-direction: row;
+    flex-wrap: wrap;
+    padding: 18px;
+    gap: 4px;
+    border-bottom: 1px solid var(--border);
+  }
+  .admin-nav button {
+    padding: 10px 12px;
+  }
+}

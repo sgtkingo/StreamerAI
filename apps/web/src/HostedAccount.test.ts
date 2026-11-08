@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { pbkdf2Sync, webcrypto } from "node:crypto";
+import { webcrypto } from "node:crypto";
 import { waitFor } from "@testing-library/react";
 import { browserScript, page } from "../../cloud/src/pages";
 
@@ -45,17 +45,15 @@ it("keeps provider sign-in on the hosted page and explains local access in a qui
   );
 });
 
-it("explains how an account owner can approve a profile PIN reset", () => {
+it("keeps household PIN and device management on the home server", () => {
   const document = new DOMParser().parseFromString(
     page("account", true),
     "text/html",
   );
-  const recovery = document.querySelector("#pin-resets")?.closest("section");
-  expect(recovery?.textContent).toContain("Forgot PIN?");
-  expect(recovery?.textContent).toContain("nebo zadáním Master PINu");
-  expect(recovery?.nextElementSibling?.querySelector("h2")?.textContent).toBe(
-    "Účty a profily",
-  );
+  expect(document.querySelector("#households")).not.toBeNull();
+  expect(document.querySelector("#household-owner-form")).not.toBeNull();
+  expect(document.querySelector("#master-pin-form")).toBeNull();
+  expect(document.querySelector("#pin-resets")).toBeNull();
   expect(document.querySelector('a[href="/device"]')).not.toBeNull();
 });
 
@@ -229,7 +227,9 @@ it("shows existing Google enrollment and displays a resend limit next to its e-m
           { error: "rate_limited" },
           { status: 429, headers: { "retry-after": "1200" } },
         );
-      if (path === "/v1/devices") return Response.json({ devices: [] });
+      if (path === "/v1/households") return Response.json({ households: [] });
+      if (path === "/v1/household-requests")
+        return Response.json({ requests: [] });
       if (path === "/v1/profiles") return Response.json({ profiles: [] });
       if (path === "/v1/transfers") return Response.json({ transfers: [] });
       if (path === "/v1/merges") return Response.json({ merges: [] });
@@ -261,9 +261,6 @@ it("shows existing Google enrollment and displays a resend limit next to its e-m
 });
 
 function portalFetcher(failure?: string) {
-  let devices = [
-    { id: "tv-1", name: "Obývák", expires_at: Date.now() + 60_000 },
-  ];
   return vi.fn(async (path: string, options?: RequestInit) => {
     if (path === "/v1/account")
       return Response.json({
@@ -282,19 +279,28 @@ function portalFetcher(failure?: string) {
         { error: failure },
         { status: failure === "reauth_required" ? 403 : 409 },
       );
-    if (path === "/v1/devices/tv-1" && options?.method === "DELETE") {
-      devices = [];
-      return Response.json({ ok: true });
-    }
-    if (path === "/v1/devices") return Response.json({ devices });
-    if (path === "/v1/account/master-pin")
-      return Response.json({ setupRequired: false });
-    if (path === "/v1/account/pin-resets")
+    if (path === "/v1/households")
+      return Response.json({
+        households: [
+          {
+            id: "home-1",
+            name: "Home",
+            hasBackup: true,
+            lastBackupAt: Date.now(),
+          },
+        ],
+      });
+    if (path === "/v1/household-requests")
       return Response.json({ requests: [] });
-    if (path === "/v1/device/pending") return Response.json({ pairings: [] });
-    if (path === "/v1/profiles") return Response.json({ profiles: [] });
-    if (path === "/v1/transfers") return Response.json({ transfers: [] });
-    if (path === "/v1/merges") return Response.json({ merges: [] });
+    if (path === "/v1/households/home-1/pin-resets")
+      return Response.json({ requests: [] });
+    if (path === "/v1/households/home-1/profiles")
+      return Response.json({ profiles: [] });
+    if (
+      path === "/v1/households/home-1/connection" &&
+      options?.method === "DELETE"
+    )
+      return Response.json({ ok: true });
     throw new Error("Unexpected request " + path);
   });
 }
@@ -309,234 +315,20 @@ function enableDialog() {
   return dialog;
 }
 
-it("approves the named profile reset in the account portal without a pairing code", async () => {
-  const base = portalFetcher();
-  let pending = true;
-  const fetcher = vi.fn(async (path: string, options?: RequestInit) => {
-    if (path === "/v1/account/pin-resets")
-      return Response.json({
-        requests: pending
-          ? [
-              {
-                id: "reset-1",
-                profile_name: "Kids",
-                device_name: "Home server",
-                expires_at: Date.now() + 300_000,
-              },
-            ]
-          : [],
-      });
-    if (path === "/v1/account/pin-resets/reset-1/decision") {
-      pending = false;
-      return Response.json({ ok: true });
-    }
-    return base(path, options);
-  });
-  vi.stubGlobal("fetch", fetcher);
-  portal();
-  enableDialog();
-  await waitFor(() =>
-    expect(document.getElementById("pin-resets")!.textContent).toContain(
-      "Kids",
-    ),
-  );
-  const approve = Array.from(
-    document.querySelectorAll<HTMLButtonElement>("#pin-resets button"),
-  ).find((button) => button.textContent === "Povolit reset")!;
-  approve.click();
-  expect(document.getElementById("confirm-description")!.textContent).toContain(
-    "Kids",
-  );
-  expect(fetcher.mock.calls.some(([path]) => path.endsWith("/decision"))).toBe(
-    false,
-  );
-  document.getElementById("confirm-action")!.click();
-  await waitFor(() =>
-    expect(fetcher).toHaveBeenCalledWith(
-      "/v1/account/pin-resets/reset-1/decision",
-      expect.objectContaining({
-        method: "POST",
-        body: JSON.stringify({ approve: true }),
-      }),
-    ),
-  );
-  expect(
-    fetcher.mock.calls.some(([path]) => path.startsWith("/v1/device/verify")),
-  ).toBe(false);
-});
-
-it("changes the Master PIN only after matching confirmation and clears the form", async () => {
-  vi.stubGlobal("crypto", webcrypto);
-  const base = portalFetcher();
-  const fetcher = vi.fn(async (path: string, options?: RequestInit) => {
-    if (path === "/v1/account/master-pin" && options?.method === "PUT")
-      return Response.json({ ok: true });
-    return base(path, options);
-  });
-  vi.stubGlobal("fetch", fetcher);
-  portal();
-  const dialog = document.getElementById(
-    "master-pin-dialog",
-  ) as HTMLDialogElement;
-  dialog.showModal = () => dialog.setAttribute("open", "");
-  dialog.close = () => {
-    dialog.removeAttribute("open");
-    dialog.dispatchEvent(new Event("close"));
-  };
-  await waitFor(() =>
-    expect(document.getElementById("google-status")!.textContent).not.toBe(""),
-  );
-  document.getElementById("change-master-pin")!.click();
-  const pin = document.getElementById("master-pin") as HTMLInputElement;
-  const confirmation = document.getElementById(
-    "master-pin-confirmation",
-  ) as HTMLInputElement;
-  for (const field of [pin, confirmation])
-    expect(
-      field
-        .closest(".master-pin-entry")
-        ?.querySelectorAll(".master-pin-entry__slot"),
-    ).toHaveLength(8);
-  pin.value = "01234567";
-  confirmation.value = "01234568";
-  document
-    .getElementById("master-pin-form")!
-    .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
-  expect(
-    fetcher.mock.calls.some(([, options]) => options?.method === "PUT"),
-  ).toBe(false);
-  confirmation.value = "01234567";
-  document
-    .getElementById("master-pin-form")!
-    .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
-  await waitFor(() =>
-    expect(
-      fetcher.mock.calls.some(([, options]) => options?.method === "PUT"),
-    ).toBe(true),
-  );
-  const saved = fetcher.mock.calls.find(
-    ([, options]) => options?.method === "PUT",
-  )!;
-  const payload = JSON.parse(String(saved[1]?.body)) as {
-    verifier: { salt: string; hash: string; version: string };
-  };
-  expect(Object.keys(payload)).toEqual(["verifier"]);
-  expect(payload.verifier.hash).toBe(
-    pbkdf2Sync(
-      "01234567",
-      payload.verifier.salt,
-      600_000,
-      32,
-      "sha256",
-    ).toString("hex"),
-  );
-  await waitFor(() => expect(dialog).not.toHaveAttribute("open"));
-  expect(pin.value).toBe("");
-  expect(confirmation.value).toBe("");
-});
-
-it("enables home server PIN changes for an existing account without resetting its PIN", async () => {
-  vi.stubGlobal("crypto", webcrypto);
-  const base = portalFetcher();
-  const salt = "a".repeat(32);
-  const fetcher = vi.fn(async (path: string, options?: RequestInit) => {
-    if (path === "/v1/account/master-pin/enroll")
-      return options?.method === "POST"
-        ? Response.json({ ok: true })
-        : Response.json({ required: true, salt, version: "old-version" });
-    return base(path, options);
-  });
-  vi.stubGlobal("fetch", fetcher);
-  portal();
-  const dialog = document.getElementById(
-    "enroll-pin-dialog",
-  ) as HTMLDialogElement;
-  dialog.showModal = () => dialog.setAttribute("open", "");
-  dialog.close = () => {
-    dialog.removeAttribute("open");
-    dialog.dispatchEvent(new Event("close"));
-  };
-  await waitFor(() =>
-    expect(document.getElementById("google-status")!.textContent).not.toBe(""),
-  );
-  document.getElementById("enroll-master-pin")!.click();
-  await waitFor(() => expect(dialog).toHaveAttribute("open"));
-  const input = document.getElementById("enroll-pin") as HTMLInputElement;
-  expect(
-    input
-      .closest(".master-pin-entry")
-      ?.querySelectorAll(".master-pin-entry__slot"),
-  ).toHaveLength(8);
-  input.value = "01234567";
-  document
-    .getElementById("enroll-pin-form")!
-    .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
-  await waitFor(
-    () =>
-      expect(
-        fetcher.mock.calls.some(
-          ([path, init]) =>
-            path === "/v1/account/master-pin/enroll" && init?.method === "POST",
-        ),
-      ).toBe(true),
-    { timeout: 5000 },
-  );
-  const sent = fetcher.mock.calls.find(
-    ([path, init]) =>
-      path === "/v1/account/master-pin/enroll" && init?.method === "POST",
-  )!;
-  const payload = JSON.parse(String(sent[1]?.body));
-  expect(payload.proof).toBe(
-    pbkdf2Sync("01234567", salt, 600_000, 32, "sha256").toString("hex"),
-  );
-  expect(payload.changeHash).toBe(
-    pbkdf2Sync("01234567", payload.changeSalt, 600_000, 32, "sha256").toString(
-      "hex",
-    ),
-  );
-  expect(JSON.stringify(payload)).not.toContain("01234567");
-  await waitFor(() => expect(dialog).not.toHaveAttribute("open"));
-});
-
-it("initializes a legacy account in the browser before approving its first device", async () => {
+it("approves a server connection without creating a household Master PIN", async () => {
   vi.stubGlobal("crypto", webcrypto);
   const derive = vi.spyOn(webcrypto.subtle, "deriveBits");
-  let initialized = false;
-  const fetcher = vi.fn(async (path: string, options?: RequestInit) => {
+  const fetcher = vi.fn(async (path: string) => {
     if (path === "/v1/account")
-      return Response.json({
-        id: "owner-a",
-        name: "Owner",
-        email: "owner@example.test",
-      });
-    if (path === "/v1/account/master-pin" && options?.method === "PUT") {
-      const payload = JSON.parse(String(options.body));
-      expect(Object.keys(payload).sort()).toEqual(["initialize", "verifier"]);
-      expect(payload.initialize).toBe(true);
-      expect(payload.verifier).toMatchObject({
-        salt: expect.stringMatching(/^[a-f0-9]{32}$/),
-        hash: expect.stringMatching(/^[a-f0-9]{64}$/),
-      });
-      initialized = true;
-      return Response.json({ ok: true });
-    }
-    if (path === "/v1/account/master-pin")
-      return Response.json({
-        setupRequired: false,
-        initializationRequired: true,
-      });
-    if (path.startsWith("/v1/device/verify?")) {
-      expect(initialized).toBe(true);
+      return Response.json({ id: "owner-a", name: "Owner" });
+    if (path.startsWith("/v1/device/verify?"))
       return Response.json({
         user_code: "ABCD-2345",
         device_name: "Home server",
         purpose: "login",
       });
-    }
-    if (path === "/v1/device/claim" || path === "/v1/device/approve") {
-      expect(initialized).toBe(true);
+    if (path === "/v1/device/claim" || path === "/v1/device/approve")
       return Response.json({ ok: true });
-    }
     throw new Error("Unexpected request " + path);
   });
   vi.stubGlobal("fetch", fetcher);
@@ -548,11 +340,6 @@ it("initializes a legacy account in the browser before approving its first devic
   await waitFor(() =>
     expect(document.getElementById("approval")).not.toHaveAttribute("hidden"),
   );
-  expect(derive).toHaveBeenCalledWith(
-    expect.objectContaining({ name: "PBKDF2", iterations: 600_000 }),
-    expect.anything(),
-    256,
-  );
   document.getElementById("approve")!.click();
   await waitFor(() =>
     expect(fetcher).toHaveBeenCalledWith(
@@ -563,75 +350,37 @@ it("initializes a legacy account in the browser before approving its first devic
       }),
     ),
   );
-  await waitFor(() =>
-    expect(document.getElementById("approval")).toHaveAttribute("hidden"),
+  expect(derive).not.toHaveBeenCalled();
+  expect(fetcher.mock.calls.some(([path]) => path.includes("master-pin"))).toBe(
+    false,
   );
 });
 
-it("requires an explicit profile selection before accepting an account merge", async () => {
+it("sends household merge requests to the selected household", async () => {
   const base = portalFetcher();
-  const profiles = Array.from({ length: 6 }, (_, index) => ({
-    id: `profile-${index}`,
-    name: `Profile ${index}`,
-    account_id: index < 3 ? "owner-a" : "owner-b",
-  }));
   const fetcher = vi.fn(async (path: string, options?: RequestInit) => {
-    if (path === "/v1/merges")
-      return Response.json({
-        merges: [
-          {
-            id: "merge-1",
-            source_email: "one@example.test",
-            target_email: "two@example.test",
-            target_account_id: "owner-a",
-            incoming: true,
-            profiles,
-          },
-        ],
-      });
-    if (path === "/v1/merges/merge-1/decision")
-      return Response.json({ ok: true, accountId: "owner-a" });
+    if (path === "/v1/households/home-1/merge")
+      return Response.json({ ok: true });
     return base(path, options);
   });
   vi.stubGlobal("fetch", fetcher);
   portal();
-  const dialog = document.getElementById(
-    "profiles-dialog",
-  ) as HTMLDialogElement;
-  dialog.showModal = () => dialog.setAttribute("open", "");
-  dialog.close = () => {
-    dialog.removeAttribute("open");
-    dialog.dispatchEvent(new Event("close"));
-  };
   await waitFor(() =>
-    expect(document.getElementById("transfers")).toHaveTextContent(
-      "Sloučení účtů",
-    ),
+    expect(document.querySelector("#merge-household option")).not.toBeNull(),
   );
-  const review = Array.from(document.querySelectorAll("button")).find(
-    (button) => button.textContent === "Zkontrolovat sloučení",
-  )!;
-  review.click();
-  expect(dialog).toHaveAttribute("open");
-  expect(fetcher).not.toHaveBeenCalledWith(
-    "/v1/merges/merge-1/decision",
-    expect.anything(),
-  );
-  const boxes = Array.from(
-    dialog.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'),
-  );
-  boxes.slice(0, 5).forEach((box) => box.click());
-  document.getElementById("profiles-confirm")!.click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  (
+    document.getElementById("merge-target-household") as HTMLInputElement
+  ).value = "home-2";
+  document
+    .getElementById("household-merge-form")!
+    .dispatchEvent(new Event("submit", { cancelable: true }));
   await waitFor(() =>
     expect(fetcher).toHaveBeenCalledWith(
-      "/v1/merges/merge-1/decision",
+      "/v1/households/home-1/merge",
       expect.objectContaining({
         method: "POST",
-        body: JSON.stringify({
-          approve: true,
-          profileIds: profiles.slice(0, 5).map((p) => p.id),
-          expectedProfileIds: profiles.map((p) => p.id),
-        }),
+        body: JSON.stringify({ targetHouseholdId: "home-2" }),
       }),
     ),
   );
@@ -650,10 +399,9 @@ it("requires confirmation before deleting the cloud account and offers reauthent
   await waitFor(() =>
     expect(document.getElementById("delete-account")).toBeEnabled(),
   );
-  // Wait for the account page to finish installing its action handlers.
   await waitFor(() =>
     expect(
-      document.querySelector('[aria-label="Odebrat zařízení Obývák"]'),
+      document.querySelector("#households-list .approval-card"),
     ).not.toBeNull(),
   );
   document.getElementById("delete-account")!.click();
@@ -679,55 +427,31 @@ it("requires confirmation before deleting the cloud account and offers reauthent
   );
 });
 
-it("asks before removing a device and keeps it when cancelled", async () => {
+it("asks before disconnecting a household server and keeps its data when cancelled", async () => {
   const fetcher = portalFetcher();
   vi.stubGlobal("fetch", fetcher);
   portal();
   const dialog = enableDialog();
-  expect(document.getElementById("reauth-help")).toHaveAttribute("hidden");
-  const addDevice = Array.from(document.querySelectorAll("a")).find(
-    (link) => link.textContent === "Připojit další zařízení",
-  )!;
-  expect(addDevice.getAttribute("href")).toBe("/device");
-  expect(addDevice.closest("section")).toContainElement(
-    document.getElementById("devices"),
-  );
-  await waitFor(() =>
-    expect(
-      document.querySelector('[aria-label="Odebrat zařízení Obývák"]'),
-    ).not.toBeNull(),
-  );
-  (
-    document.querySelector(
-      '[aria-label="Odebrat zařízení Obývák"]',
-    ) as HTMLElement
-  ).click();
+  const findButton = () =>
+    Array.from(
+      document.querySelectorAll<HTMLButtonElement>("#households-list button"),
+    )[0];
+  await waitFor(() => expect(findButton()).toBeDefined());
+  findButton().click();
   expect(dialog).toHaveAttribute("open");
-  expect(dialog).toHaveTextContent("Obývák");
   document.getElementById("confirm-cancel")!.click();
+  await waitFor(() => expect(findButton()).toBeEnabled());
   expect(fetcher).not.toHaveBeenCalledWith(
-    "/v1/devices/tv-1",
+    "/v1/households/home-1/connection",
     expect.anything(),
   );
-  await waitFor(() =>
-    expect(
-      document.querySelector('[aria-label="Odebrat zařízení Obývák"]'),
-    ).not.toBeDisabled(),
-  );
-  (
-    document.querySelector(
-      '[aria-label="Odebrat zařízení Obývák"]',
-    ) as HTMLElement
-  ).click();
+  findButton().click();
   document.getElementById("confirm-action")!.click();
   await waitFor(() =>
-    expect(document.getElementById("devices")).toHaveTextContent(
-      "Zatím nemáte připojená zařízení",
+    expect(fetcher).toHaveBeenCalledWith(
+      "/v1/households/home-1/connection",
+      expect.objectContaining({ method: "DELETE" }),
     ),
-  );
-  expect(fetcher).toHaveBeenCalledWith(
-    "/v1/devices/tv-1",
-    expect.objectContaining({ method: "DELETE" }),
   );
 });
 

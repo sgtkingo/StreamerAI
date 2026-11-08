@@ -197,7 +197,7 @@ describe("profile PIN controls", () => {
     expect(screen.getByLabelText("Current profile PIN")).toHaveValue("");
   });
 
-  it("sends a reset request to the signed-in account without pairing", async () => {
+  it("sends a reset request to the local household owner without cloud pairing", async () => {
     vi.useFakeTimers();
     const unlocked = vi.fn();
     const api = {
@@ -210,7 +210,7 @@ describe("profile PIN controls", () => {
       startDeviceAuthorization: vi.fn(),
       requestProfilePinReset: vi.fn().mockResolvedValue({
         id: "reset-request",
-        manageUrl: "https://example.com/account",
+        manageUrl: "http://localhost/admin?tab=profiles",
         expiresAt: new Date(Date.now() + 300000).toISOString(),
       }),
       pollProfilePinReset: vi.fn().mockResolvedValue({ status: "approved" }),
@@ -228,7 +228,7 @@ describe("profile PIN controls", () => {
       await Promise.resolve();
     });
     fireEvent.click(
-      screen.getByRole("button", { name: "Forgot PIN? Verify account" }),
+      screen.getByRole("button", { name: "Forgot PIN? Ask household owner" }),
     );
     await act(async () => {
       await Promise.resolve();
@@ -236,8 +236,8 @@ describe("profile PIN controls", () => {
     expect(api.requestProfilePinReset).toHaveBeenCalledWith("alex");
     expect(api.startDeviceAuthorization).not.toHaveBeenCalled();
     expect(
-      screen.getByRole("link", { name: "Open account portal" }),
-    ).toHaveAttribute("href", "https://example.com/account");
+      screen.getByRole("link", { name: "Open household administration" }),
+    ).toHaveAttribute("href", "http://localhost/admin?tab=profiles");
     expect(api.setProfilePin).not.toHaveBeenCalled();
     await act(async () => vi.advanceTimersByTimeAsync(5000));
     expect(api.setProfilePin).toHaveBeenCalledWith("alex", null);
@@ -271,7 +271,7 @@ describe("profile PIN controls", () => {
     await waitFor(() => expect(unlocked).toHaveBeenCalledOnce());
     expect(api.unlockProfile).toHaveBeenCalledWith("alex", "12345678");
   });
-  it("hides account recovery without sync and explains why it is unavailable", async () => {
+  it("explains how to ask the household owner when reset requests are unavailable", async () => {
     const api = {
       getAuthStatus: vi.fn().mockResolvedValue({
         masterPinEnabled: true,
@@ -289,11 +289,11 @@ describe("profile PIN controls", () => {
     );
     await screen.findByLabelText("Master PIN");
     expect(
-      screen.queryByRole("button", { name: "Forgot PIN? Verify account" }),
+      screen.queryByRole("button", { name: "Forgot PIN? Ask household owner" }),
     ).not.toBeInTheDocument();
-    expect(
-      screen.getByText(/cannot be reset without an online account/),
-    ).toHaveClass("settings-note");
+    expect(screen.getByText(/Ask the household owner/)).toHaveClass(
+      "settings-note",
+    );
     fireEvent.click(
       screen.getByRole("button", { name: "Use profile PIN instead" }),
     );

@@ -1,0 +1,84 @@
+{
+  "name": "@streamer-ai/client",
+  "productName": "StreamerAI Client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A paired thin client for a StreamerAI home server.",
+  "author": "StreamerAI",
+  "license": "UNLICENSED",
+  "main": "dist/main.cjs",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "start": "node scripts/build.mjs && electron .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:smoke": "node scripts/build.mjs && node scripts/smoke.mjs",
+    "package:win": "node scripts/build.mjs && electron-builder --win nsis --x64 --publish never",
+    "package:linux": "node scripts/build.mjs && electron-builder --linux AppImage deb --publish never",
+    "package:mac": "node scripts/build.mjs && electron-builder --mac dmg zip --publish never",
+    "android:debug": "node scripts/android-build.mjs debug",
+    "android:release": "node scripts/android-build.mjs release"
+  },
+  "devDependencies": {
+    "@streamer-ai/discovery": "workspace:*",
+    "@types/node": "^24.5.2",
+    "electron": "45.2.3",
+    "electron-builder": "26.18.0",
+    "esbuild": "0.28.2",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  },
+  "build": {
+    "appId": "ai.streamer.client",
+    "productName": "StreamerAI Client",
+    "asar": true,
+    "npmRebuild": false,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**",
+      "package.json"
+    ],
+    "protocols": [
+      {
+        "name": "StreamerAI server connection",
+        "schemes": [
+          "streamerai"
+        ]
+      }
+    ],
+    "win": {
+      "icon": "assets/icon.ico",
+      "target": [
+        "nsis"
+      ],
+      "signExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true
+    },
+    "linux": {
+      "icon": "assets/icon.png",
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "AudioVideo",
+      "maintainer": "StreamerAI"
+    },
+    "mac": {
+      "icon": "assets/icon.png",
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.entertainment",
+      "hardenedRuntime": true
+    }
+  }
+}

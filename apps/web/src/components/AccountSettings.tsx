@@ -12,22 +12,15 @@ import { useToasts } from "./ToastProvider";
 
 export function AccountSettings({
   api,
-  profile,
-  onSignOut,
 }: {
   api: StreamerApi;
-  profile: ViewerProfile;
-  onSignOut?: () => Promise<void>;
+  profile?: ViewerProfile;
 }) {
   const [overview, setOverview] = useState<AccountOverview | null>(null);
   const [error, setError] = useState("");
   const { showToast } = useToasts();
   const [pending, setPending] = useState(false);
   const [retry, setRetry] = useState(0);
-  const [localProfiles, setLocalProfiles] = useState<ViewerProfile[] | null>(
-    null,
-  );
-  const [adoptConfirmed, setAdoptConfirmed] = useState(false);
   const [linking, setLinking] = useState(false);
   const [connections, setConnections] = useState<AccountConnections | null>(
     null,
@@ -72,19 +65,22 @@ export function AccountSettings({
   useEffect(() => {
     if (!api.getAccount) return;
     let active = true;
-    void api
-      .getAccount()
-      .then((result) => {
-        if (active) {
-          setOverview(result);
-          setError("");
-        }
-      })
-      .catch((reason: unknown) => {
-        if (active) setError(safeErrorMessage(reason));
-      });
+    const refresh = () =>
+      void api.getAccount!()
+        .then((result) => {
+          if (active) {
+            setOverview(result);
+            setError("");
+          }
+        })
+        .catch((reason: unknown) => {
+          if (active) setError(safeErrorMessage(reason));
+        });
+    refresh();
+    window.addEventListener("streamer:household-changed", refresh);
     return () => {
       active = false;
+      window.removeEventListener("streamer:household-changed", refresh);
     };
   }, [api, retry]);
   const run = async (operation: () => Promise<void>) => {
@@ -115,8 +111,8 @@ export function AccountSettings({
               }
             />
             <p>
-              Connected services are shared by this account's profiles. Viewing
-              history and preferences stay with each profile.
+              Connected services are shared by this household's profiles.
+              Viewing history and preferences stay with each profile.
             </p>
           </>
         ) : (
@@ -134,18 +130,6 @@ export function AccountSettings({
             </button>
           </p>
         )}
-        <div className="profile-page__actions">
-          {onSignOut && (
-            <button
-              className="button button--ghost"
-              type="button"
-              disabled={pending}
-              onClick={() => void run(onSignOut)}
-            >
-              Sign out of account
-            </button>
-          )}
-        </div>
       </section>
       {overview && (
         <section className="profile-page__section">
@@ -221,67 +205,65 @@ export function AccountSettings({
           )}
         </section>
       )}
-      {overview?.account.cloudLinked === false &&
-        api.startDeviceAuthorization && (
-          <section className="profile-page__section">
-            <h2>Connect this household to StreamerAI</h2>
-            <p>
-              Choose an online owner for this household. Its profiles, library
-              and shared service connections stay together. Other local sessions
-              will be signed out.
-            </p>
-            {!localProfiles && (
-              <button
-                className="button button--secondary"
-                type="button"
-                disabled={pending}
-                onClick={() =>
-                  void run(async () => {
-                    setLocalProfiles((await api.getProfiles()).items);
-                  })
-                }
-              >
-                Review local profiles
-              </button>
-            )}
-            {localProfiles && !linking && (
-              <>
-                <p>
-                  Profiles to connect:{" "}
-                  {localProfiles.map((item) => item.name).join(", ") || "None"}
-                </p>
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={adoptConfirmed}
-                    onChange={(event) =>
-                      setAdoptConfirmed(event.target.checked)
-                    }
-                  />{" "}
-                  I want the online account I select to own these local profiles
-                  and shared connections.
-                </label>
+      {overview && (
+        <section className="profile-page__section">
+          <h2>Cloud connection</h2>
+          <p>
+            Your household, profiles and Master PIN stay on this server. Cloud
+            services add remote management, synchronization and automatic
+            backups.
+          </p>
+          {overview.account.cloudLinked ? (
+            <>
+              <p>Cloud services are connected.</p>
+              {api.disconnectCloud && (
                 <button
-                  className="button button--primary"
+                  className="button button--secondary"
                   type="button"
-                  disabled={!adoptConfirmed}
-                  onClick={() => setLinking(true)}
+                  disabled={pending}
+                  onClick={() =>
+                    void run(async () => {
+                      await api.disconnectCloud!();
+                      setOverview(await api.getAccount!());
+                      showToast(
+                        "Cloud disconnected. Your household and profiles are still available on this server.",
+                        "success",
+                      );
+                      window.dispatchEvent(
+                        new Event("streamer:household-changed"),
+                      );
+                    })
+                  }
                 >
-                  Choose online owner
+                  Disconnect cloud
                 </button>
-              </>
-            )}
-            {linking && (
-              <AccountLogin
-                api={api}
-                compact
-                adoptLocalAccount
-                onCancel={() => setLinking(false)}
-                onAuthenticated={() => window.location.reload()}
-              />
-            )}
-          </section>
-        )}
+              )}
+            </>
+          ) : !linking &&
+            overview.cloudConfigured !== false &&
+            api.startDeviceAuthorization ? (
+            <button
+              className="button button--secondary"
+              type="button"
+              onClick={() => setLinking(true)}
+            >
+              Connect cloud
+            </button>
+          ) : null}
+          {linking && (
+            <AccountLogin
+              api={api}
+              compact
+              adoptLocalAccount
+              onCancel={() => setLinking(false)}
+              onAuthenticated={() => {
+                setLinking(false);
+                window.dispatchEvent(new Event("streamer:household-changed"));
+              }}
+            />
+          )}
+        </section>
+      )}
       {overview && overview.devices.length > 0 && (
         <section className="profile-page__section">
           <p className="eyebrow">Devices</p>
@@ -298,7 +280,7 @@ export function AccountSettings({
                     Last active {new Date(device.lastSeenAt).toLocaleString()}
                   </p>
                 </div>
-                {api.revokeAccountDevice && (
+                {api.revokeAccountDevice && !device.current && (
                   <button
                     className="button button--ghost"
                     type="button"
@@ -306,10 +288,6 @@ export function AccountSettings({
                     onClick={() =>
                       void run(async () => {
                         await api.revokeAccountDevice!(device.id);
-                        if (device.current && onSignOut) {
-                          await onSignOut();
-                          return;
-                        }
                         setOverview((current) =>
                           current
                             ? {
@@ -334,17 +312,13 @@ export function AccountSettings({
       )}
       {overview?.manageUrl && (
         <section className="profile-page__section">
-          <p className="eyebrow">Profile ownership</p>
-          <h2>Move {profile.name} to another account</h2>
+          <p className="eyebrow">Cloud management</p>
+          <h2>Manage your households</h2>
           <p>
-            The receiving account must confirm the transfer and have a free
-            profile slot. Your library, history and preferences move with this
-            profile. Connected services stay with this account and the receiving
-            account will set a new PIN.
-          </p>
-          <p>
-            Sign in to your StreamerAI account in the portal to start or accept
-            a profile transfer and manage your devices.
+            Manage household ownership, profile transfers between households and
+            merge requests in the cloud account portal. The receiving owner
+            confirms each transfer. Local service credentials stay on this
+            server.
           </p>
           <a
             className="button button--secondary"

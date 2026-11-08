@@ -3,6 +3,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openStreamerDatabase } from "@streamer-ai/database";
+import { MasterPinService } from "../src/services/master-pin.js";
+import { NonPersistentMemorySecretStore } from "../src/stores/secret-store.js";
 import { createApp } from "../src/app.js";
 import { readRuntimeConfig } from "../src/runtime-config.js";
 
@@ -18,11 +20,13 @@ it("requires real installation ownership for host AI detection and model actions
       : Response.json({ models: [{ name: "qwen3.5:4b" }] });
   });
   vi.stubGlobal("fetch", fetcher);
+  const secrets = new NonPersistentMemorySecretStore();
+  await new MasterPinService(secrets).setupLocal("local", "01234567");
   const app = createApp({
+    secretStore: secrets,
     environment: "test",
     logger: false,
     database,
-    installationBootstrapToken: "a".repeat(64),
     runtimeConfig: readRuntimeConfig({
       NODE_ENV: "test",
       STREAMERAI_ACCESS_MODE: "paired",
@@ -42,9 +46,9 @@ it("requires real installation ownership for host AI detection and model actions
     const owner = cookie(
       await app.inject({
         method: "POST",
-        url: "/api/v1/installation/claim",
+        url: "/api/v1/installation/authorize",
         headers,
-        payload: { token: "a".repeat(64) },
+        payload: { masterPin: "01234567", admin: true },
       }),
     );
     const detected = await app.inject({

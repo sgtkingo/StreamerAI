@@ -4437,16 +4437,20 @@ textarea:not(:disabled):hover {
   color: #fff;
   font-size: 13px;
 }
-.profile-menu button {
+.profile-menu button,
+.profile-menu a {
   padding: 11px 12px;
   border-radius: 4px;
   background: transparent;
   color: #d5d5d8;
   cursor: pointer;
   text-align: left;
+  text-decoration: none;
 }
 .profile-menu button:hover,
-.profile-menu button:focus-visible {
+.profile-menu button:focus-visible,
+.profile-menu a:hover,
+.profile-menu a:focus-visible {
   background: #2b2b2d;
   color: #fff;
 }

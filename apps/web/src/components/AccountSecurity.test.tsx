@@ -7,7 +7,7 @@ vi.mock("./EncryptedRecovery", () => ({
   EncryptedRecovery: () => <h3>Household backups</h3>,
 }));
 
-it("groups backups and Master PIN protection in Security and verifies eight digits", async () => {
+it("groups backups and local Master PIN protection in administration", async () => {
   const api = {
     getAccount: vi.fn().mockResolvedValue({
       account: { cloudLinked: true },
@@ -23,25 +23,13 @@ it("groups backups and Master PIN protection in Security and verifies eight digi
   ).toBeVisible();
   expect(
     await screen.findByRole("link", { name: "Forgot PIN?" }),
-  ).toHaveAttribute(
-    "href",
-    "https://cloud.example/account?account_id=owner#master-pin-settings",
-  );
+  ).toHaveAttribute("href", "/admin/recover");
   expect(
     screen.getByLabelText("How to recover your Master PIN"),
   ).toBeInTheDocument();
-  const input = screen.getByLabelText("Master PIN (8 digits)");
   expect(
-    input.closest(".digit-slots")?.querySelectorAll(".digit-slots__cell"),
-  ).toHaveLength(8);
-  fireEvent.change(input, { target: { value: "01234567" } });
-  fireEvent.click(
-    screen.getByRole("button", { name: "Verify Master PIN for backups" }),
-  );
-  await waitFor(() =>
-    expect(api.verifyMasterPin).toHaveBeenCalledWith("01234567"),
-  );
-  await waitFor(() => expect(input).toHaveValue(""));
+    screen.queryByRole("button", { name: "Verify Master PIN for backups" }),
+  ).not.toBeInTheDocument();
 });
 
 it.each([false, true])(
@@ -49,12 +37,10 @@ it.each([false, true])(
   async (online) => {
     const changeMasterPin = vi.fn().mockResolvedValue({ ok: true });
     const api = {
-      getAccount: vi
-        .fn()
-        .mockResolvedValue({
-          account: { cloudLinked: online },
-          manageUrl: online ? "https://cloud.example/account" : null,
-        }),
+      getAccount: vi.fn().mockResolvedValue({
+        account: { cloudLinked: online },
+        manageUrl: online ? "https://cloud.example/account" : null,
+      }),
       changeMasterPin,
     } as unknown as StreamerApi;
     render(<AccountSecurity api={api} />);

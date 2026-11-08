@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openStreamerDatabase } from "@streamer-ai/database";
@@ -40,8 +40,10 @@ describe("local owner recovery", () => {
     const lock = acquireServerRuntimeLock(directory);
     expect(() => resetInstallationOwner(directory)).toThrow("already in use");
     lock.release();
-    const filename = resetInstallationOwner(directory);
-    expect(readFileSync(filename, "utf8")).toMatch(/^[a-f0-9]{64}$/);
+    resetInstallationOwner(directory);
+    expect(existsSync(join(directory, "installation-bootstrap.key"))).toBe(
+      false,
+    );
     const restored = openStreamerDatabase({
       filename: join(directory, "streamer-ai.db"),
     });

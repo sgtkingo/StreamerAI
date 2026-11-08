@@ -4,7 +4,7 @@ import type {
   DeviceAuthorizationInput,
   StreamerApi,
 } from "../api/client";
-import { safeErrorMessage } from "../api/client";
+import { ApiError, safeErrorMessage } from "../api/client";
 import { Brand } from "./Brand";
 import { MasterPinSetup } from "./MasterPinSetup";
 
@@ -17,8 +17,11 @@ interface AccountLoginProps {
   compact?: boolean;
   onCancel?: () => void;
   allowLocal?: boolean;
+  allowCloud?: boolean;
   recoveredLocalAccounts?: { id: string }[];
   adoptLocalAccount?: boolean;
+  onRestoreBackup?: () => void;
+  adminLogin?: boolean;
 }
 
 /** The grant stays in component memory; only the home server receives the session. */
@@ -31,21 +34,21 @@ export function AccountLogin({
   compact = false,
   onCancel,
   allowLocal = false,
-  recoveredLocalAccounts = [],
+  allowCloud = true,
   adoptLocalAccount = false,
+  onRestoreBackup,
+  adminLogin = false,
 }: AccountLoginProps) {
   const [grant, setGrant] = useState<DeviceAuthorization | null>(null);
   const [starting, setStarting] = useState(false);
   const [startingLocal, setStartingLocal] = useState(false);
-  const [chooseLocal, setChooseLocal] = useState(false);
   const [needsMasterPin, setNeedsMasterPin] = useState(false);
-  const [localAccountId, setLocalAccountId] = useState("");
   const [message, setMessage] = useState("");
   const [messageSource, setMessageSource] = useState<
     "pairing" | "local" | null
   >(null);
   const [outcome, setOutcome] = useState<
-    "expired" | "denied" | "cancelled" | null
+    "expired" | "denied" | "cancelled" | "failed" | null
   >(null);
   const started = useRef(false);
   const inFlight = useRef(false);
@@ -70,7 +73,12 @@ export function AccountLogin({
     setGrant(null);
     try {
       const result = await api.startDeviceAuthorization(
-        purpose ?? (adoptLocalAccount ? { adoptLocalAccount } : undefined),
+        purpose ??
+          (adminLogin
+            ? { adminLogin: true }
+            : adoptLocalAccount
+              ? { adoptLocalAccount }
+              : undefined),
       );
       if (id === requestId.current) setGrant(result);
     } catch (reason) {
@@ -82,16 +90,16 @@ export function AccountLogin({
       inFlight.current = false;
       setStarting(false);
     }
-  }, [api, purpose, adoptLocalAccount]);
+  }, [api, purpose, adoptLocalAccount, adminLogin]);
 
   useEffect(() => {
-    if (!allowLocal && !purpose && !error && !started.current) {
+    if (allowCloud && !allowLocal && !purpose && !error && !started.current) {
       started.current = true;
       void start();
     }
-  }, [allowLocal, purpose, error, start]);
+  }, [allowCloud, allowLocal, purpose, error, start]);
 
-  const local = async (masterPin?: string) => {
+  const local = async (masterPin?: string, restore = false) => {
     if (startingLocal || !api.startLocalSession) return;
     requestId.current++;
     setGrant(null);
@@ -100,10 +108,10 @@ export function AccountLogin({
     setMessage("");
     setMessageSource(null);
     try {
-      if (masterPin)
-        await api.startLocalSession(localAccountId || undefined, masterPin);
-      else await api.startLocalSession(localAccountId || undefined);
-      callback.current();
+      if (masterPin) await api.startLocalSession(undefined, masterPin);
+      else await api.startLocalSession();
+      if (restore && onRestoreBackup) onRestoreBackup();
+      else callback.current();
     } catch (reason) {
       if (
         reason instanceof Error &&
@@ -118,15 +126,6 @@ export function AccountLogin({
     } finally {
       setStartingLocal(false);
     }
-  };
-
-  const showLocalAccounts = () => {
-    requestId.current++;
-    setGrant(null);
-    setOutcome("cancelled");
-    setMessage("");
-    setMessageSource(null);
-    setChooseLocal(true);
   };
 
   useEffect(() => {
@@ -164,6 +163,22 @@ export function AccountLogin({
         if (!active || id !== requestId.current) return;
         setMessage(safeErrorMessage(reason));
         setMessageSource("pairing");
+        if (
+          reason instanceof ApiError &&
+          reason.code &&
+          [
+            "HOUSEHOLD_CLOUD_UNAVAILABLE",
+            "HOUSEHOLD_CLOUD_CONFLICT",
+            "HOUSEHOLD_BACKUP_REQUIRED",
+            "PAIRING_NOT_FOUND",
+            "INSTALLATION_OWNER_REQUIRED",
+          ].includes(reason.code)
+        ) {
+          active = false;
+          clearInterval(countdown);
+          setOutcome("failed");
+          return;
+        }
       }
       if (active)
         timer = setTimeout(
@@ -185,7 +200,7 @@ export function AccountLogin({
         <MasterPinSetup
           onSave={async (pin) => {
             if (!api.startLocalSession) return;
-            await api.startLocalSession(localAccountId || undefined, pin);
+            await api.startLocalSession(undefined, pin);
             callback.current();
           }}
         />
@@ -205,12 +220,24 @@ export function AccountLogin({
           {purpose ? "Verify account ownership" : "Your cinema, together"}
         </p>
         <h1 id="account-login-title">
-          {purpose ? "Reset this profile's PIN" : "Welcome to StreamerAI."}
+          {purpose
+            ? "Reset this profile's PIN"
+            : adminLogin
+              ? "Sign in to household administration"
+              : adoptLocalAccount
+                ? "Connect cloud services"
+                : "Set up your household"}
         </h1>
         <p>
           {purpose
             ? "Sign in to the StreamerAI account that owns this profile to remove its PIN. You can then choose a new PIN."
-            : "Use StreamerAI with a local household, or sign in to keep your profiles and watch progress in sync across home installations."}
+            : adminLogin
+              ? "Sign in to the cloud account connected to this household to authorize this administration browser."
+              : adoptLocalAccount
+                ? "Connect your household to your online account for remote management, synchronization and cloud backups. Your profiles and Master PIN stay with this household."
+                : allowCloud
+                  ? "Create a household on this server, import a backup, or sign in to bring your household from the cloud."
+                  : "Create a household on this server or import an encrypted backup."}
         </p>
         {(error ||
           message ||
@@ -223,7 +250,7 @@ export function AccountLogin({
                 : outcome === "expired"
                   ? "Your pairing code has expired"
                   : messageSource === "local"
-                    ? "Unable to open local account"
+                    ? "Unable to open household"
                     : "Unable to complete sign-in"}
             </strong>
             <p>
@@ -243,7 +270,7 @@ export function AccountLogin({
           >
             Try again
           </button>
-        ) : !grant || outcome ? (
+        ) : !allowCloud ? null : !grant || outcome ? (
           starting ? (
             <p role="status" className="account-login__loading">
               Preparing your secure pairing code…
@@ -255,11 +282,15 @@ export function AccountLogin({
               disabled={starting || startingLocal}
               onClick={() => void start()}
             >
-              {outcome === "denied" || outcome === "expired"
+              {outcome === "denied" ||
+              outcome === "expired" ||
+              outcome === "failed"
                 ? "Get a new code"
                 : purpose
                   ? "Verify account"
-                  : "Connect this device"}
+                  : adoptLocalAccount
+                    ? "Connect cloud"
+                    : "Sign in to cloud"}
             </button>
           )
         ) : (
@@ -274,7 +305,9 @@ export function AccountLogin({
               />
             )}
             <div>
-              <h2>{purpose ? "Confirm PIN reset" : "Connect this device"}</h2>
+              <h2>
+                {purpose ? "Confirm PIN reset" : "Connect cloud services"}
+              </h2>
               <p>
                 Scan the QR code with your phone, or open this address and enter
                 the code:
@@ -319,49 +352,39 @@ export function AccountLogin({
             </div>
           </div>
         )}
-        <p className="settings-note">
-          {purpose
-            ? "Approve only the PIN reset you requested. The verification must use this profile's account owner."
-            : "Sign in with Google or an e-mail code on your phone when using a TV. Confirm only devices you recognize."}
-        </p>
+        {allowCloud && (
+          <p className="settings-note">
+            {purpose
+              ? "Approve only the PIN reset you requested. The verification must use this profile's account owner."
+              : "Sign in with Google or an e-mail code on your phone when using a TV. Confirm only devices you recognize."}
+          </p>
+        )}
         {!purpose &&
           allowLocal &&
           api.startLocalSession &&
           !adoptLocalAccount && (
             <div className="account-login__local-option">
-              {chooseLocal && recoveredLocalAccounts.length > 0 && (
-                <label>
-                  Local account
-                  <select
-                    value={localAccountId}
-                    onChange={(event) => setLocalAccountId(event.target.value)}
-                  >
-                    <option value="">Existing local household</option>
-                    {recoveredLocalAccounts.map((account, index) => (
-                      <option key={account.id} value={account.id}>
-                        Account converted to local {index + 1}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              )}
               <button
-                className="account-login__local"
+                className="button button--secondary"
                 type="button"
                 disabled={startingLocal}
-                onClick={() =>
-                  recoveredLocalAccounts.length && !chooseLocal
-                    ? showLocalAccounts()
-                    : void local()
-                }
+                onClick={() => void local()}
               >
-                {chooseLocal
-                  ? "Continue with selected local account"
-                  : "Prefer to continue without signing in, with a local account?"}
+                Create a household
               </button>
+              {onRestoreBackup && (
+                <button
+                  className="button button--secondary"
+                  type="button"
+                  disabled={startingLocal}
+                  onClick={() => void local(undefined, true)}
+                >
+                  Import a backup
+                </button>
+              )}
               <p className="settings-note account-login__local-note">
-                No account required. Profiles and watch progress stay on this
-                home server. You can connect an online account later.
+                Your household and its profiles stay on this home server. Cloud
+                services can be connected or disconnected later.
               </p>
             </div>
           )}

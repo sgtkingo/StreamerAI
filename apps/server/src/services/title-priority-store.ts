@@ -43,7 +43,35 @@ export class TitlePriorityStore {
   }
 
   private save(profileId: string, titleId: string, state: State): void {
-    this.database.settings.set(this.key(profileId, titleId), state);
+    this.database.settings.set(this.key(profileId, titleId), {
+      ...state,
+      profileId,
+      titleId,
+    });
+  }
+  exportProfile(profileId: string) {
+    return this.database.settings
+      .listByPrefix<State & { profileId?: string; titleId?: string }>(
+        "title-priority:",
+      )
+      .flatMap(({ value }) =>
+        value?.profileId === profileId && value.titleId
+          ? [
+              {
+                titleId: value.titleId,
+                manualHigh: value.manualHigh,
+                autoHigh: value.autoHigh,
+                opens: value.opens,
+                plays: value.plays,
+                nextCheckAt: value.nextCheckAt,
+                highChecks: value.highChecks,
+              },
+            ]
+          : [],
+      );
+  }
+  restoreProfile(profileId: string, titleId: string, state: State) {
+    this.save(profileId, titleId, state);
   }
 
   priority(profileId: string, titleId: string): "low" | "high" {

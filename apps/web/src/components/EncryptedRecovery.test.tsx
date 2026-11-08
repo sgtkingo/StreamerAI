@@ -19,7 +19,7 @@ function ownerFetch(
     return operation(path, options);
   });
 }
-it("explains that the Master PIN must be verified before a local download", async () => {
+it("explains that incomplete household setup prevents a local download", async () => {
   const fetcher = ownerFetch(() =>
     Response.json({ error: { code: "MASTER_PIN_REQUIRED" } }, { status: 400 }),
   );
@@ -31,7 +31,7 @@ it("explains that the Master PIN must be verified before a local download", asyn
     }),
   );
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Verify your Master PIN in account settings",
+    "Complete household setup",
   );
   expect(fetcher).toHaveBeenCalledWith(
     base + "/export",

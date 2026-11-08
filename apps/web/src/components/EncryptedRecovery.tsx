@@ -25,7 +25,7 @@ async function call<T>(
     const code = data?.error?.code;
     throw new Error(
       code === "MASTER_PIN_REQUIRED"
-        ? "Verify your Master PIN in account settings before saving a backup."
+        ? "Complete household setup before creating a backup."
         : code === "HOUSEHOLD_AUTHENTICATION_FAILED" ||
             code === "INVALID_MASTER_PIN"
           ? "The backup could not be unlocked. Check its 8-digit Master PIN."
@@ -83,9 +83,11 @@ function BackupActionIcon({ restore = false }: { restore?: boolean }) {
 
 export function EncryptedRecovery({
   restoreOnly = false,
+  autoLoadCloud = false,
   onRestored,
 }: {
   restoreOnly?: boolean;
+  autoLoadCloud?: boolean;
   onRestored?: () => void | Promise<void>;
 }) {
   const [status, setStatus] = useState<Status | null>(null);
@@ -103,9 +105,26 @@ export function EncryptedRecovery({
     const refresh = async () => {
       try {
         const installation = await getInstallationStatus();
-        if (installation.enabled && installation.role !== "owner") return;
+        if (
+          installation.enabled &&
+          installation.role !== "owner" &&
+          !installation.setupAuthorized
+        )
+          return;
         const result = await call<Status>("");
         if (active) setStatus(result);
+        if (autoLoadCloud) {
+          const copy = await call<{
+            revision: number;
+            envelope: unknown | null;
+          }>("/cloud");
+          if (!copy.envelope)
+            throw new Error("There is no cloud backup to restore.");
+          if (active) {
+            setEnvelope(copy.envelope);
+            setCloudRevision(copy.revision);
+          }
+        }
       } catch {
         if (active && restoreOnly)
           setError(
@@ -121,7 +140,7 @@ export function EncryptedRecovery({
       active = false;
       if (timer) clearInterval(timer);
     };
-  }, [restoreOnly]);
+  }, [restoreOnly, autoLoadCloud]);
   if (!status)
     return restoreOnly ? (
       <p role={error ? "alert" : "status"}>
@@ -177,7 +196,7 @@ export function EncryptedRecovery({
                     ? "Saving encrypted backup to cloudâ€¦"
                     : status.cloudBackup?.status === "error"
                       ? `Cloud backup needs attention: ${status.cloudBackup.error}`
-                      : "Encrypted cloud backup is waiting for the first save. Verify your Master PIN in account settings once on this server."}
+                      : "Encrypted cloud backup is waiting for the next automatic save."}
             </p>
           </div>
           <div className="household-backup-actions">
@@ -228,7 +247,7 @@ export function EncryptedRecovery({
           ) : (
             <h3>Restore into an empty household</h3>
           )}
-          {status.cloudConfigured && (
+          {status.cloudConfigured && !autoLoadCloud && (
             <button
               className="button button--secondary"
               type="button"
@@ -254,33 +273,35 @@ export function EncryptedRecovery({
               Restore from cloud backup
             </button>
           )}
-          <label className="field">
-            <span>Encrypted household file</span>
-            <input
-              type="file"
-              accept=".json,application/json"
-              disabled={busy}
-              onChange={(event) => {
-                const file = event.target.files?.[0];
-                setPreview(null);
-                setEnvelope(null);
-                setCloudRevision(null);
-                setPin("");
-                setError("");
-                if (!file) return;
-                if (file.size > 16 * 1024 * 1024) {
-                  setError("The household file is too large.");
-                  return;
-                }
-                void file
-                  .text()
-                  .then((text) => setEnvelope(JSON.parse(text) as unknown))
-                  .catch(() =>
-                    setError("This is not a readable household file."),
-                  );
-              }}
-            />
-          </label>
+          {!autoLoadCloud && (
+            <label className="field">
+              <span>Encrypted household file</span>
+              <input
+                type="file"
+                accept=".json,application/json"
+                disabled={busy}
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  setPreview(null);
+                  setEnvelope(null);
+                  setCloudRevision(null);
+                  setPin("");
+                  setError("");
+                  if (!file) return;
+                  if (file.size > 16 * 1024 * 1024) {
+                    setError("The household file is too large.");
+                    return;
+                  }
+                  void file
+                    .text()
+                    .then((text) => setEnvelope(JSON.parse(text) as unknown))
+                    .catch(() =>
+                      setError("This is not a readable household file."),
+                    );
+                }}
+              />
+            </label>
+          )}
           <DigitSlotsInput
             label="Master PIN for this backup"
             value={pin}

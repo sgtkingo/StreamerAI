@@ -10,3 +10,8 @@ deploy/nginx.conf
 docs
 instructions
 tmp
+apps/client/release
+apps/client/android/.gradle
+apps/client/android/.kotlin
+apps/client/android/build
+apps/client/android/app/build

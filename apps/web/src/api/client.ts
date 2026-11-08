@@ -208,6 +208,12 @@ export interface AuthStatus {
   masterPinEnabled?: boolean;
   masterPinSetupRequired?: boolean;
   localMasterPinRequired?: boolean;
+  householdRestoreRequired?: boolean;
+  householdCloudSetupPending?: boolean;
+  householdReady?: boolean;
+  householdSetupStarted?: boolean;
+  householdPinRequired?: boolean;
+  householdSelectionRequired?: boolean;
 }
 
 export interface ProfilePinResetRequest {
@@ -230,9 +236,28 @@ export type DeviceAuthorizationInput = {
   purpose?: "login";
   adoptLocalAccount?: boolean;
   disableSync?: boolean;
+  adminLogin?: boolean;
 };
 
+export interface HouseholdMergeRequest {
+  id: string;
+  kind: "merge";
+  source_name: string;
+  target_name: string;
+  status: "approved";
+  requiresLocalImport: true;
+}
+export interface HouseholdMergePreview {
+  profiles: { name: string; pinEnabled?: boolean }[];
+  credentials: string[];
+  limitations: string[];
+  sourceName: string;
+  targetProfileCount: number;
+  keepsDestinationPin: true;
+  keepsDestinationServices: true;
+}
 export interface AccountOverview {
+  cloudConfigured?: boolean;
   account: AccountIdentity;
   manageUrl: string | null;
   devices: {
@@ -264,6 +289,7 @@ export interface StreamerApi {
   getInstallationStatus?(): Promise<
     import("../components/InstallationAccess").InstallationStatus
   >;
+  beginHouseholdSetup?(): Promise<{ setupAuthorized: boolean }>;
   getAccountConnections?(): Promise<AccountConnections>;
   startLocalSession?(
     recoveredAccountId?: string,
@@ -291,8 +317,71 @@ export interface StreamerApi {
   pollDeviceAuthorization?(deviceCode: string): Promise<{
     status: "pending" | "approved" | "expired" | "denied";
     account?: AccountIdentity;
+    householdSelectionRequired?: boolean;
+  }>;
+  getCloudHouseholds?(): Promise<{
+    households: {
+      id: string;
+      name: string;
+      hasBackup?: boolean;
+      updatedAt?: string;
+    }[];
+    canCreate: boolean;
+  }>;
+  selectCloudHousehold?(
+    input: { householdId: string } | { create: true },
+  ): Promise<{ ok: boolean }>;
+  authorizeInstallation?(input: {
+    masterPin: string;
+    deviceName: string;
+    admin?: boolean;
+  }): Promise<{ ok: boolean }>;
+  resetProfilePin?(profileId: string): Promise<{ ok: boolean }>;
+  getProfilePinResetRequests?(): Promise<{
+    requests: {
+      id: string;
+      profileId: string;
+      profileName: string;
+      deviceName: string;
+      expiresAt: string;
+    }[];
+  }>;
+  decideProfilePinReset?(
+    requestId: string,
+    approve: boolean,
+  ): Promise<{ ok: boolean }>;
+  resetMasterPin?(
+    newPin: string,
+    confirmation: string,
+  ): Promise<{ ok: boolean }>;
+  getBackupSchedule?(): Promise<{
+    enabled: boolean;
+    intervalMinutes: number;
+    cloudEnabled: boolean;
+  }>;
+  renameHousehold?(
+    name: string,
+  ): Promise<{ householdId: string; name: string }>;
+  getHouseholdMerges?(): Promise<{ requests: HouseholdMergeRequest[] }>;
+  previewHouseholdMerge?(
+    requestId: string,
+    sourcePin: string,
+  ): Promise<HouseholdMergePreview>;
+  completeHouseholdMerge?(
+    requestId: string,
+    sourcePin: string,
+  ): Promise<{ ok: boolean; profileIds: string[] }>;
+  saveBackupSchedule?(input: {
+    enabled: boolean;
+    intervalMinutes: number;
+    cloudEnabled: boolean;
+  }): Promise<{
+    enabled: boolean;
+    intervalMinutes: number;
+    cloudEnabled: boolean;
   }>;
   logout?(): Promise<void>;
+  disconnectCloud?(): Promise<{ ok: boolean }>;
   getAccount?(): Promise<AccountOverview>;
   revokeAccountDevice?(deviceId: string): Promise<void>;
   syncAccount?(): Promise<AccountOverview["sync"]>;
@@ -532,7 +621,7 @@ export interface StreamerApi {
   ): Promise<void>;
 }
 
-class ApiError extends Error {
+export class ApiError extends Error {
   constructor(
     message: string,
     readonly status?: number,
@@ -544,6 +633,18 @@ class ApiError extends Error {
 }
 
 const domainErrorMessages: Record<string, string> = {
+  HOUSEHOLD_AUTHENTICATION_FAILED:
+    "The source backup could not be unlocked. Check its 8-digit Master PIN.",
+  HOUSEHOLD_PROFILE_LIMIT:
+    "The combined household would exceed five profiles. Remove a profile before creating a new merge request.",
+  HOUSEHOLD_MERGE_CONFLICT:
+    "These households have changed. Create and approve a new merge request in the cloud account portal.",
+  HOUSEHOLD_MERGE_UNAVAILABLE:
+    "The merge could not be completed. The source household is retained. Check the cloud connection and try again.",
+  ENCRYPTED_CHECKPOINT_TOO_LARGE:
+    "The combined backup exceeds the cloud backup size limit. The source household is retained.",
+  CLOUD_NOT_CONNECTED:
+    "Connect this household to cloud services to complete the merge.",
   TITLE_NOT_FOUND:
     "This title is no longer in the validated local cache. Search for it again.",
   TITLE_NOT_PLAYABLE:
@@ -559,13 +660,20 @@ const domainErrorMessages: Record<string, string> = {
   PROFILE_NOT_FOUND:
     "This profile is not available. Finish setup or choose another profile.",
   PROFILE_LIMIT_REACHED: "This account already has five profiles.",
-  AUTH_REQUIRED: "Sign in to your StreamerAI account to continue.",
+  AUTH_REQUIRED: "Connect this device to your household to continue.",
   PROFILE_LOCKED: "Unlock this profile with its PIN to continue.",
   PIN_INVALID: "That PIN was not accepted. Please try again.",
   INVALID_PIN: "Use a PIN containing exactly 4 digits.",
   INVALID_MASTER_PIN: "Enter and confirm an 8-digit Master PIN.",
-  MASTER_PIN_REQUIRED:
-    "Choose an 8-digit Master PIN to create this local account.",
+  MASTER_PIN_REQUIRED: "Choose an 8-digit Master PIN to create your household.",
+  HOUSEHOLD_SETUP_IN_PROGRESS:
+    "Household setup is already open in another browser. Continue there, or try again after that setup session expires.",
+  HOUSEHOLD_ALREADY_CONFIGURED:
+    "This server already has a household. Sign in with its Master PIN.",
+  HOUSEHOLD_SETUP_REQUIRED:
+    "Finish setting up the household with its Master PIN before signing in to administration.",
+  HOUSEHOLD_RESTORE_REQUIRED:
+    "Restore your cloud household using its existing Master PIN.",
   MASTER_PIN_IMMUTABLE:
     "A Master PIN is already set. Use Change Master PIN to update it.",
   MASTER_PIN_SETUP_PENDING:
@@ -575,16 +683,30 @@ const domainErrorMessages: Record<string, string> = {
   SIGN_OUT_FIRST:
     "Sign out of the online account before opening a local account.",
   PIN_RESET_UNAVAILABLE:
-    "A PIN cannot be reset without an online account with synchronization enabled.",
+    "Ask the household owner to reset this profile PIN in household administration.",
   ACCOUNT_SIGN_IN_REQUIRED: "Sign in to your StreamerAI account again.",
   PIN_INCORRECT: "That PIN was not accepted. Please try again.",
   PIN_RATE_LIMITED: "Too many PIN attempts. Wait a moment and try again.",
   MASTER_PIN_UPGRADE_REQUIRED:
-    "To enable PIN changes on this server, confirm your current Master PIN once in the account portal using Forgot PIN?.",
+    "Confirm your current household Master PIN in household administration.",
   MASTER_PIN_CLOUD_UNAVAILABLE:
-    "Connect to your online account to change the Master PIN.",
+    "Household ownership cannot be verified right now. Please try again.",
   MASTER_PIN_CHANGED:
     "The Master PIN changed on another device. Check the current PIN and try again.",
+  HOUSEHOLD_CLOUD_CONFLICT:
+    "This cloud account does not own the household connected to this server. Sign in with the household owner's account.",
+  HOUSEHOLD_CLOUD_UNAVAILABLE:
+    "Cloud services are unavailable. Your local household remains on this server. Try again later.",
+  PAIRING_NOT_FOUND:
+    "This sign-in request is no longer available. Get a new code and try again.",
+  HOUSEHOLD_BACKUP_REQUIRED:
+    "This household has no encrypted cloud backup. Import a local backup or create a new household.",
+  HOUSEHOLD_NOT_FOUND:
+    "This cloud household is no longer available. Refresh and choose another household.",
+  ACCOUNT_REAUTH_REQUIRED:
+    "Confirm household ownership with a fresh cloud sign-in and try again.",
+  INSTALLATION_OWNER_REQUIRED:
+    "Open household administration and sign in as the household owner.",
   AUTH_UNAVAILABLE: "Sign-in is temporarily unavailable. Please try again.",
   ACCOUNT_SERVICE_UNAVAILABLE:
     "Sign-in is temporarily unavailable. Please try again.",
@@ -920,17 +1042,74 @@ export const apiClient: StreamerApi = {
     }),
   getAuthStatus: () => request<AuthStatus>("/auth/status"),
   getInstallationStatus: () => request("/installation/status"),
+  beginHouseholdSetup: () =>
+    request("/installation/setup", { method: "POST", body: "{}" }),
   startDeviceAuthorization: (input) =>
-    request<DeviceAuthorization>("/auth/device", {
+    request<DeviceAuthorization>("/account/cloud/device", {
       method: "POST",
       ...(input ? { body: JSON.stringify(input) } : {}),
     }),
   pollDeviceAuthorization: (deviceCode) =>
-    request("/auth/device/poll", {
+    request("/account/cloud/device/poll", {
       method: "POST",
       body: JSON.stringify({ deviceCode }),
     }),
+  getCloudHouseholds: () => request("/account/cloud/households"),
+  selectCloudHousehold: (input) =>
+    request("/account/cloud/households/select", {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  authorizeInstallation: (input) =>
+    request("/installation/authorize", {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  resetProfilePin: (profileId) =>
+    request(`/admin/profiles/${encodeURIComponent(profileId)}/pin-reset`, {
+      method: "POST",
+      body: JSON.stringify({ confirm: "reset-profile-pin" }),
+    }),
+  getProfilePinResetRequests: () => request("/admin/pin-resets"),
+  decideProfilePinReset: (requestId, approve) =>
+    request(`/admin/pin-resets/${encodeURIComponent(requestId)}/decision`, {
+      method: "POST",
+      body: JSON.stringify({ approve }),
+    }),
+  resetMasterPin: (newPin, confirmation) =>
+    request("/admin/master-pin/reset", {
+      method: "POST",
+      body: JSON.stringify({ newPin, confirmation }),
+    }),
+  getBackupSchedule: () => request("/account/backup-schedule"),
+  renameHousehold: (name) =>
+    request("/admin/household", {
+      method: "PUT",
+      body: JSON.stringify({ name }),
+    }),
+  getHouseholdMerges: () => request("/admin/household-merges"),
+  previewHouseholdMerge: (requestId, sourcePin) =>
+    request("/admin/household-merge/preview", {
+      method: "POST",
+      body: JSON.stringify({ requestId, sourcePin }),
+    }),
+  completeHouseholdMerge: (requestId, sourcePin) =>
+    request("/admin/household-merge/complete", {
+      method: "POST",
+      body: JSON.stringify({
+        requestId,
+        sourcePin,
+        confirm: "merge-households",
+      }),
+    }),
+  saveBackupSchedule: (input) =>
+    request("/account/backup-schedule", {
+      method: "PUT",
+      body: JSON.stringify(input),
+    }),
   logout: () => request<void>("/auth/logout", { method: "POST" }),
+  disconnectCloud: () =>
+    request("/account/cloud/disconnect", { method: "POST" }),
   getAccount: () => request<AccountOverview>("/account"),
   getAccountConnections: () =>
     request<AccountConnections>("/account/connections"),

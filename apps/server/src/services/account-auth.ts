@@ -29,6 +29,15 @@ import {
   isMasterPinVerifier,
   MasterPinService,
 } from "./master-pin.js";
+import {
+  householdAccountKey,
+  householdCloudCredentialKey,
+  householdId,
+  householdIdKey,
+  householdPendingKey,
+  householdReadyKey,
+  type PendingHousehold,
+} from "./household-state.js";
 
 const derive = promisify(scrypt);
 const derivePin = promisify(pbkdf2);
@@ -75,6 +84,8 @@ interface Pairing {
   sessionHash?: string;
   adoptAccountId?: string;
   disableSync?: boolean;
+  householdAccountId?: string;
+  unified?: boolean;
 }
 interface SyncStatus {
   configured: boolean;
@@ -195,6 +206,8 @@ export class AccountAuthService {
       version: number;
       deviceId: string;
       expiresAt: number;
+      local?: boolean;
+      status?: "pending" | "approved" | "denied";
     }
   >();
   private readonly checks = new Map<
@@ -241,6 +254,27 @@ export class AccountAuthService {
       return null;
     const known = this.contexts.get(request);
     if (known) return known;
+    const actor = this.options.localAccess?.actor(request);
+    const household = this.options.database.accounts.getHousehold();
+    if (this.options.localAccess?.isSetupSession(request))
+      return {
+        account: household,
+        session: null,
+        hash: `setup:${actor!.id}`,
+        internal: false,
+      };
+    if (
+      actor &&
+      (actor.role === "owner" ||
+        this.options.database.settings.get(householdReadyKey(household.id)) ===
+          true)
+    )
+      return {
+        account: household,
+        session: null,
+        hash: `installation:${actor.id}`,
+        internal: false,
+      };
     const session = this.session(request);
     if (session)
       return {
@@ -251,7 +285,7 @@ export class AccountAuthService {
       };
     if (this.enabled) return null;
     return {
-      account: this.options.database.accounts.getLocal(),
+      account: household,
       session: null,
       hash: "",
       internal: false,
@@ -326,6 +360,18 @@ export class AccountAuthService {
   ): Promise<{ token: string; deviceId: string } | null> {
     const expectedCloudUserId =
       this.options.database.accounts.get(accountId)?.cloudUserId;
+    const serverCredential = await this.options.secretStore.get(
+      householdCloudCredentialKey(accountId),
+    );
+    if (serverCredential && expectedCloudUserId) {
+      const parsed = JSON.parse(serverCredential) as {
+        token: string;
+        deviceId: string;
+        cloudUserId: string;
+      };
+      if (parsed.cloudUserId === expectedCloudUserId)
+        return { token: parsed.token, deviceId: parsed.deviceId };
+    }
     for (const session of this.options.database.auth.listDevices(accountId)) {
       if (
         session.revokedAt ||
@@ -581,6 +627,19 @@ export class AccountAuthService {
   }
   private async validateSession(context: Context): Promise<boolean> {
     if (
+      this.options.database.settings.get(householdAccountKey) ===
+        context.account.id &&
+      (this.options.database.settings.get(
+        householdReadyKey(context.account.id),
+      ) === true ||
+        !this.options.localAccess?.enabled)
+    ) {
+      const current = this.options.database.accounts.get(context.account.id);
+      if (!current) return false;
+      context.account = current;
+      return true;
+    }
+    if (
       context.session?.label === "Offline restored household" &&
       this.options.database.settings.get("server.offlineRestore")
     )
@@ -740,6 +799,9 @@ export class AccountAuthService {
     }
   }
   private async refreshMasterPin(account: Account) {
+    // A household owns its local PIN. Cloud identity authentication never replaces it.
+    if (this.options.database.settings.get(householdAccountKey) === account.id)
+      return;
     if (!account.cloudUserId || !this.enabled) return;
     const credential = await this.getCredential(account.id);
     if (!credential) return;
@@ -759,6 +821,118 @@ export class AccountAuthService {
     } catch {
       /* Cached verifier preserves offline access. */
     }
+  }
+
+  private bindHousehold(accountId: string) {
+    this.options.database.settings.set(householdAccountKey, accountId);
+    this.options.localAccess?.bindHousehold(accountId);
+  }
+
+  async authorizeHouseholdPin(pin: string): Promise<boolean> {
+    return (
+      (await this.checkMasterPin(
+        this.options.database.accounts.getHousehold(),
+        pin,
+      )) === "ok"
+    );
+  }
+
+  async installationHouseholdStatus() {
+    const account = this.options.database.accounts.getHousehold();
+    const master = await this.masterPins.read(account.id);
+    return {
+      householdReady:
+        this.options.database.settings.get(householdReadyKey(account.id)) ===
+          true ||
+        (!!master?.pin &&
+          !this.options.database.settings.get(householdPendingKey(account.id))),
+      householdName: account.name || "StreamerAI household",
+      masterPinEnabled: !!master,
+      cloudConfigured: this.enabled,
+      cloudLinked: !!account.cloudUserId,
+    };
+  }
+
+  /** Retry remote attachment from the locally stored PIN; clients never need to enter it twice. */
+  async resumeHousehold(accountId: string): Promise<boolean> {
+    const account = this.options.database.accounts.getRequired(accountId);
+    const pending = this.options.database.settings.get<PendingHousehold>(
+      householdPendingKey(accountId),
+    );
+    if (pending?.kind === "restore" || pending?.kind === "create") return false;
+    const master = await this.masterPins.read(accountId);
+    if (!master?.pin) return false;
+    this.bindHousehold(accountId);
+    this.options.database.settings.set(householdReadyKey(accountId), true);
+    if (!pending) return true;
+    if (!account.cloudUserId) {
+      this.options.database.settings.delete(householdPendingKey(accountId));
+      return true;
+    }
+    try {
+      const credential = await this.getCredential(accountId);
+      if (!credential) return false;
+      const response = await this.cloud(
+        "/v1/households",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            householdId: householdId(this.options.database, accountId),
+            name: account.name || "StreamerAI household",
+            serverId: this.options.database.settings.get("server.instanceId"),
+          }),
+        },
+        credential.token,
+      );
+      if (!response.ok) return false;
+      this.options.database.settings.delete(householdPendingKey(accountId));
+      await this.options.sync?.setEnabled?.(accountId, true);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async completeHouseholdSetup(accountId: string): Promise<void> {
+    const pin = await this.masterPins.read(accountId);
+    if (!pin?.pin) throw new Error("The household Master PIN is unavailable.");
+    const alreadyReady =
+      this.options.database.settings.get(householdReadyKey(accountId)) === true;
+    this.bindHousehold(accountId);
+    this.options.database.settings.set(householdReadyKey(accountId), true);
+    if (
+      alreadyReady &&
+      !this.options.database.settings.get(householdPendingKey(accountId))
+    )
+      return;
+    if (this.options.database.accounts.getRequired(accountId).cloudUserId) {
+      this.options.database.settings.set(householdPendingKey(accountId), {
+        kind: "register",
+      } satisfies PendingHousehold);
+      await this.resumeHousehold(accountId);
+    } else
+      this.options.database.settings.delete(householdPendingKey(accountId));
+  }
+
+  async validateHouseholdImport(
+    accountId: string,
+    pin: string,
+  ): Promise<boolean> {
+    const account = this.options.database.accounts.getRequired(accountId);
+    const pending = this.options.database.settings.get<PendingHousehold>(
+      householdPendingKey(accountId),
+    );
+    if (!account.cloudUserId || pending?.kind !== "restore") return true;
+    await this.refreshMasterPin(account);
+    return this.masterPins.verify(accountId, pin);
+  }
+
+  async completeHouseholdImport(
+    accountId: string,
+    datasetId: string,
+  ): Promise<void> {
+    this.options.database.settings.set(householdIdKey(accountId), datasetId);
+    await this.completeHouseholdSetup(accountId);
   }
   private async checkMasterPin(
     account: Account,
@@ -795,6 +969,11 @@ export class AccountAuthService {
     }
   }
   private ownerResetAvailable(account: Account) {
+    if (
+      this.options.database.settings.get(householdAccountKey) === account.id &&
+      this.options.database.settings.get(householdReadyKey(account.id)) === true
+    )
+      return true;
     const sync = this.options.sync?.status(account.id);
     return (
       this.enabled &&
@@ -802,6 +981,39 @@ export class AccountAuthService {
       !!sync?.configured &&
       sync.status !== "disabled"
     );
+  }
+  listLocalPinResets() {
+    const accountId = this.options.database.accounts.getHousehold().id;
+    return [...this.ownerRequests.entries()].flatMap(([id, request]) => {
+      const profile = this.options.database.profiles.get(request.profileId);
+      return request.local &&
+        request.accountId === accountId &&
+        request.status === "pending" &&
+        request.expiresAt > this.now().getTime() &&
+        profile
+        ? [
+            {
+              id,
+              profileId: profile.id,
+              profileName: profile.name,
+              deviceName: request.deviceId,
+              expiresAt: new Date(request.expiresAt).toISOString(),
+            },
+          ]
+        : [];
+    });
+  }
+  decideLocalPinReset(id: string, approve: boolean): boolean {
+    const request = this.ownerRequests.get(id);
+    if (
+      !request?.local ||
+      request.accountId !== this.options.database.accounts.getHousehold().id ||
+      request.expiresAt <= this.now().getTime() ||
+      request.status !== "pending"
+    )
+      return false;
+    request.status = approve ? "approved" : "denied";
+    return true;
   }
   register(app: FastifyInstance) {
     app.addHook("preValidation", async (request, reply) => {
@@ -821,7 +1033,10 @@ export class AccountAuthService {
       if (
         /^\/api\/v1\/(?:health\/|environment\/|auth\/(?:status|local|device(?:\/poll)?))/.test(
           path,
-        )
+        ) ||
+        path === "/api/v1/installation/discovery" ||
+        path === "/api/v1/account/cloud/device" ||
+        path === "/api/v1/account/cloud/device/poll"
       )
         return;
       let context = this.context(request);
@@ -859,6 +1074,18 @@ export class AccountAuthService {
       if (!context || !(await this.validateSession(context)))
         return error(reply, 401, "AUTH_REQUIRED", "Sign in to StreamerAI.");
       this.contexts.set(request, context);
+      if (
+        (path.startsWith("/api/v1/admin/") ||
+          path === "/api/v1/account/backup-schedule") &&
+        this.options.localAccess?.enabled &&
+        !this.options.localAccess.isOwner(request)
+      )
+        return error(
+          reply,
+          403,
+          "INSTALLATION_OWNER_REQUIRED",
+          "Open household administration as its owner.",
+        );
       if (context.session)
         this.options.database.auth.touchSession(context.hash);
       const params = object(request.params),
@@ -880,6 +1107,7 @@ export class AccountAuthService {
       const defaultScoped =
         !path.startsWith("/api/v1/account") &&
         !path.startsWith("/api/v1/auth") &&
+        !path.startsWith("/api/v1/admin/") &&
         path !== "/api/v1/profiles" &&
         !params.profileId &&
         !grantId;
@@ -966,6 +1194,19 @@ export class AccountAuthService {
       if (context && !this.enabled && !context.session)
         context = this.createSession(request, reply, context.account);
       if (context && !(await this.validateSession(context))) context = null;
+      const activeHousehold = this.options.database.accounts.getHousehold();
+      const master = await this.masterPins.read(activeHousehold.id);
+      const pendingHousehold =
+        this.options.database.settings.get<PendingHousehold>(
+          householdPendingKey(activeHousehold.id),
+        );
+      if (master?.pin && !pendingHousehold) {
+        this.bindHousehold(activeHousehold.id);
+        this.options.database.settings.set(
+          householdReadyKey(activeHousehold.id),
+          true,
+        );
+      }
       const localAccount = this.options.database.accounts.getLocal();
       const household = localAccount.cloudUserId
         ? this.options.database.accounts
@@ -996,6 +1237,24 @@ export class AccountAuthService {
             : this.recoveredLocalAccounts()
         ).map((account) => ({ id: sha(account.id) })),
         authenticated: context !== null,
+        householdReady:
+          this.options.database.settings.get(
+            householdReadyKey(activeHousehold.id),
+          ) === true,
+        householdSetupStarted:
+          this.options.database.settings.get("household.setupStarted") ===
+            true || pendingHousehold !== null,
+        householdRestoreRequired: pendingHousehold?.kind === "restore",
+        householdCloudSetupPending: pendingHousehold?.kind === "register",
+        householdSelectionRequired:
+          this.options.database.settings.get(
+            `household.cloudSelection.${activeHousehold.id}`,
+          ) === true,
+        householdPinRequired:
+          !!master && !master.pin && pendingHousehold?.kind !== "restore",
+        householdId: this.options.database.settings.get<string>(
+          householdIdKey(activeHousehold.id),
+        ),
         account: context ? publicAccount(context.account) : null,
         ownerResetAvailable: context
           ? this.ownerResetAvailable(context.account)
@@ -1005,13 +1264,15 @@ export class AccountAuthService {
           : false,
         masterPinSetupRequired:
           !!context &&
-          (!context.account.cloudUserId || !this.enabled) &&
+          pendingHousehold?.kind !== "restore" &&
           !(await this.masterPins.read(context.account.id)),
         localMasterPinRequired:
           !household || !(await this.masterPins.read(household.id)),
       };
     });
     app.post("/api/v1/auth/local", async (request, reply) => {
+      const settingUp =
+        this.options.localAccess?.isSetupSession(request) === true;
       if (!this.consumeAttempt(`local:${request.ip}`, 30))
         return error(
           reply,
@@ -1020,7 +1281,12 @@ export class AccountAuthService {
           "Wait before opening another local session.",
         );
       const current = this.context(request);
-      if (current?.session && current.account.cloudUserId)
+      if (
+        current?.session &&
+        current.account.cloudUserId &&
+        this.options.database.settings.get(householdAccountKey) !==
+          current.account.id
+      )
         return error(
           reply,
           409,
@@ -1046,9 +1312,23 @@ export class AccountAuthService {
           "This local account is no longer available.",
         );
       if (
-        !(restoring && account.cloudUserId) &&
-        !(await this.masterPins.read(account.id))
-      ) {
+        settingUp &&
+        (this.options.database.settings.get<PendingHousehold>(
+          householdPendingKey(account.id),
+        )?.kind === "restore" ||
+          this.options.database.settings.get(
+            `household.cloudSelection.${account.id}`,
+          ))
+      )
+        return error(
+          reply,
+          409,
+          "HOUSEHOLD_RESTORE_REQUIRED",
+          "Select and restore your cloud household using its existing Master PIN.",
+        );
+      this.bindHousehold(account.id);
+      this.options.database.settings.set("household.setupStarted", true);
+      if (!(await this.masterPins.read(account.id))) {
         const pin = object(request.body).masterPin;
         const profiles = this.options.database.profiles.list(account.id);
         const deferForWelcome =
@@ -1084,6 +1364,8 @@ export class AccountAuthService {
           );
         }
       }
+      if ((await this.masterPins.read(account.id))?.pin)
+        await this.completeHouseholdSetup(account.id);
       this.options.database.settings.set("account.localEntryUsed", true);
       if (this.options.database.profiles.count(account.id) === 0)
         this.options.database.profiles.create({
@@ -1093,13 +1375,17 @@ export class AccountAuthService {
           locale: "en",
           preferences: { onboardingComplete: false },
         });
-      this.createSession(
-        request,
-        reply,
-        account,
-        undefined,
-        restoring ? "Offline restored household" : "Local browser",
-      );
+      if (settingUp) {
+        if ((await this.masterPins.read(account.id))?.pin)
+          await this.options.localAccess?.finishSetup(request, reply);
+      } else
+        this.createSession(
+          request,
+          reply,
+          account,
+          undefined,
+          restoring ? "Offline restored household" : "Local browser",
+        );
       reply.header("cache-control", "no-store");
       return { account: publicAccount(account) };
     });
@@ -1473,6 +1759,9 @@ export class AccountAuthService {
           lastSyncedAt: null,
           error: null,
         },
+        cloudConfigured: this.enabled,
+        householdId: householdId(this.options.database, context.account.id),
+        serverId: this.options.database.settings.get("server.instanceId"),
       };
     });
     app.get("/api/v1/account/connections", async (request, reply) => {
@@ -1642,6 +1931,47 @@ export class AccountAuthService {
       "/api/v1/profiles/:profileId/pin-reset",
       async (request, reply) => {
         const context = this.context(request)!;
+        if (
+          this.options.database.settings.get(householdAccountKey) ===
+            context.account.id &&
+          this.ownerResetAvailable(context.account)
+        ) {
+          if (!this.consumeAttempt(`local-owner-reset:${context.hash}`, 5))
+            return error(
+              reply,
+              429,
+              "RATE_LIMITED",
+              "Wait before requesting another PIN reset.",
+            );
+          const profile = this.options.database.profiles.getRequired(
+            request.params.profileId,
+          );
+          const id = randomUUID(),
+            expiresAt = this.now().getTime() + 300_000;
+          this.ownerRequests.set(id, {
+            local: true,
+            status: "pending",
+            session: context.hash,
+            accountId: context.account.id,
+            profileId: profile.id,
+            version: this.options.database.profiles.getPinRecord(profile.id)
+              .version,
+            deviceId:
+              this.options.localAccess?.actor(request)?.name ??
+              "Household client",
+            expiresAt,
+          });
+          const origin = new URL(
+            this.options.webOrigin ?? "http://localhost:5173",
+          );
+          if (request.headers.host) origin.host = request.headers.host;
+          return {
+            id,
+            expiresAt: new Date(expiresAt).toISOString(),
+            manageUrl: new URL(`/admin?tab=profiles&request=${id}`, origin)
+              .href,
+          };
+        }
         if (!context.session || !this.ownerResetAvailable(context.account))
           return error(
             reply,
@@ -1760,6 +2090,19 @@ export class AccountAuthService {
             "RATE_LIMITED",
             "Wait before checking again.",
           );
+        if (pending.local) {
+          const status = pending.status ?? "pending";
+          if (status !== "pending") this.ownerRequests.delete(id as string);
+          if (status === "approved")
+            this.resets.set(
+              `${context.hash}:${pending.profileId}:${pending.version}`,
+              {
+                accountId: context.account.id,
+                expiresAt: this.now().getTime() + 300_000,
+              },
+            );
+          return { status };
+        }
         const credential = await this.getCredential(context.account.id);
         if (!credential || credential.deviceId !== pending.deviceId)
           return error(
@@ -1826,9 +2169,20 @@ export class AccountAuthService {
     app.post("/api/v1/account/master-pin", async (request, reply) => {
       const context = this.context(request)!;
       if (
-        (context.account.cloudUserId && this.enabled) ||
-        (await this.masterPins.read(context.account.id))
+        this.options.database.settings.get<PendingHousehold>(
+          householdPendingKey(context.account.id),
+        )?.kind === "restore" ||
+        this.options.database.settings.get(
+          `household.cloudSelection.${context.account.id}`,
+        )
       )
+        return error(
+          reply,
+          409,
+          "HOUSEHOLD_RESTORE_REQUIRED",
+          "Restore the selected household with its existing Master PIN.",
+        );
+      if (await this.masterPins.read(context.account.id))
         return error(
           reply,
           403,
@@ -1862,6 +2216,8 @@ export class AccountAuthService {
         this.pinJobs.delete(job);
       }
       this.options.database.settings.set("account.localEntryUsed", true);
+      await this.completeHouseholdSetup(context.account.id);
+      await this.options.localAccess?.finishSetup(request, reply);
       return { ok: true };
     });
     app.post("/api/v1/account/master-pin/verify", async (request, reply) => {
@@ -1889,6 +2245,11 @@ export class AccountAuthService {
           "PIN_INCORRECT",
           "The Master PIN is incorrect.",
         );
+      if (
+        this.options.database.settings.get(householdAccountKey) ===
+        context.account.id
+      )
+        await this.completeHouseholdSetup(context.account.id);
       return reply.code(204).send();
     });
     app.put("/api/v1/account/master-pin", async (request, reply) => {
@@ -1935,7 +2296,11 @@ export class AccountAuthService {
             "PIN_INCORRECT",
             "The current Master PIN is incorrect.",
           );
-        if (!context.account.cloudUserId) {
+        if (
+          !context.account.cloudUserId ||
+          this.options.database.settings.get(householdAccountKey) ===
+            context.account.id
+        ) {
           if (
             !(await this.masterPins.changeLocal(
               context.account.id,
