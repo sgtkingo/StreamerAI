@@ -172,10 +172,9 @@ describe("account management", () => {
     await waitFor(() => expect(api.disconnectCloud).toHaveBeenCalledOnce());
     expect(api.logout).not.toHaveBeenCalled();
   });
-  it("sends ownership management to the hosted portal and revokes devices", async () => {
+  it("sends ownership management to the hosted portal without showing devices", async () => {
     const api = {
       getAccount: vi.fn().mockResolvedValue(overview),
-      revokeAccountDevice: vi.fn().mockResolvedValue(undefined),
     } as unknown as StreamerApi;
     render(<AccountSettings api={api} profile={profile} />);
     const portal = await screen.findByRole("link", {
@@ -184,13 +183,10 @@ describe("account management", () => {
     expect(portal).toHaveAttribute("href", overview.manageUrl);
     expect(portal).toHaveAttribute("rel", "noopener noreferrer");
     expect(screen.queryByLabelText("Transfer code")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Disconnect" }));
-    await waitFor(() =>
-      expect(api.revokeAccountDevice).toHaveBeenCalledWith("tv"),
-    );
-    await waitFor(() =>
-      expect(screen.queryByText("Living room TV")).not.toBeInTheDocument(),
-    );
+    expect(screen.queryByText("Living room TV")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "Connected devices" }),
+    ).not.toBeInTheDocument();
   });
 
   it("keeps local-only mode clear and hides unavailable cloud actions", async () => {

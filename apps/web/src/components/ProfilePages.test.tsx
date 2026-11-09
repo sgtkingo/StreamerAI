@@ -70,4 +70,9 @@ it("keeps household administration out of playback profile pages", () => {
   expect(props.onSwitchAccount).toHaveBeenCalledOnce();
   expect(screen.getByText("Profile privacy")).toBeVisible();
   expect(screen.getByText("Profile photo")).toBeVisible();
+  view.rerender(<ProfilePages {...props} page="support" />);
+  expect(screen.getByText("Report a problem")).toBeVisible();
+  expect(
+    screen.queryByRole("link", { name: "Open household administration" }),
+  ).not.toBeInTheDocument();
 });

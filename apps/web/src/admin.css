@@ -15,9 +15,45 @@
   font-size: 14px;
 }
 .admin-header > a {
-  margin-left: auto;
   color: var(--white);
   font-size: 13px;
+}
+.admin-header__report {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-raised);
+  color: var(--white);
+  font-size: 13px;
+  cursor: pointer;
+}
+.admin-header__report:hover,
+.admin-header__report:focus-visible {
+  border-color: var(--slate);
+}
+.support-faq__list {
+  display: grid;
+  gap: 8px;
+  margin-top: 16px;
+}
+.support-faq details {
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.support-faq summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.support-faq details p {
+  margin: 12px 0 0;
+  color: var(--slate);
+  font-size: 14px;
+  line-height: 1.6;
 }
 .admin-layout {
   display: grid;

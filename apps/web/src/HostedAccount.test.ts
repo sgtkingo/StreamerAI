@@ -359,6 +359,19 @@ it("approves a server connection without creating a household Master PIN", async
 it("sends household merge requests to the selected household", async () => {
   const base = portalFetcher();
   const fetcher = vi.fn(async (path: string, options?: RequestInit) => {
+    if (path === "/v1/households")
+      return Response.json({
+        households: [
+          { id: "home-1", name: "Home" },
+          { id: "home-2", name: "Cottage" },
+          { id: "home-3", name: "Merged", mergedInto: "home-1" },
+        ],
+      });
+    if (
+      path === "/v1/households/home-2/pin-resets" ||
+      path === "/v1/households/home-3/pin-resets"
+    )
+      return Response.json({ requests: [] });
     if (path === "/v1/households/home-1/merge")
       return Response.json({ ok: true });
     return base(path, options);
@@ -369,9 +382,14 @@ it("sends household merge requests to the selected household", async () => {
     expect(document.querySelector("#merge-household option")).not.toBeNull(),
   );
   await new Promise((resolve) => setTimeout(resolve, 0));
-  (
-    document.getElementById("merge-target-household") as HTMLInputElement
-  ).value = "home-2";
+  const target = document.getElementById(
+    "merge-target-household",
+  ) as HTMLSelectElement;
+  expect([...target.options].map((option) => option.value)).toEqual(["home-2"]);
+  expect(
+    (document.getElementById("profile-target-household") as HTMLSelectElement)
+      .value,
+  ).toBe("home-2");
   document
     .getElementById("household-merge-form")!
     .dispatchEvent(new Event("submit", { cancelable: true }));
@@ -384,6 +402,31 @@ it("sends household merge requests to the selected household", async () => {
       }),
     ),
   );
+  const source = document.getElementById(
+    "merge-household",
+  ) as HTMLSelectElement;
+  source.value = "home-2";
+  source.dispatchEvent(new Event("change"));
+  expect([...target.options].map((option) => option.value)).toEqual(["home-1"]);
+});
+
+it("disables transfers and merges when no other owned household is available", async () => {
+  vi.stubGlobal("fetch", portalFetcher());
+  portal();
+  await waitFor(() =>
+    expect(
+      document.querySelector("#merge-target-household option"),
+    ).not.toBeNull(),
+  );
+  for (const formId of ["household-profile-form", "household-merge-form"]) {
+    const form = document.getElementById(formId) as HTMLFormElement;
+    const target = form.querySelector<HTMLSelectElement>(
+      "select[id$='target-household']",
+    )!;
+    expect(target).toBeDisabled();
+    expect(target).toHaveValue("");
+    expect(form.querySelector("button[type=submit]")).toBeDisabled();
+  }
 });
 
 it("requires confirmation before deleting the cloud account and offers reauthentication when needed", async () => {

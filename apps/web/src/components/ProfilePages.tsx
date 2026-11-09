@@ -11,6 +11,7 @@ import { AudioOutputPicker } from "./AudioOutputPicker";
 import { useToasts } from "./ToastProvider";
 import { AppearanceSettings } from "../theme/AppearanceSettings";
 import { ProfilePinSettings } from "./ProfilePin";
+import { SupportPanel } from "./SupportPanel";
 
 export type ProfilePage =
   "settings" | "preferences" | "account" | "profile" | "support" | "statistics";
@@ -168,14 +169,35 @@ export function ProfilePages({
             </p>
           </section>
           <section className="profile-page__section">
+            <p className="eyebrow">Household administration</p>
             <h2>Household services and devices</h2>
             <p>
-              Server connections, cloud services, backups and device access are
-              managed in household administration.
+              Manage shared settings for everyone in your household on your home
+              server.
             </p>
-            <a className="button button--secondary" href="/admin">
+            <ul className="household-settings-list">
+              <li>
+                <strong>Services</strong>
+                <span>Streaming connections and cloud sync</span>
+              </li>
+              <li>
+                <strong>Devices</strong>
+                <span>Pairing and access to your server</span>
+              </li>
+              <li>
+                <strong>Security &amp; backups</strong>
+                <span>Master PIN and household backups</span>
+              </li>
+            </ul>
+            <a
+              className="button button--secondary household-settings-link"
+              href="/admin"
+            >
               Open household administration
             </a>
+            <p className="settings-note">
+              Household owner sign-in is required.
+            </p>
           </section>
           <div className="profile-page__actions">
             <button
@@ -289,13 +311,7 @@ export function ProfilePages({
         </div>
       )}
 
-      {page === "support" && (
-        <section className="profile-page__section">
-          <a className="button button--primary" href="/admin#support">
-            Open household administration
-          </a>
-        </section>
-      )}
+      {page === "support" && <SupportPanel />}
 
       {page === "statistics" && (
         <div className="profile-page__sections">

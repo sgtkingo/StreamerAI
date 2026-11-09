@@ -9,14 +9,18 @@ import type { AuthStatus, StreamerApi } from "../api/client";
 import { AdminApp } from "./AdminApp";
 
 vi.mock("./AccountSettings", () => ({
-  AccountSettings: () => <h2>Household account</h2>,
+  AccountSettings: ({ section }: { section: string }) => (
+    <h2>{section === "cloud" ? "Cloud management" : "Household account"}</h2>
+  ),
 }));
 vi.mock("./AccountSecurity", () => ({
   AccountSecurity: () => <h2>Household security</h2>,
 }));
 vi.mock("./IntegrationManager", () => ({ IntegrationManager: () => null }));
 vi.mock("./AgentBackendSettings", () => ({ AgentBackendSettings: () => null }));
-vi.mock("./SupportPanel", () => ({ SupportPanel: () => null }));
+vi.mock("./SupportPanel", () => ({
+  SupportPanel: () => <section id="settings-support">Report form</section>,
+}));
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -56,6 +60,72 @@ function apiWith(status = ready) {
     setupMasterPin: vi.fn().mockResolvedValue({ ok: true }),
   } as unknown as StreamerApi;
 }
+
+it("shows cloud management on its own page", async () => {
+  render(<AdminApp api={apiWith()} />);
+  expect(
+    await screen.findByRole("heading", { name: "Household account" }),
+  ).toBeVisible();
+  expect(
+    screen.queryByRole("heading", { name: "Cloud management" }),
+  ).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Cloud" }));
+  expect(
+    screen.getByRole("heading", { name: "Cloud management" }),
+  ).toBeVisible();
+  expect(
+    screen.queryByRole("heading", { name: "Household account" }),
+  ).not.toBeInTheDocument();
+});
+
+it("opens the report form from the administration header", async () => {
+  render(<AdminApp api={apiWith()} />);
+  const report = await screen.findByRole("button", { name: "Report a bug" });
+  expect(report.closest("header")).toContainElement(
+    screen.getByRole("link", { name: /Open player/ }),
+  );
+  fireEvent.click(report);
+  expect(screen.getByText("Report form")).toBeVisible();
+  expect(
+    screen.getByRole("heading", { name: "Frequently asked questions" }),
+  ).toBeVisible();
+});
+
+it("groups household backups and their schedule on the Backups page", async () => {
+  const api = apiWith();
+  api.getBackupSchedule = vi
+    .fn()
+    .mockResolvedValue({
+      enabled: true,
+      intervalMinutes: 1440,
+      cloudEnabled: true,
+    });
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (path: string) =>
+      Response.json(
+        path.includes("installation/status")
+          ? owner
+          : { cloudConfigured: false },
+      ),
+    ),
+  );
+  render(<AdminApp api={api} />);
+  fireEvent.click(await screen.findByRole("button", { name: "Backups" }));
+  expect(
+    await screen.findByRole("heading", { name: "Household backups" }),
+  ).toBeVisible();
+  expect(
+    screen.getByRole("heading", { name: "Automatic backup schedule" }),
+  ).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Security" }));
+  expect(
+    screen.getByRole("heading", { name: "Household security" }),
+  ).toBeVisible();
+  expect(
+    screen.queryByRole("heading", { name: "Automatic backup schedule" }),
+  ).not.toBeInTheDocument();
+});
 
 it("creates a household in administration and asks for its PIN once", async () => {
   let started = false,
@@ -213,7 +283,7 @@ it("resets a profile PIN locally and saves the backup schedule", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Reset profile PIN" }));
   fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
   await waitFor(() => expect(api.resetProfilePin).toHaveBeenCalledWith("alex"));
-  fireEvent.click(await screen.findByRole("button", { name: /^Security$/ }));
+  fireEvent.click(await screen.findByRole("button", { name: /^Backups$/ }));
   const interval = await screen.findByLabelText("Backup interval (minutes)");
   await waitFor(() => expect(interval).toBeEnabled());
   fireEvent.change(interval, { target: { value: "60" } });

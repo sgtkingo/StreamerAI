@@ -4637,6 +4637,31 @@ textarea:not(:disabled):hover {
   font-size: 13px;
   line-height: 1.6;
 }
+.household-settings-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr));
+  gap: 10px;
+  margin: 24px 0;
+  padding: 0;
+  list-style: none;
+}
+.household-settings-list li {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  padding: 16px;
+  border: 1px solid var(--line, #39393e);
+  border-radius: 8px;
+  background: rgb(255 255 255 / 3%);
+}
+.household-settings-list span {
+  color: var(--slate);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.household-settings-link {
+  display: inline-flex;
+}
 .agent-adapters {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));

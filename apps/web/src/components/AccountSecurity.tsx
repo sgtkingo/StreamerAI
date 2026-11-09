@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import type { AccountOverview, StreamerApi } from "../api/client";
 import { safeErrorMessage } from "../api/client";
 import { DigitSlotsInput } from "./DigitSlotsInput";
-import { EncryptedRecovery } from "./EncryptedRecovery";
 import { useToasts } from "./ToastProvider";
 import { InfoTip } from "./InfoTip";
 
@@ -38,7 +37,6 @@ export function AccountSecurity({ api }: { api: StreamerApi }) {
     <section className="profile-page__section" id="account-security">
       <p className="eyebrow">Account protection</p>
       <h2>Security</h2>
-      <EncryptedRecovery />
       <section
         className="account-security__subsection"
         aria-labelledby="account-master-pin-title"

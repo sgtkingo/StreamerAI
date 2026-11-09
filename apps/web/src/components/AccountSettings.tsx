@@ -12,9 +12,11 @@ import { useToasts } from "./ToastProvider";
 
 export function AccountSettings({
   api,
+  section = "all",
 }: {
   api: StreamerApi;
   profile?: ViewerProfile;
+  section?: "account" | "cloud" | "all";
 }) {
   const [overview, setOverview] = useState<AccountOverview | null>(null);
   const [error, setError] = useState("");
@@ -29,7 +31,12 @@ export function AccountSettings({
   const [connectionsLoading, setConnectionsLoading] = useState(false);
   const [connectionsRetry, setConnectionsRetry] = useState(0);
   useEffect(() => {
-    if (!overview?.manageUrl || !api.getAccountConnections) return;
+    if (
+      section === "account" ||
+      !overview?.manageUrl ||
+      !api.getAccountConnections
+    )
+      return;
     let active = true;
     const refresh = async () => {
       setConnectionsLoading(true);
@@ -61,7 +68,13 @@ export function AccountSettings({
       active = false;
       window.removeEventListener("focus", onFocus);
     };
-  }, [api, overview?.account.id, overview?.manageUrl, connectionsRetry]);
+  }, [
+    api,
+    overview?.account.id,
+    overview?.manageUrl,
+    connectionsRetry,
+    section,
+  ]);
   useEffect(() => {
     if (!api.getAccount) return;
     let active = true;
@@ -97,43 +110,120 @@ export function AccountSettings({
   };
   return (
     <>
-      <section className="profile-page__section">
-        <p className="eyebrow">Account</p>
-        <h2>{overview?.account.name || "Your StreamerAI account"}</h2>
-        {overview ? (
-          <>
-            <p>{overview.account.email}</p>
-            <AccountId
-              value={
-                overview.account.cloudLinked
-                  ? (overview.account.cloudAccountId ?? null)
-                  : overview.account.id
-              }
-            />
-            <p>
-              Connected services are shared by this household's profiles.
-              Viewing history and preferences stay with each profile.
-            </p>
-          </>
-        ) : (
-          !error && <p role="status">Loading account…</p>
-        )}
-        {error && (
-          <p className="account-inline-error" role="alert">
-            {error}{" "}
-            <button
-              className="text-button"
-              type="button"
-              onClick={() => setRetry((value) => value + 1)}
-            >
-              Try again
-            </button>
-          </p>
-        )}
-      </section>
-      {overview && (
+      {section !== "cloud" && (
         <section className="profile-page__section">
-          <h2>Connected accounts</h2>
+          <p className="eyebrow">Account</p>
+          <h2>{overview?.account.name || "Your StreamerAI account"}</h2>
+          {overview ? (
+            <>
+              <p>{overview.account.email}</p>
+              <AccountId
+                value={
+                  overview.account.cloudLinked
+                    ? (overview.account.cloudAccountId ?? null)
+                    : overview.account.id
+                }
+              />
+              <p>
+                Connected services are shared by this household's profiles.
+                Viewing history and preferences stay with each profile.
+              </p>
+            </>
+          ) : (
+            !error && <p role="status">Loading account…</p>
+          )}
+          {error && (
+            <p className="account-inline-error" role="alert">
+              {error}{" "}
+              <button
+                className="text-button"
+                type="button"
+                onClick={() => setRetry((value) => value + 1)}
+              >
+                Try again
+              </button>
+            </p>
+          )}
+        </section>
+      )}
+      {section === "cloud" && !overview && (
+        <section className="profile-page__section">
+          {error ? (
+            <p role="alert">
+              {error}{" "}
+              <button
+                className="text-button"
+                type="button"
+                onClick={() => setRetry((value) => value + 1)}
+              >
+                Try again
+              </button>
+            </p>
+          ) : (
+            <p role="status">Loading cloud settings…</p>
+          )}
+        </section>
+      )}
+      {section !== "account" && overview && (
+        <section className="profile-page__section">
+          <h2>Cloud management</h2>
+          {section === "cloud" && error && <p role="alert">{error}</p>}
+          <h3>Cloud connection</h3>
+          <p>
+            Your household, profiles and Master PIN stay on this server. Cloud
+            services add remote management, synchronization and automatic
+            backups.
+          </p>
+          {overview.account.cloudLinked ? (
+            <>
+              <p>Cloud services are connected.</p>
+              {api.disconnectCloud && (
+                <button
+                  className="button button--secondary"
+                  type="button"
+                  disabled={pending}
+                  onClick={() =>
+                    void run(async () => {
+                      await api.disconnectCloud!();
+                      setOverview(await api.getAccount!());
+                      showToast(
+                        "Cloud disconnected. Your household and profiles are still available on this server.",
+                        "success",
+                      );
+                      window.dispatchEvent(
+                        new Event("streamer:household-changed"),
+                      );
+                    })
+                  }
+                >
+                  Disconnect cloud
+                </button>
+              )}
+            </>
+          ) : !linking &&
+            overview.cloudConfigured !== false &&
+            api.startDeviceAuthorization ? (
+            <button
+              className="button button--secondary"
+              type="button"
+              onClick={() => setLinking(true)}
+            >
+              Connect cloud
+            </button>
+          ) : null}
+          {linking && (
+            <AccountLogin
+              api={api}
+              compact
+              adoptLocalAccount
+              onCancel={() => setLinking(false)}
+              onAuthenticated={() => {
+                setLinking(false);
+                window.dispatchEvent(new Event("streamer:household-changed"));
+              }}
+            />
+          )}
+          <h3>Connected accounts</h3>
           <p>
             Use StreamerAI e-mail or a linked Google account to sign in to the
             same account. Your profiles stay together.
@@ -199,135 +289,29 @@ export function AccountSettings({
             </>
           ) : (
             <p>
-              This household is local. Connect it to StreamerAI below to add
-              online sign-in methods.
+              This household is local. Connect it to StreamerAI to add online
+              sign-in methods.
             </p>
           )}
-        </section>
-      )}
-      {overview && (
-        <section className="profile-page__section">
-          <h2>Cloud connection</h2>
-          <p>
-            Your household, profiles and Master PIN stay on this server. Cloud
-            services add remote management, synchronization and automatic
-            backups.
-          </p>
-          {overview.account.cloudLinked ? (
+          {overview.manageUrl && (
             <>
-              <p>Cloud services are connected.</p>
-              {api.disconnectCloud && (
-                <button
-                  className="button button--secondary"
-                  type="button"
-                  disabled={pending}
-                  onClick={() =>
-                    void run(async () => {
-                      await api.disconnectCloud!();
-                      setOverview(await api.getAccount!());
-                      showToast(
-                        "Cloud disconnected. Your household and profiles are still available on this server.",
-                        "success",
-                      );
-                      window.dispatchEvent(
-                        new Event("streamer:household-changed"),
-                      );
-                    })
-                  }
-                >
-                  Disconnect cloud
-                </button>
-              )}
+              <h3>Manage your households</h3>
+              <p>
+                Manage household ownership, profile transfers between households
+                and merge requests in the cloud account portal. The receiving
+                owner confirms each transfer. Local service credentials stay on
+                this server.
+              </p>
+              <a
+                className="button button--secondary"
+                href={overview.manageUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Open account portal
+              </a>
             </>
-          ) : !linking &&
-            overview.cloudConfigured !== false &&
-            api.startDeviceAuthorization ? (
-            <button
-              className="button button--secondary"
-              type="button"
-              onClick={() => setLinking(true)}
-            >
-              Connect cloud
-            </button>
-          ) : null}
-          {linking && (
-            <AccountLogin
-              api={api}
-              compact
-              adoptLocalAccount
-              onCancel={() => setLinking(false)}
-              onAuthenticated={() => {
-                setLinking(false);
-                window.dispatchEvent(new Event("streamer:household-changed"));
-              }}
-            />
           )}
-        </section>
-      )}
-      {overview && overview.devices.length > 0 && (
-        <section className="profile-page__section">
-          <p className="eyebrow">Devices</p>
-          <h2>Connected devices</h2>
-          <ul className="account-device-list">
-            {overview.devices.map((device) => (
-              <li key={device.id}>
-                <div>
-                  <strong>
-                    {device.name}
-                    {device.current ? " (this device)" : ""}
-                  </strong>
-                  <p className="settings-note">
-                    Last active {new Date(device.lastSeenAt).toLocaleString()}
-                  </p>
-                </div>
-                {api.revokeAccountDevice && !device.current && (
-                  <button
-                    className="button button--ghost"
-                    type="button"
-                    disabled={pending}
-                    onClick={() =>
-                      void run(async () => {
-                        await api.revokeAccountDevice!(device.id);
-                        setOverview((current) =>
-                          current
-                            ? {
-                                ...current,
-                                devices: current.devices.filter(
-                                  (item) => item.id !== device.id,
-                                ),
-                              }
-                            : current,
-                        );
-                        showToast("Device disconnected.", "success");
-                      })
-                    }
-                  >
-                    Disconnect{device.current ? " this device" : ""}
-                  </button>
-                )}
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-      {overview?.manageUrl && (
-        <section className="profile-page__section">
-          <p className="eyebrow">Cloud management</p>
-          <h2>Manage your households</h2>
-          <p>
-            Manage household ownership, profile transfers between households and
-            merge requests in the cloud account portal. The receiving owner
-            confirms each transfer. Local service credentials stay on this
-            server.
-          </p>
-          <a
-            className="button button--secondary"
-            href={overview.manageUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Open account portal
-          </a>
         </section>
       )}
     </>

@@ -26,9 +26,17 @@ import { SupportPanel } from "./SupportPanel";
 import { useToasts } from "./ToastProvider";
 import { HouseholdMerges } from "./HouseholdMerges";
 import { InfoTip } from "./InfoTip";
+import { SupportFaq } from "./SupportFaq";
 
 type AdminSection =
-  "household" | "profiles" | "devices" | "services" | "security" | "support";
+  | "household"
+  | "cloud"
+  | "profiles"
+  | "devices"
+  | "services"
+  | "backups"
+  | "security"
+  | "support";
 
 export function AdminApp({ api = apiClient }: { api?: StreamerApi }) {
   const setupSession = useRef<Promise<unknown> | null>(null);
@@ -253,6 +261,34 @@ export function AdminApp({ api = apiClient }: { api?: StreamerApi }) {
       <header className="admin-header">
         <Brand />
         <span>Household administration</span>
+        <button
+          className="admin-header__report"
+          type="button"
+          onClick={() => {
+            setSection("support");
+            requestAnimationFrame(() =>
+              document
+                .getElementById("settings-support")
+                ?.scrollIntoView?.({ behavior: "smooth", block: "start" }),
+            );
+          }}
+        >
+          <svg
+            aria-hidden="true"
+            width="17"
+            height="17"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.7"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M8 8V6a4 4 0 0 1 8 0v2M12 8v13M5 11H3m18 0h-2M5 16H3m18 0h-2M6 7 4 5m14 2 2-2" />
+            <rect x="5" y="8" width="14" height="13" rx="6" />
+          </svg>
+          Report a bug
+        </button>
         <a href="/">Open player ↗</a>
       </header>
       <div className="admin-layout">
@@ -260,9 +296,11 @@ export function AdminApp({ api = apiClient }: { api?: StreamerApi }) {
           {(
             [
               "household",
+              "cloud",
               "profiles",
               "devices",
               "services",
+              "backups",
               "security",
               "support",
             ] as AdminSection[]
@@ -290,7 +328,7 @@ export function AdminApp({ api = apiClient }: { api?: StreamerApi }) {
                 }
                 onSaved={reload}
               />
-              <AccountSettings api={api} />
+              <AccountSettings api={api} section="account" />
               <HouseholdMerges api={api} onCompleted={reload} />
               <p className="settings-note">
                 This server stores your household locally. Clients connect here
@@ -298,6 +336,7 @@ export function AdminApp({ api = apiClient }: { api?: StreamerApi }) {
               </p>
             </>
           )}
+          {section === "cloud" && <AccountSettings api={api} section="cloud" />}
           {section === "profiles" && (
             <>
               <AdminPinResetRequests api={api} />
@@ -328,13 +367,21 @@ export function AdminApp({ api = apiClient }: { api?: StreamerApi }) {
             ) : (
               <p>Create a profile before connecting services.</p>
             ))}
-          {section === "security" && (
+          {section === "security" && <AccountSecurity api={api} />}
+          {section === "backups" && (
             <>
-              <AccountSecurity api={api} />
+              <div className="profile-page__section">
+                <EncryptedRecovery />
+              </div>
               <AdminBackupSchedule api={api} />
             </>
           )}
-          {section === "support" && <SupportPanel />}
+          {section === "support" && (
+            <>
+              <SupportFaq />
+              <SupportPanel />
+            </>
+          )}
         </main>
       </div>
     </div>

@@ -3,11 +3,7 @@ import { expect, it, vi } from "vitest";
 import type { StreamerApi } from "../api/client";
 import { AccountSecurity } from "./AccountSecurity";
 
-vi.mock("./EncryptedRecovery", () => ({
-  EncryptedRecovery: () => <h3>Household backups</h3>,
-}));
-
-it("groups backups and local Master PIN protection in administration", async () => {
+it("shows Master PIN protection without backup controls", async () => {
   const api = {
     getAccount: vi.fn().mockResolvedValue({
       account: { cloudLinked: true },
@@ -19,8 +15,8 @@ it("groups backups and local Master PIN protection in administration", async () 
   render(<AccountSecurity api={api} />);
   expect(screen.getByRole("heading", { name: "Security" })).toBeVisible();
   expect(
-    screen.getByRole("heading", { name: "Household backups" }),
-  ).toBeVisible();
+    screen.queryByRole("heading", { name: "Household backups" }),
+  ).not.toBeInTheDocument();
   expect(
     await screen.findByRole("link", { name: "Forgot PIN?" }),
   ).toHaveAttribute("href", "/admin/recover");

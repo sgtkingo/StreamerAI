@@ -99,8 +99,8 @@ export function page(
     <section id="requests" class="account-section"><h2>Žádosti ke schválení</h2><p class="section-intro">Převod vlastnictví domácnosti, převod profilu a sloučení vždy potvrzuje cílový vlastník.</p><div id="household-requests" class="approval-list"></div></section>
     <section class="account-section"><h2>Správa domácností</h2>
       <details class="operation-form"><summary>Převést vlastnictví domácnosti</summary><form id="household-owner-form"><label for="owner-household">Domácnost</label><select id="owner-household" required></select><label for="household-target-account">E-mail nebo UID nového vlastníka</label><input id="household-target-account" maxlength="320" required><button type="submit">Požádat o převod</button></form></details>
-      <details class="operation-form"><summary>Převést profil mezi domácnostmi</summary><p>Přenese se synchronizovaná knihovna, historie, rozkoukanost a nastavení profilu. Přihlašovací údaje ke službám zůstávají v původní domácnosti. Před převodem synchronizujte oba servery.</p><form id="household-profile-form"><label for="profile-household">Zdrojová domácnost</label><select id="profile-household" required></select><label for="household-profile">Profil</label><select id="household-profile" required></select><label for="profile-target-household">UID cílové domácnosti</label><input id="profile-target-household" maxlength="36" required><button type="submit">Požádat o převod profilu</button></form></details>
-      <details class="operation-form"><summary>Sloučit domácnosti</summary><p>Cílová domácnost smí obsahovat nejvýše pět profilů. Šifrované zálohy a místní přihlašovací údaje vyžadují dokončení importu na domácím serveru; schválení je samo nepřepíše.</p><form id="household-merge-form"><label for="merge-household">Zdrojová domácnost</label><select id="merge-household" required></select><label for="merge-target-household">UID cílové domácnosti</label><input id="merge-target-household" maxlength="36" required><button type="submit">Požádat o sloučení</button></form></details>
+      <details class="operation-form"><summary>Převést profil mezi domácnostmi</summary><p>Přenese se synchronizovaná knihovna, historie, rozkoukanost a nastavení profilu. Přihlašovací údaje ke službám zůstávají v původní domácnosti. Před převodem synchronizujte oba servery.</p><form id="household-profile-form"><label for="profile-household">Zdrojová domácnost</label><select id="profile-household" required></select><label for="household-profile">Profil</label><select id="household-profile" required></select><label for="profile-target-household">Cílová domácnost</label><select id="profile-target-household" required></select><button type="submit">Požádat o převod profilu</button></form></details>
+      <details class="operation-form"><summary>Sloučit domácnosti</summary><p>Cílová domácnost smí obsahovat nejvýše pět profilů. Šifrované zálohy a místní přihlašovací údaje vyžadují dokončení importu na domácím serveru; schválení je samo nepřepíše.</p><form id="household-merge-form"><label for="merge-household">Zdrojová domácnost</label><select id="merge-household" required></select><label for="merge-target-household">Cílová domácnost</label><select id="merge-target-household" required></select><button type="submit">Požádat o sloučení</button></form></details>
     </section>
     <p id="operation-reauth" role="status" hidden>Pro tuto akci je potřeba nové ověření. <a id="operation-reauth-link" href="/login">Přihlaste se znovu</a>.</p>
     <div class="account-final-actions"><button id="signout" class="secondary">Odhlásit</button><button id="delete-account" class="danger-button" type="button">Smazat účet</button></div>
@@ -179,6 +179,7 @@ export const browserScript = String.raw`
   const accountDestination='/account'+(accountQuery&&approvalQuery?accountQuery+'&'+approvalQuery.slice(1):approvalQuery||accountQuery);
   let approvalOpened=false;
   let portalAccount=null;
+  let ownedHouseholds=[];
   function operationError(error){if(error.code==='reauth_required'&&el('operation-reauth')){el('operation-reauth').hidden=false;message('');el('operation-reauth-link').focus();}else message(error.message);}
   function sentMessage(result){return result.emailStatus==='sent'?'Žádost byla vytvořena a oznámení odesláno e-mailem.':'Žádost byla vytvořena, ale e-mail se nepodařilo odeslat. Druhý vlastník ji najde ve svém účtu.';}
   async function signIn() {
@@ -192,6 +193,16 @@ export const browserScript = String.raw`
     catch(error){if(error.code==='unauthorized'){location.replace('/login'+(safeCode?'?user_code='+encodeURIComponent(safeCode):(approvalQuery||accountQuery)));return null;}throw error;}
   }
 
+  function refreshTargetHousehold(sourceId,targetId) {
+    const source=el(sourceId).value, select=el(targetId), previous=select.value;
+    select.replaceChildren();
+    const options=ownedHouseholds.filter(h=>h.id!==source);
+    if(!options.length){const option=document.createElement('option');option.value='';option.textContent='Nejdříve připojte další domácnost';select.append(option);}
+    options.forEach(h=>{const option=document.createElement('option');option.value=h.id;option.textContent=h.name;select.append(option);});
+    if(options.some(h=>h.id===previous))select.value=previous;
+    select.disabled=!options.length;
+    select.closest('form').querySelector('button[type=submit]').disabled=!options.length;
+  }
   async function refreshHouseholdProfiles() {
     const id=el('profile-household').value;el('household-profile').replaceChildren();
     if(!id)return;
@@ -200,6 +211,7 @@ export const browserScript = String.raw`
   }
   async function refreshPortal() {
     const [data,requests]=await Promise.all([api('/v1/households'),api('/v1/household-requests')]);
+    ownedHouseholds=data.households.filter(h=>!h.mergedInto);
     el('households-list').replaceChildren();
     if(!data.households.length){const p=document.createElement('p');p.className='empty-state';p.textContent='Zatím nemáte připojenou domácnost. Přihlaste cloudový účet na svém domácím serveru.';el('households-list').append(p);}
     for(const household of data.households){
@@ -209,7 +221,9 @@ export const browserScript = String.raw`
       for(const reset of resets.requests){const line=document.createElement('div');line.className='row';const text=document.createElement('p');text.textContent='Ověření vlastnictví · '+reset.profile_name+' · '+reset.device_name;line.append(text);for(const approve of [true,false])line.append(button(approve?'Povolit obnovu':'Zamítnout',async()=>{if(!await confirmAction('Ověření vlastnictví domácnosti',reset.profile_name+' · '+reset.device_name,approve?'Povolit':'Zamítnout'))return;await api('/v1/households/'+encodeURIComponent(household.id)+'/pin-resets/'+encodeURIComponent(reset.id)+'/decision',{method:'POST',body:JSON.stringify({approve})});await refreshPortal();},!approve));card.append(line);}
       el('households-list').append(card);
     }
-    for(const key of ['owner-household','profile-household','merge-household']){const select=el(key),previous=select.value;select.replaceChildren();data.households.filter(h=>!h.mergedInto).forEach(h=>{const option=document.createElement('option');option.value=h.id;option.textContent=h.name+' · '+h.id;select.append(option);});if([...select.options].some(o=>o.value===previous))select.value=previous;}
+    for(const key of ['owner-household','profile-household','merge-household']){const select=el(key),previous=select.value;select.replaceChildren();ownedHouseholds.forEach(h=>{const option=document.createElement('option');option.value=h.id;option.textContent=h.name;select.append(option);});if([...select.options].some(o=>o.value===previous))select.value=previous;}
+    refreshTargetHousehold('profile-household','profile-target-household');
+    refreshTargetHousehold('merge-household','merge-target-household');
     await refreshHouseholdProfiles();
     el('household-requests').replaceChildren();
     if(!requests.requests.length){const p=document.createElement('p');p.className='empty-state';p.textContent='Žádné čekající žádosti.';el('household-requests').append(p);}
@@ -272,12 +286,13 @@ export const browserScript = String.raw`
       await refreshPortal();
 
       el('refresh-households').addEventListener('click',()=>refreshPortal().catch(operationError));
-      el('profile-household').addEventListener('change',()=>refreshHouseholdProfiles().catch(operationError));
+      el('profile-household').addEventListener('change',()=>{refreshTargetHousehold('profile-household','profile-target-household');refreshHouseholdProfiles().catch(operationError);});
+      el('merge-household').addEventListener('change',()=>refreshTargetHousehold('merge-household','merge-target-household'));
       for(const [formId,sourceId,endpoint,makeBody] of [
         ['household-owner-form','owner-household','ownership-transfer',()=>({targetAccountId:el('household-target-account').value.trim()})],
         ['household-profile-form','profile-household','profile-transfers',()=>({profileId:el('household-profile').value,targetHouseholdId:el('profile-target-household').value.trim()})],
         ['household-merge-form','merge-household','merge',()=>({targetHouseholdId:el('merge-target-household').value.trim()})]
-      ])el(formId).addEventListener('submit',async(event)=>{event.preventDefault();const submit=event.target.querySelector('button[type=submit]');submit.disabled=true;el('operation-reauth').hidden=true;try{await api('/v1/households/'+encodeURIComponent(el(sourceId).value)+'/'+endpoint,{method:'POST',body:JSON.stringify(makeBody())});message('Žádost byla vytvořena. Cílový vlastník ji potvrdí ve svém účtu.');await refreshPortal();}catch(error){operationError(error);}finally{submit.disabled=false;}});
+      ])el(formId).addEventListener('submit',async(event)=>{event.preventDefault();const submit=event.target.querySelector('button[type=submit]');submit.disabled=true;el('operation-reauth').hidden=true;try{await api('/v1/households/'+encodeURIComponent(el(sourceId).value)+'/'+endpoint,{method:'POST',body:JSON.stringify(makeBody())});message('Žádost byla vytvořena. Cílový vlastník ji potvrdí ve svém účtu.');await refreshPortal();}catch(error){operationError(error);}finally{if(endpoint==='profile-transfers')refreshTargetHousehold('profile-household','profile-target-household');else if(endpoint==='merge')refreshTargetHousehold('merge-household','merge-target-household');else submit.disabled=false;}});
       return;
     }
     el('user-code').value=safeCode;

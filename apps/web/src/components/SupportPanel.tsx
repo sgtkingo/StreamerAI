@@ -6,7 +6,7 @@ export function SupportPanel() {
   const [description, setDescription] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const report = `### What happened\n${description}\n\n### Steps to reproduce\n1. \n\n### Expected result\n\n### Diagnostics\n\`\`\`json\n${diagnostics}\n\`\`\``;
+  const report = `### What happened\n${description}\n\n### Steps to reproduce\n1. \n\n### Expected result\n${diagnostics ? `\n### Diagnostics\n\`\`\`json\n${diagnostics}\n\`\`\`` : ""}`;
   const download = () => {
     const url = URL.createObjectURL(
       new Blob([report], { type: "text/plain;charset=utf-8" }),
@@ -22,8 +22,9 @@ export function SupportPanel() {
       <p className="eyebrow">Support</p>
       <h2>Report a problem</h2>
       <p>
-        Prepare a report, review its contents, then save it or submit it through
-        GitHub. Nothing is sent automatically.
+        Describe the problem, review your report, then save it or submit it
+        through GitHub. Server diagnostics are optional and require owner
+        access.
       </p>
       <button
         className="button button--secondary"
@@ -83,7 +84,7 @@ export function SupportPanel() {
         {busy ? "Preparing…" : "Prepare diagnostics"}
       </button>
       {error && <p role="alert">{error}</p>}
-      {diagnostics && (
+      {
         <>
           <label className="field">
             <span>What happened?</span>
@@ -124,7 +125,7 @@ export function SupportPanel() {
             ticket. Keep sensitive security reports out of public issues.
           </p>
         </>
-      )}
+      }
     </section>
   );
 }

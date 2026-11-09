@@ -201,4 +201,4 @@ DONE: V Settings sekci "Profile PIN" zobrazuj hlášku "Profile PIN saved" nebo 
 
 DONE: V Onbordingu by se měl pod blokem "Your viewing data stays at home." v sekci Welcome, objevit i druh blok s importem zálohy. Přesun tam "Restore an encrypted household instead of starting over", klíč ted bude Master PIN, takže při rekovery se již nevytváří, použe žádá.
 
-- Přidat Report a bug i do klienta, Open household administration odstranit z hlavní profilové nabídky, vylepšit UI/UX sekce "Household services and devices" v Settings, v rámci https://cloud.streamer-ai.workers.dev/account nepoužívat na převod profilů a sloučení domácnsti UID domácnosti ale vybrat z nabídky. 
+- Přidat Report a bug i do klienta, Open household administration odstranit z hlavní profilové nabídky, vylepšit UI/UX sekce "Household services and devices" v Settings, v rámci https://cloud.streamer-ai.workers.dev/account nepoužívat na převod profilů a sloučení domácnsti UID domácnosti ale vybrat z nabídky (dostupné pouze vlastněné domácnosti). 
