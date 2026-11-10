@@ -1,6 +1,11 @@
 import { createAuth } from "./auth.js";
 import { encryptedCheckpoint } from "./encrypted-sync.js";
-import { detachHousehold, household, requireHousehold } from "./households.js";
+import {
+  deleteCloudHousehold,
+  detachHousehold,
+  household,
+  requireHousehold,
+} from "./households.js";
 import { householdCheckpoint } from "./household-checkpoint.js";
 import {
   householdPush,
@@ -394,6 +399,8 @@ async function route(
     );
   if (householdPath?.[1]) {
     const id = householdPath[1];
+    if (!householdPath[2] && method === "DELETE")
+      return deleteCloudHousehold(env, principal, now, id);
     if (householdPath[2] === "connection" && method === "DELETE")
       return detachHousehold(request, env, principal, now, id);
     if (householdPath[2] === "checkpoint") {

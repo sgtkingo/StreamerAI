@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { StreamerApi } from "../api/client";
 import { AccountLogin } from "./AccountLogin";
 import { DigitSlotsInput } from "./DigitSlotsInput";
+import { MasterPinDialog } from "./MasterPinDialog";
 
 export interface InstallationStatus {
   enabled: boolean;
@@ -94,6 +95,7 @@ export function InstallationAccess({
     setError("");
     try {
       setRequest(await call("pair", { name }));
+      setSignIn(false);
     } catch (reason) {
       setError(
         reason instanceof Error ? reason.message : "Access unavailable.",
@@ -102,13 +104,13 @@ export function InstallationAccess({
       setBusy(false);
     }
   };
-  const authorize = async () => {
-    if (busy || !/^\d{8}$/.test(pin)) return;
+  const authorize = async (value = pin) => {
+    if (busy || !/^\d{8}$/.test(value)) return;
     setBusy(true);
     setError("");
     try {
       const input = {
-        masterPin: pin,
+        masterPin: value,
         deviceName: name.trim() || "Home browser",
         admin: administration,
       };
@@ -117,6 +119,7 @@ export function InstallationAccess({
       setPin("");
       onConnected();
     } catch (reason) {
+      if (!administration) throw reason;
       setError(
         reason instanceof Error ? reason.message : "Authorization failed.",
       );
@@ -168,7 +171,9 @@ export function InstallationAccess({
     <main className="installation-screen">
       <p className="eyebrow">StreamerAI home server</p>
       <h1>
-        {administration ? "Household administration" : "Connect this device"}
+        {administration
+          ? "Your household, fully under your control"
+          : "Connect this device"}
       </h1>
       <p>
         {administration
@@ -179,7 +184,7 @@ export function InstallationAccess({
         <a className="button button--primary" href="/admin">
           Set up your household
         </a>
-      ) : administration || signIn ? (
+      ) : administration ? (
         <form
           className="form-stack"
           onSubmit={(event) => {
@@ -304,6 +309,14 @@ export function InstallationAccess({
         </p>
       )}
       {error && <p role="alert">{error}</p>}
+      {!administration && signIn && (
+        <MasterPinDialog
+          onSubmit={authorize}
+          onCancel={() => setSignIn(false)}
+          onAskOwner={() => void submit()}
+          askOwnerLabel="Ask household owner to approve this device"
+        />
+      )}
     </main>
   );
 }

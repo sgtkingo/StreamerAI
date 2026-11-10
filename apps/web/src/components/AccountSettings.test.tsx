@@ -32,78 +32,20 @@ const profile = ViewerProfileSchema.parse({
 });
 
 describe("account management", () => {
-  it("shows linked login methods, opens linking for the same owner and refreshes after returning from the portal", async () => {
-    const getAccountConnections = vi.fn().mockResolvedValue({
-      accountId: "a",
-      connections: [
-        {
-          provider: "email",
-          name: "StreamerAI e-mail",
-          connected: true,
-          available: true,
-        },
-        {
-          provider: "google",
-          name: "Google",
-          connected: false,
-          available: true,
-        },
-        {
-          provider: "apple",
-          name: "Apple",
-          connected: false,
-          available: false,
-        },
-      ],
-    });
+  it("does not show or fetch connected accounts in local administration", async () => {
+    const getAccountConnections = vi.fn();
     const api = {
       getAccount: vi.fn().mockResolvedValue(overview),
       getAccountConnections,
     } as unknown as StreamerApi;
     render(<AccountSettings api={api} profile={profile} />);
-    const connect = await screen.findByRole("link", { name: "Connect Google" });
-    expect(connect).toHaveAttribute(
-      "href",
-      overview.manageUrl + "#connections",
-    );
-    expect(screen.getByText("Coming later")).toBeVisible();
     expect(
-      screen.queryByRole("link", { name: "Connect Apple" }),
+      await screen.findByRole("link", { name: "Open account portal" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("heading", { name: "Connected accounts" }),
     ).not.toBeInTheDocument();
-    getAccountConnections.mockResolvedValue({
-      accountId: "a",
-      connections: [
-        {
-          provider: "google",
-          name: "Google",
-          connected: true,
-          available: true,
-        },
-      ],
-    });
-    fireEvent(window, new Event("focus"));
-    await waitFor(() =>
-      expect(
-        screen.queryByRole("link", { name: "Connect Google" }),
-      ).not.toBeInTheDocument(),
-    );
-    expect(screen.getByText("Connected")).toBeVisible();
-  });
-
-  it("keeps the portal available when linked methods cannot be read", async () => {
-    const api = {
-      getAccount: vi.fn().mockResolvedValue(overview),
-      getAccountConnections: vi
-        .fn()
-        .mockRejectedValue(new Error("Temporarily offline")),
-    } as unknown as StreamerApi;
-    render(<AccountSettings api={api} profile={profile} />);
-    expect(
-      await screen.findByText(/Connected accounts cannot be checked right now/),
-    ).toBeVisible();
-    expect(
-      screen.getByRole("link", { name: "Manage connected accounts" }),
-    ).toBeVisible();
+    expect(getAccountConnections).not.toHaveBeenCalled();
   });
   it("shows the online account ID instead of the local household ID", async () => {
     const api = {
@@ -199,7 +141,9 @@ describe("account management", () => {
       }),
     } as unknown as StreamerApi;
     render(<AccountSettings api={api} profile={profile} />);
-    expect(await screen.findByText(/This household is local/)).toBeVisible();
+    expect(
+      await screen.findByRole("heading", { name: "Cloud management" }),
+    ).toBeVisible();
     expect(
       screen.queryByRole("link", { name: "Open account portal" }),
     ).not.toBeInTheDocument();

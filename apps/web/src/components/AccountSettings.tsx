@@ -1,10 +1,6 @@
 import { useEffect, useState } from "react";
 import type { ViewerProfile } from "@streamer-ai/contracts";
-import type {
-  AccountConnections,
-  AccountOverview,
-  StreamerApi,
-} from "../api/client";
+import type { AccountOverview, StreamerApi } from "../api/client";
 import { safeErrorMessage } from "../api/client";
 import { AccountLogin } from "./AccountLogin";
 import { AccountId } from "./AccountId";
@@ -24,57 +20,6 @@ export function AccountSettings({
   const [pending, setPending] = useState(false);
   const [retry, setRetry] = useState(0);
   const [linking, setLinking] = useState(false);
-  const [connections, setConnections] = useState<AccountConnections | null>(
-    null,
-  );
-  const [connectionsError, setConnectionsError] = useState("");
-  const [connectionsLoading, setConnectionsLoading] = useState(false);
-  const [connectionsRetry, setConnectionsRetry] = useState(0);
-  useEffect(() => {
-    if (
-      section === "account" ||
-      !overview?.manageUrl ||
-      !api.getAccountConnections
-    )
-      return;
-    let active = true;
-    const refresh = async () => {
-      setConnectionsLoading(true);
-      try {
-        const result = await api.getAccountConnections!();
-        if (active) {
-          if (result.accountId !== overview.account.id)
-            throw new Error(
-              "The connected accounts response does not match this account.",
-            );
-          setConnections(result);
-          setConnectionsError("");
-        }
-      } catch {
-        if (active)
-          setConnectionsError(
-            "Connected accounts cannot be checked right now. Try again or open the account portal.",
-          );
-      } finally {
-        if (active) setConnectionsLoading(false);
-      }
-    };
-    void refresh();
-    const onFocus = () => {
-      void refresh();
-    };
-    window.addEventListener("focus", onFocus);
-    return () => {
-      active = false;
-      window.removeEventListener("focus", onFocus);
-    };
-  }, [
-    api,
-    overview?.account.id,
-    overview?.manageUrl,
-    connectionsRetry,
-    section,
-  ]);
   useEffect(() => {
     if (!api.getAccount) return;
     let active = true;
@@ -222,76 +167,6 @@ export function AccountSettings({
                 window.dispatchEvent(new Event("streamer:household-changed"));
               }}
             />
-          )}
-          <h3>Connected accounts</h3>
-          <p>
-            Use StreamerAI e-mail or a linked Google account to sign in to the
-            same account. Your profiles stay together.
-          </p>
-          {overview.manageUrl ? (
-            <>
-              {connectionsLoading && (
-                <p role="status">Checking connected accounts…</p>
-              )}
-              {connectionsError && <p role="alert">{connectionsError}</p>}
-              {connections && (
-                <ul className="account-device-list">
-                  {connections.connections.map((item) => (
-                    <li key={item.provider}>
-                      <div>
-                        <strong>{item.name}</strong>
-                        <p className="settings-note">
-                          {item.connected
-                            ? "Connected"
-                            : item.available
-                              ? "Not connected"
-                              : "Coming later"}
-                        </p>
-                      </div>
-                      {!item.connected && item.available && (
-                        <a
-                          className="button button--secondary"
-                          href={overview.manageUrl + "#connections"}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                        >
-                          {item.provider === "email"
-                            ? "Enable e-mail login"
-                            : `Connect ${item.name}`}
-                        </a>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              )}
-              <p>
-                Connect sign-in methods in the account portal. It may ask you to
-                sign in again to confirm ownership.
-              </p>
-              <a
-                className="button button--secondary"
-                href={overview.manageUrl + "#connections"}
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                Manage connected accounts
-              </a>
-              {api.getAccountConnections && (
-                <button
-                  className="button button--ghost"
-                  type="button"
-                  disabled={connectionsLoading}
-                  onClick={() => setConnectionsRetry((value) => value + 1)}
-                >
-                  Refresh connected accounts
-                </button>
-              )}
-            </>
-          ) : (
-            <p>
-              This household is local. Connect it to StreamerAI to add online
-              sign-in methods.
-            </p>
           )}
           {overview.manageUrl && (
             <>

@@ -36,7 +36,11 @@ export function WelcomeStep({
           <summary>
             Restore an encrypted household instead of starting over
           </summary>
-          <EncryptedRecovery restoreOnly onRestored={onRestored} />
+          <EncryptedRecovery
+            restoreOnly
+            clientMasterPinDialog
+            onRestored={onRestored}
+          />
         </details>
       )}
     </div>

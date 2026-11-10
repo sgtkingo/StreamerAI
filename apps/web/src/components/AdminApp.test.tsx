@@ -280,6 +280,8 @@ it("resets a profile PIN locally and saves the backup schedule", async () => {
   api.saveBackupSchedule = vi.fn().mockImplementation(async (value) => value);
   render(<AdminApp api={api} />);
   fireEvent.click(await screen.findByRole("button", { name: /^Profiles$/ }));
+  expect(screen.queryByLabelText("New profile name")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Add profile" })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Reset profile PIN" }));
   fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
   await waitFor(() => expect(api.resetProfilePin).toHaveBeenCalledWith("alex"));

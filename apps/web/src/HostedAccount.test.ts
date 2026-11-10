@@ -174,12 +174,19 @@ it.each([503, 429])(
   },
 );
 
-function portal() {
+function portal(redirect?: ReturnType<typeof vi.fn>) {
   window.history.replaceState({}, "", "/account?account_id=owner-a");
   const parsed = new DOMParser().parseFromString(page("account"), "text/html");
   document.body.innerHTML = parsed.body.innerHTML;
   document.body.dataset.page = "account";
-  new Function(browserScript)();
+  if (redirect)
+    new Function("location", browserScript)({
+      search: window.location.search,
+      origin: window.location.origin,
+      assign: redirect,
+      replace: redirect,
+    });
+  else new Function(browserScript)();
 }
 
 it("stops linking when the portal is signed in as a different owner", async () => {
@@ -356,7 +363,7 @@ it("approves a server connection without creating a household Master PIN", async
   );
 });
 
-it("sends household merge requests to the selected household", async () => {
+it("starts a household merge after confirmation without requesting approval", async () => {
   const base = portalFetcher();
   const fetcher = vi.fn(async (path: string, options?: RequestInit) => {
     if (path === "/v1/households")
@@ -378,6 +385,7 @@ it("sends household merge requests to the selected household", async () => {
   });
   vi.stubGlobal("fetch", fetcher);
   portal();
+  const dialog = enableDialog();
   await waitFor(() =>
     expect(document.querySelector("#merge-household option")).not.toBeNull(),
   );
@@ -393,6 +401,12 @@ it("sends household merge requests to the selected household", async () => {
   document
     .getElementById("household-merge-form")!
     .dispatchEvent(new Event("submit", { cancelable: true }));
+  expect(dialog).toHaveTextContent("Home → Cottage");
+  expect(fetcher).not.toHaveBeenCalledWith(
+    "/v1/households/home-1/merge",
+    expect.anything(),
+  );
+  document.getElementById("confirm-action")!.click();
   await waitFor(() =>
     expect(fetcher).toHaveBeenCalledWith(
       "/v1/households/home-1/merge",
@@ -401,6 +415,11 @@ it("sends household merge requests to the selected household", async () => {
         body: JSON.stringify({ targetHouseholdId: "home-2" }),
       }),
     ),
+  );
+  await waitFor(() =>
+    expect(
+      document.getElementById("household-operation-feedback"),
+    ).toHaveTextContent("Domácnosti byly sloučeny"),
   );
   const source = document.getElementById(
     "merge-household",
@@ -429,7 +448,49 @@ it("disables transfers and merges when no other owned household is available", a
   }
 });
 
-it("requires confirmation before deleting the cloud account and offers reauthentication when needed", async () => {
+it("shows an internal encrypted merge as work to finish instead of an approval request", async () => {
+  const base = portalFetcher();
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (path: string, options?: RequestInit) => {
+      if (path === "/v1/household-requests")
+        return Response.json({
+          requests: [
+            {
+              id: "merge-1",
+              kind: "merge",
+              requiresLocalImport: true,
+              source_account_id: "owner-a",
+              target_account_id: "owner-a",
+              source_name: "Home",
+              target_name: "Cottage",
+            },
+          ],
+        });
+      return base(path, options);
+    }),
+  );
+  portal();
+  await waitFor(() =>
+    expect(document.getElementById("household-operations")).not.toHaveAttribute(
+      "hidden",
+    ),
+  );
+  expect(
+    document.getElementById("household-operations-list"),
+  ).toHaveTextContent("Home → Cottage");
+  expect(
+    document.getElementById("household-operations-list"),
+  ).toHaveTextContent("Master PINu");
+  expect(document.getElementById("household-requests")).toHaveTextContent(
+    "Žádné čekající žádosti.",
+  );
+  expect(document.getElementById("household-requests")).not.toHaveTextContent(
+    "Home → Cottage",
+  );
+});
+
+it("requires confirmation before deleting the cloud account and redirects to reauthenticate", async () => {
   const base = portalFetcher();
   const fetcher = vi.fn(async (path: string, options?: RequestInit) => {
     if (path === "/v1/account" && options?.method === "DELETE")
@@ -437,7 +498,8 @@ it("requires confirmation before deleting the cloud account and offers reauthent
     return base(path, options);
   });
   vi.stubGlobal("fetch", fetcher);
-  portal();
+  const redirect = vi.fn();
+  portal(redirect);
   const dialog = enableDialog();
   await waitFor(() =>
     expect(document.getElementById("delete-account")).toBeEnabled(),
@@ -460,13 +522,7 @@ it("requires confirmation before deleting the cloud account and offers reauthent
   document.getElementById("delete-account")!.click();
   document.getElementById("confirm-action")!.click();
   await waitFor(() =>
-    expect(document.getElementById("delete-reauth-help")).not.toHaveAttribute(
-      "hidden",
-    ),
-  );
-  expect(document.getElementById("delete-reauthenticate")).toHaveAttribute(
-    "href",
-    "/login?account_id=owner-a",
+    expect(redirect).toHaveBeenCalledWith("/login?account_id=owner-a"),
   );
 });
 
@@ -498,6 +554,119 @@ it("asks before disconnecting a household server and keeps its data when cancell
   );
 });
 
+it("redirects to reauthenticate when household disconnect requires it", async () => {
+  const base = portalFetcher();
+  const fetcher = vi.fn(async (path: string, options?: RequestInit) => {
+    if (
+      path === "/v1/households/home-1/connection" &&
+      options?.method === "DELETE"
+    )
+      return Response.json({ error: "reauth_required" }, { status: 403 });
+    return base(path, options);
+  });
+  vi.stubGlobal("fetch", fetcher);
+  const redirect = vi.fn();
+  portal(redirect);
+  enableDialog();
+  const disconnect = await waitFor(() => {
+    const button = Array.from(
+      document.querySelectorAll<HTMLButtonElement>("#households-list button"),
+    ).find((item) => item.textContent === "Odpojit server");
+    expect(button).toBeDefined();
+    return button!;
+  });
+  disconnect.click();
+  document.getElementById("confirm-action")!.click();
+  await waitFor(() =>
+    expect(redirect).toHaveBeenCalledWith("/login?account_id=owner-a"),
+  );
+});
+
+it("shows a disconnected server while keeping the household visible", async () => {
+  const base = portalFetcher();
+  let connected = true;
+  const fetcher = vi.fn(async (path: string, options?: RequestInit) => {
+    if (path === "/v1/households")
+      return Response.json({
+        households: [
+          { id: "home-1", name: "Home", serverConnected: connected },
+        ],
+      });
+    if (
+      path === "/v1/households/home-1/connection" &&
+      options?.method === "DELETE"
+    ) {
+      connected = false;
+      return Response.json({ ok: true });
+    }
+    return base(path, options);
+  });
+  vi.stubGlobal("fetch", fetcher);
+  portal();
+  enableDialog();
+  await waitFor(() =>
+    expect(document.querySelector("#households-list button")).not.toBeNull(),
+  );
+  document.querySelector<HTMLButtonElement>("#households-list button")!.click();
+  document.getElementById("confirm-action")!.click();
+  await waitFor(() =>
+    expect(document.getElementById("households-list")).toHaveTextContent(
+      "Server není připojen ke cloudu",
+    ),
+  );
+  expect(document.getElementById("households-list")).toHaveTextContent("Home");
+  expect(
+    document.querySelector(
+      "#households-list button[aria-label^='Smazat domácnost']",
+    ),
+  ).not.toBeNull();
+  expect(
+    Array.from(document.querySelectorAll("#households-list button")).some(
+      (button) => button.textContent === "Odpojit server",
+    ),
+  ).toBe(false);
+});
+
+it("confirms cloud household deletion and preserves it on cancellation", async () => {
+  const base = portalFetcher();
+  let deleted = false;
+  const fetcher = vi.fn(async (path: string, options?: RequestInit) => {
+    if (path === "/v1/households/home-1" && options?.method === "DELETE") {
+      deleted = true;
+      return Response.json({ ok: true });
+    }
+    if (path === "/v1/households" && deleted)
+      return Response.json({ households: [] });
+    return base(path, options);
+  });
+  vi.stubGlobal("fetch", fetcher);
+  portal();
+  const dialog = enableDialog();
+  await waitFor(() =>
+    expect(
+      document.querySelector("#households-list .household-delete"),
+    ).not.toBeNull(),
+  );
+  const trash = document.querySelector<HTMLButtonElement>(
+    "#households-list .household-delete",
+  )!;
+  expect(trash).toHaveAccessibleName("Smazat domácnost Home z cloudu");
+  trash.click();
+  expect(dialog).toHaveTextContent("Home");
+  expect(dialog).toHaveTextContent("Místní domácnost zůstane na serveru");
+  document.getElementById("confirm-cancel")!.click();
+  await waitFor(() => expect(trash).toBeEnabled());
+  expect(deleted).toBe(false);
+  trash.click();
+  document.getElementById("confirm-action")!.click();
+  await waitFor(() => expect(deleted).toBe(true));
+  await waitFor(() =>
+    expect(document.getElementById("households-list")).not.toHaveTextContent(
+      "Home",
+    ),
+  );
+});
+
 it.each([["last_sign_in_method", "Poslední způsob přihlášení nelze odebrat"]])(
   "shows %s when disabling a sign-in method",
   async (failure, expected) => {
@@ -524,29 +693,26 @@ it.each([["last_sign_in_method", "Poslední způsob přihlášení nelze odebrat
     expect(document.getElementById("disable-email")).not.toHaveAttribute(
       "hidden",
     );
-    expect(document.getElementById("reauth-help")).toHaveAttribute("hidden");
+    expect(document.getElementById("reauth-help")).toBeNull();
   },
 );
 
-it("shows the account-specific reauthentication link only when a method change requires it", async () => {
+it("redirects to reauthenticate when a method change requires it", async () => {
   vi.stubGlobal("fetch", portalFetcher("reauth_required"));
-  portal();
+  const redirect = vi.fn();
+  portal(redirect);
   enableDialog();
   await waitFor(() =>
     expect(document.getElementById("disable-email")).not.toHaveAttribute(
       "hidden",
     ),
   );
-  const help = document.getElementById("reauth-help")!;
-  expect(help).toHaveAttribute("hidden");
+  expect(redirect).not.toHaveBeenCalled();
   document.getElementById("disable-email")!.click();
   document.getElementById("confirm-action")!.click();
-  await waitFor(() => expect(help).not.toHaveAttribute("hidden"));
-  expect(document.getElementById("reauthenticate")).toHaveAttribute(
-    "href",
-    "/login?account_id=owner-a",
+  await waitFor(() =>
+    expect(redirect).toHaveBeenCalledWith("/login?account_id=owner-a"),
   );
-  expect(help).toHaveTextContent("Přihlaste se znovu");
 });
 
 it.each(["enable-email", "confirm-email", "link-google"])(
@@ -578,7 +744,8 @@ it.each(["enable-email", "confirm-email", "link-google"])(
         return base(path, options);
       }),
     );
-    portal();
+    const redirect = vi.fn();
+    portal(redirect);
     const target = action === "link-google" ? "link-google" : "enable-email";
     await waitFor(() =>
       expect(document.getElementById(target)).not.toHaveAttribute("hidden"),
@@ -591,13 +758,7 @@ it.each(["enable-email", "confirm-email", "link-google"])(
       document.getElementById(target)!.click();
     }
     await waitFor(() =>
-      expect(document.getElementById("reauth-help")).not.toHaveAttribute(
-        "hidden",
-      ),
-    );
-    expect(document.getElementById("reauthenticate")).toHaveAttribute(
-      "href",
-      "/login?account_id=owner-a",
+      expect(redirect).toHaveBeenCalledWith("/login?account_id=owner-a"),
     );
   },
 );

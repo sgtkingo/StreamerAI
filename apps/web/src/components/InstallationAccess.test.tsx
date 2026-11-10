@@ -72,10 +72,9 @@ it("authorizes a playback client using the household PIN without granting admini
   fireEvent.click(
     screen.getByRole("button", { name: "Sign in on this device" }),
   );
-  fireEvent.change(screen.getByLabelText("Household Master PIN"), {
+  fireEvent.change(screen.getByLabelText("Master PIN"), {
     target: { value: "01234567" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "Connect this device" }));
   await waitFor(() => expect(connected).toHaveBeenCalledOnce());
   expect(fetcher).toHaveBeenCalledWith(
     "/api/v1/installation/authorize",
@@ -86,6 +85,36 @@ it("authorizes a playback client using the household PIN without granting admini
         admin: false,
       }),
     }),
+  );
+});
+
+it("starts device pairing when the client asks the owner for direct approval", async () => {
+  const fetcher = vi.fn(async () =>
+    Response.json({
+      requestId: "pending",
+      code: "123456",
+      expiresAt: new Date(Date.now() + 300000).toISOString(),
+    }),
+  );
+  vi.stubGlobal("fetch", fetcher);
+  render(
+    <InstallationAccess
+      status={{ enabled: true, claimed: true, paired: false, role: null }}
+      onConnected={vi.fn()}
+    />,
+  );
+  fireEvent.click(
+    screen.getByRole("button", { name: "Sign in on this device" }),
+  );
+  fireEvent.click(
+    screen.getByRole("button", {
+      name: "Ask household owner to approve this device",
+    }),
+  );
+  expect(await screen.findByLabelText("Pairing code 123456")).toBeVisible();
+  expect(fetcher).toHaveBeenCalledWith(
+    "/api/v1/installation/pair",
+    expect.objectContaining({ method: "POST" }),
   );
 });
 

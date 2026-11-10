@@ -216,6 +216,30 @@ export async function householdRequests(
       expiresAt,
     )
     .run();
+  if (kind !== "ownership-transfer" && targetAccount === principal.account.id) {
+    try {
+      const decision = await decideHouseholdRequest(
+        new Request(request.url, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ approve: true }),
+        }),
+        env,
+        principal,
+        now,
+        id,
+      );
+      const result = (await decision.json()) as Record<string, unknown>;
+      return json({ ...result, id, expiresAt }, 201);
+    } catch (error) {
+      await env.DB.prepare(
+        "DELETE FROM cloud_household_request WHERE id=? AND status='pending'",
+      )
+        .bind(id)
+        .run();
+      throw error;
+    }
+  }
   return json({ id, expiresAt, emailStatus: "unavailable" }, 201);
 }
 

@@ -113,6 +113,17 @@ export const PlaybackPreferencesSchema = z
       .union([z.literal("off"), MediaLanguageSchema])
       .default("cs"),
     audioOutputDeviceId: z.string().trim().max(512).default("default"),
+    defaultVolume: z.number().int().min(0).max(100).default(80),
+    skipSeconds: z
+      .union([
+        z.literal(5),
+        z.literal(10),
+        z.literal(15),
+        z.literal(30),
+        z.literal(60),
+      ])
+      .default(10),
+    autoPlayNextEpisode: z.boolean().default(true),
     subtitleSizePercent: z.number().int().min(75).max(200).default(100),
     subtitleColor: z
       .string()
@@ -126,12 +137,21 @@ export type PlaybackPreferences = z.infer<typeof PlaybackPreferencesSchema>;
 export const DEFAULT_PLAYBACK_PREFERENCES: PlaybackPreferences =
   PlaybackPreferencesSchema.parse({});
 
+export const ProfileAvatarSchema = z.union([
+  z.enum(["sun", "moon", "fox", "cat", "planet", "film"]),
+  z
+    .string()
+    .max(48000)
+    .regex(/^data:image\/jpeg;base64,[A-Za-z0-9+/]+={0,2}$/),
+]);
+
 export const ViewerProfileSchema = z
   .object({
     id: z.string().min(1).max(120),
     accountId: z.string().min(1).max(160).optional(),
     pinEnabled: z.boolean().optional(),
     name: z.string().min(1).max(80),
+    avatar: ProfileAvatarSchema.nullable().optional(),
     onboardingComplete: z.boolean(),
     locale: SupportedLocaleSchema,
     genres: z.array(z.string().min(1).max(80)).max(50),
@@ -154,6 +174,7 @@ export const CreateViewerProfileSchema = z
 export const UpdateViewerProfileSchema = z
   .object({
     name: z.string().trim().min(1).max(80).optional(),
+    avatar: ProfileAvatarSchema.nullable().optional(),
     locale: SupportedLocaleSchema.optional(),
     genres: z.array(z.string().trim().min(1).max(80)).max(50).optional(),
     prompt: z.string().trim().max(3000).optional(),

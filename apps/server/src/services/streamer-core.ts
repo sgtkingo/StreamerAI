@@ -252,6 +252,10 @@ export class StreamerCore {
       accountId: profile.accountId,
       pinEnabled: profile.pinEnabled,
       name: profile.name,
+      avatar:
+        typeof profile.preferences.avatar === "string"
+          ? profile.preferences.avatar
+          : null,
       onboardingComplete:
         profile.preferences.onboardingComplete === true ||
         (profile.id === "default" &&
@@ -313,6 +317,7 @@ export class StreamerCore {
     if (!current) throw new UnknownProfileError(profileId);
     const preferences = {
       ...current.preferences,
+      ...(patch.avatar === undefined ? {} : { avatar: patch.avatar }),
       ...(patch.genres === undefined ? {} : { genres: patch.genres }),
       ...(patch.prompt === undefined ? {} : { prompt: patch.prompt }),
       ...(patch.playback === undefined ? {} : { playback: patch.playback }),

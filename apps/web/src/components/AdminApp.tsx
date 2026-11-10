@@ -120,7 +120,7 @@ export function AdminApp({ api = apiClient }: { api?: StreamerApi }) {
   if (error)
     return (
       <main className="installation-screen">
-        <h1>Household administration</h1>
+        <h1>Your household, fully under your control</h1>
         <p role="alert">{error}</p>
         <button className="button button--primary" onClick={reload}>
           Try again
@@ -260,7 +260,7 @@ export function AdminApp({ api = apiClient }: { api?: StreamerApi }) {
     <div className="admin-shell">
       <header className="admin-header">
         <Brand />
-        <span>Household administration</span>
+        <span>Your household, fully under your control</span>
         <button
           className="admin-header__report"
           type="button"
@@ -569,7 +569,6 @@ function AdminProfiles({
   profiles: ViewerProfile[];
   onChanged: () => void;
 }) {
-  const [name, setName] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const [confirm, setConfirm] = useState<{
@@ -583,7 +582,6 @@ function AdminProfiles({
     try {
       await action();
       setConfirm(null);
-      setName("");
       showToast(message, "success");
       onChanged();
     } catch (reason) {
@@ -666,32 +664,6 @@ function AdminProfiles({
           )}
         </article>
       ))}
-      <form
-        className="form-stack"
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (!name.trim() || pending) return;
-          void run(
-            () => api.createProfile({ name: name.trim(), locale: "en" }),
-            "Profile created. Open the player to set its viewing preferences.",
-          );
-        }}
-      >
-        <label className="field">
-          <span>New profile name</span>
-          <input
-            value={name}
-            onChange={(event) => setName(event.target.value)}
-            maxLength={80}
-          />
-        </label>
-        <button
-          className="button button--primary"
-          disabled={pending || !name.trim() || profiles.length >= 5}
-        >
-          Add profile
-        </button>
-      </form>
       {error && <p role="alert">{error}</p>}
     </section>
   );
@@ -843,19 +815,31 @@ function AdminPinResetRequests({ api }: { api: StreamerApi }) {
   };
   return (
     <section className="profile-page__section">
-      <h2>Profile PIN reset requests</h2>
-      <p>Approve only a reset requested by someone in your household.</p>
+      <h2>Profile access requests</h2>
+      <p>Approve only requests from someone in your household.</p>
       {requests.map((item) => (
         <div className="deployment-card" key={item.id}>
           <strong>{item.profileName}</strong>
-          <p>Requested from {item.deviceName}</p>
+          <p>
+            {item.purpose === "unlock"
+              ? "Unlock profile"
+              : item.purpose === "change"
+                ? "Change or remove profile PIN"
+                : "Reset profile PIN"}{" "}
+            · Requested from {item.deviceName}
+          </p>
           <div className="deployment-actions">
             <button
               className="button button--primary"
               disabled={pending}
               onClick={() => void decide(item.id, true)}
             >
-              Approve PIN reset
+              Approve{" "}
+              {item.purpose === "unlock"
+                ? "profile access"
+                : item.purpose === "change"
+                  ? "PIN change or removal"
+                  : "PIN reset"}
             </button>
             <button
               className="button button--secondary"

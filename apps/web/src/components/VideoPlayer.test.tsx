@@ -123,6 +123,74 @@ afterEach(() => {
 });
 
 describe("VideoPlayer output and episode flow", () => {
+  it("applies the starting volume and configured skip interval", async () => {
+    render(
+      <VideoPlayer
+        api={api()}
+        profileId="default"
+        title={baseTitle}
+        grant={grant}
+        preferences={{
+          ...DEFAULT_PLAYBACK_PREFERENCES,
+          defaultVolume: 35,
+          skipSeconds: 30,
+        }}
+        onPlayEpisode={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    const forward = await screen.findByRole("button", {
+      name: "Skip forward 30 seconds",
+    });
+    const controls = screen.getByRole("group", { name: "Playback controls" });
+    expect(
+      Array.from(controls.querySelectorAll("button"), (button) =>
+        button.getAttribute("aria-label"),
+      ),
+    ).toEqual(["Skip back 30 seconds", "Play", "Skip forward 30 seconds"]);
+    expect(screen.getByRole("slider", { name: "Volume" })).toHaveValue("0.35");
+    expect(document.querySelector("video")!.volume).toBeCloseTo(0.35);
+    fireEvent.click(forward);
+    expect(document.querySelector("video")?.getAttribute("src")).toContain(
+      "start=30.000",
+    );
+  });
+
+  it("does not check or play the next episode automatically when disabled", async () => {
+    const seriesTitle: CatalogTitle = {
+      ...baseTitle,
+      id: "series",
+      kind: "series",
+    };
+    const getTitleDetail = vi
+      .fn()
+      .mockResolvedValue({ title: seriesTitle, series: null, related: [] });
+    const onPlayEpisode = vi.fn();
+    render(
+      <VideoPlayer
+        api={api({ getTitleDetail })}
+        profileId="default"
+        title={seriesTitle}
+        grant={{ ...grant, titleId: seriesTitle.id }}
+        episode={{ seasonNumber: 1, episodeNumber: 1 }}
+        preferences={{
+          ...DEFAULT_PLAYBACK_PREFERENCES,
+          autoPlayNextEpisode: false,
+        }}
+        onPlayEpisode={onPlayEpisode}
+        onClose={vi.fn()}
+      />,
+    );
+    await screen.findByRole("button", { name: "Skip forward 10 seconds" });
+    await waitFor(() => expect(getTitleDetail).toHaveBeenCalledTimes(1));
+    fireEvent.ended(document.querySelector("video")!);
+    expect(getTitleDetail).toHaveBeenCalledTimes(1);
+    expect(
+      screen.queryByRole("group", { name: "Next episode" }),
+    ).not.toBeInTheDocument();
+    expect(onPlayEpisode).not.toHaveBeenCalled();
+  });
+
   it("accepts a valid subtitle window with no spoken lines", async () => {
     vi.stubGlobal(
       "fetch",

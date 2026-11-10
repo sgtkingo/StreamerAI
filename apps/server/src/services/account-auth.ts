@@ -207,6 +207,7 @@ export class AccountAuthService {
       deviceId: string;
       expiresAt: number;
       local?: boolean;
+      purpose?: "unlock" | "change" | "reset";
       status?: "pending" | "approved" | "denied";
     }
   >();
@@ -997,6 +998,7 @@ export class AccountAuthService {
               profileId: profile.id,
               profileName: profile.name,
               deviceName: request.deviceId,
+              purpose: request.purpose ?? "reset",
               expiresAt: new Date(request.expiresAt).toISOString(),
             },
           ]
@@ -1931,6 +1933,14 @@ export class AccountAuthService {
       "/api/v1/profiles/:profileId/pin-reset",
       async (request, reply) => {
         const context = this.context(request)!;
+        const purpose = object(request.body).purpose ?? "reset";
+        if (!["unlock", "change", "reset"].includes(String(purpose)))
+          return error(
+            reply,
+            400,
+            "INVALID_REQUEST",
+            "Invalid approval purpose.",
+          );
         if (
           this.options.database.settings.get(householdAccountKey) ===
             context.account.id &&
@@ -1950,6 +1960,7 @@ export class AccountAuthService {
             expiresAt = this.now().getTime() + 300_000;
           this.ownerRequests.set(id, {
             local: true,
+            purpose: purpose as "unlock" | "change" | "reset",
             status: "pending",
             session: context.hash,
             accountId: context.account.id,
@@ -1972,7 +1983,11 @@ export class AccountAuthService {
               .href,
           };
         }
-        if (!context.session || !this.ownerResetAvailable(context.account))
+        if (
+          purpose !== "reset" ||
+          !context.session ||
+          !this.ownerResetAvailable(context.account)
+        )
           return error(
             reply,
             403,
@@ -2093,7 +2108,12 @@ export class AccountAuthService {
         if (pending.local) {
           const status = pending.status ?? "pending";
           if (status !== "pending") this.ownerRequests.delete(id as string);
-          if (status === "approved")
+          if (status === "approved" && pending.purpose === "unlock") {
+            this.unlocks.set(`${context.hash}:${pending.profileId}`, {
+              version: pending.version,
+              expiresAt: this.now().getTime() + UNLOCK_MS,
+            });
+          } else if (status === "approved")
             this.resets.set(
               `${context.hash}:${pending.profileId}:${pending.version}`,
               {
@@ -2447,7 +2467,7 @@ export class AccountAuthService {
         if (result !== "ok")
           return error(reply, 403, "PIN_INCORRECT", "The PIN is incorrect.");
         const record = this.options.database.profiles.getPinRecord(id);
-        if (!context.session)
+        if (!context.session && !this.options.localAccess?.actor(request))
           context = this.createSession(request, reply, context.account);
         this.options.database.profiles.clearPinFailures(id);
         this.unlocks.set(`${context.hash}:${id}`, {
@@ -2522,7 +2542,7 @@ export class AccountAuthService {
             : `${salt}:${((await derive(pin as string, salt, 32)) as Buffer).toString("hex")}`;
         this.options.database.profiles.setPinHash(id, hash);
         this.resets.delete(resetKey);
-        if (!context.session)
+        if (!context.session && !this.options.localAccess?.actor(request))
           context = this.createSession(request, reply, context.account);
         const record = this.options.database.profiles.getPinRecord(id);
         this.unlocks.set(`${context.hash}:${id}`, {

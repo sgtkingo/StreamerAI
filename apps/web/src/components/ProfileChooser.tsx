@@ -1,3 +1,4 @@
+import { ProfileAvatar } from "./ProfileAvatar";
 import { useEffect, useRef, useState } from "react";
 import type { ViewerProfile } from "@streamer-ai/contracts";
 import { Brand } from "./Brand";
@@ -125,7 +126,10 @@ export function ProfileChooser({
                   onClick={() => onSelect(profile)}
                 >
                   <span className="profile-medallion__portrait">
-                    {profile.name.slice(0, 1).toUpperCase()}
+                    <ProfileAvatar
+                      name={profile.name}
+                      avatar={profile.avatar}
+                    />
                   </span>
                   <span>{profile.name}</span>
                   {profile.pinEnabled && <small>PIN protected</small>}

@@ -1,3 +1,4 @@
+import { ProfileAvatar } from "./ProfileAvatar";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   CatalogTitle,
@@ -190,16 +191,31 @@ export function AppShell({
             Download
           </button>
         </nav>
-        {route === "home" && (
-          <nav aria-label="Home sections" className="section-nav">
-            <a href="#continue-watching">Continue</a>
-            <a href="#new-releases">New</a>
-            <a href="#trending">Trending</a>
-            <a href="#top-rated">Top Rated</a>
-            <a href="#for-you">For You</a>
-          </nav>
-        )}
         <div className="topbar__profile-actions">
+          <div className="topbar__report-group">
+            <span>Find some issues?</span>
+            <button
+              className="topbar__report"
+              type="button"
+              onClick={() => navigate("support")}
+            >
+              <svg
+                aria-hidden="true"
+                width="17"
+                height="17"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.7"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M8 8V6a4 4 0 0 1 8 0v2M12 8v13M5 11H3m18 0h-2M5 16H3m18 0h-2M6 7 4 5m14 2 2-2" />
+                <rect x="5" y="8" width="14" height="13" rx="6" />
+              </svg>
+              Report a bug
+            </button>
+          </div>
           <ThemeSelect
             compact
             selection="primary"
@@ -218,7 +234,7 @@ export function AppShell({
               aria-haspopup="menu"
               onClick={() => setProfileMenuOpen((open) => !open)}
             >
-              {profile.name.slice(0, 1).toUpperCase()}
+              <ProfileAvatar name={profile.name} avatar={profile.avatar} />
             </button>
             {profileMenuOpen && (
               <div
@@ -254,13 +270,6 @@ export function AppShell({
                   onClick={() => navigate("statistics")}
                 >
                   Statistics
-                </button>
-                <button
-                  role="menuitem"
-                  type="button"
-                  onClick={() => navigate("support")}
-                >
-                  Report a bug
                 </button>
                 <span className="profile-menu__divider" aria-hidden="true" />
                 <button
@@ -329,7 +338,6 @@ export function AppShell({
           onProfileUpdated={onProfileUpdated}
           onRerunOnboarding={onRerunOnboarding}
           onIntegrationsChanged={onIntegrationsChanged}
-          onSwitchAccount={onSwitchAccount}
           onSignOut={onSignOut}
           onDeleteProfile={onDeleteProfile}
           onBackHome={() => navigate("home")}

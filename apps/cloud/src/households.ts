@@ -21,6 +21,7 @@ export interface HouseholdRow {
   envelope_json?: string | null;
   backup_updated_at?: number | null;
   profile_count?: number;
+  server_connected?: number;
 }
 export const uuid = (value: unknown): value is string =>
   typeof value === "string" &&
@@ -97,11 +98,13 @@ export async function household(
       });
     const rows = await env.DB.prepare(
       `SELECT h.*, c.revision, CASE WHEN c.invalidated_at IS NULL THEN c.envelope_json END AS envelope_json, c.updated_at AS backup_updated_at,
-      (SELECT COUNT(*) FROM cloud_household_sync_profile p WHERE p.account_id=h.id AND p.active=1) AS profile_count
+      (SELECT COUNT(*) FROM cloud_household_sync_profile p WHERE p.account_id=h.id AND p.active=1) AS profile_count,
+      EXISTS(SELECT 1 FROM cloud_device d WHERE d.household_id=h.id AND d.account_id=h.account_id AND d.purpose='login' AND d.revoked_at IS NULL AND d.expires_at>?) AS server_connected
       FROM cloud_household h LEFT JOIN cloud_household_checkpoint c ON c.household_id = h.id
       WHERE h.account_id = ? AND (? IS NULL OR h.id = ?) ORDER BY h.created_at, h.id`,
     )
       .bind(
+        now,
         principal.account.id,
         principal.method === "device" ? (principal.householdId ?? null) : null,
         principal.householdId ?? null,
@@ -109,7 +112,10 @@ export async function household(
       .all<HouseholdRow>();
     return json({
       account: principal.account,
-      households: rows.results.map(publicHousehold),
+      households: rows.results.map((row) => ({
+        ...publicHousehold(row),
+        serverConnected: row.server_connected === 1,
+      })),
     });
   }
   if (
@@ -235,4 +241,32 @@ export async function detachHousehold(
     disconnected: result.meta.changes,
     householdPreserved: true,
   });
+}
+
+export async function deleteCloudHousehold(
+  env: Env,
+  principal: Principal,
+  now: number,
+  id: string,
+): Promise<Response> {
+  if (principal.method !== "browser")
+    throw new HttpError(403, "browser_sign_in_required");
+  if (!principal.authenticatedAt || now - principal.authenticatedAt > 300_000)
+    throw new HttpError(403, "reauth_required");
+  await requireHousehold(env, principal, id);
+  const results = await env.DB.batch([
+    env.DB.prepare(
+      `DELETE FROM cloud_device_grant WHERE household_id=? AND (account_id IS NULL OR account_id=?)
+       AND EXISTS(SELECT 1 FROM cloud_household WHERE id=? AND account_id=?)
+       AND NOT EXISTS(SELECT 1 FROM cloud_household WHERE merged_into=?)`,
+    ).bind(id, principal.account.id, id, principal.account.id, id),
+    env.DB.prepare(
+      "DELETE FROM cloud_household WHERE id=? AND account_id=? AND NOT EXISTS(SELECT 1 FROM cloud_household WHERE merged_into=?)",
+    ).bind(id, principal.account.id, id),
+  ]);
+  if (!results[1]?.meta.changes) {
+    await requireHousehold(env, principal, id);
+    throw new HttpError(409, "household_has_merged_sources");
+  }
+  return json({ ok: true });
 }

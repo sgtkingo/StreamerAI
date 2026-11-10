@@ -84,6 +84,52 @@ it.each([false, true])(
   },
 );
 
+it("uses the shared Master PIN dialog for client-side backup import", async () => {
+  const contents = { format: "streamerai-master-pin-household", version: 1 };
+  const fetcher = ownerFetch(() =>
+    Response.json({ profiles: [], credentials: [], limitations: [] }),
+  );
+  vi.stubGlobal("fetch", fetcher);
+  render(<EncryptedRecovery restoreOnly clientMasterPinDialog />);
+  const file = new File([JSON.stringify(contents)], "household.json", {
+    type: "application/json",
+  });
+  Object.defineProperty(file, "text", {
+    value: async () => JSON.stringify(contents),
+  });
+  fireEvent.change(await screen.findByLabelText("Encrypted household file"), {
+    target: { files: [file] },
+  });
+  fireEvent.click(
+    screen.getByRole("button", { name: "Enter backup Master PIN" }),
+  );
+  expect(
+    screen.getByRole("dialog", { name: "Enter the backup Master PIN" }),
+  ).toBeVisible();
+  expect(
+    screen.queryByRole("button", {
+      name: "Ask household owner for PIN reset",
+    }),
+  ).not.toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("Master PIN"), {
+    target: { value: "01234567" },
+  });
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: "Review contents" }),
+    ).toBeEnabled(),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Review contents" }));
+  await waitFor(() =>
+    expect(fetcher).toHaveBeenCalledWith(
+      base + "/preview",
+      expect.objectContaining({
+        body: JSON.stringify({ envelope: contents, recoveryKey: "01234567" }),
+      }),
+    ),
+  );
+});
+
 it("shows automatic cloud backup status without recovery-key actions", async () => {
   vi.stubGlobal(
     "fetch",

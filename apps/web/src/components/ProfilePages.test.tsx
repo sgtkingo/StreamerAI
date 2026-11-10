@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import {
   DEFAULT_PLAYBACK_PREFERENCES,
   ViewerProfileSchema,
@@ -45,7 +45,6 @@ const props = {
   profile,
   onProfileUpdated: vi.fn(),
   onRerunOnboarding: vi.fn(),
-  onSwitchAccount: vi.fn(),
   onDeleteProfile: vi.fn(),
   onBackHome: vi.fn(),
   onIntegrationsChanged: vi.fn(),
@@ -56,18 +55,17 @@ it("keeps household administration out of playback profile pages", () => {
   expect(screen.queryByText("Security")).not.toBeInTheDocument();
   expect(screen.queryByText("Services: all")).not.toBeInTheDocument();
   expect(
-    screen.getByRole("link", { name: "Open household administration" }),
-  ).toHaveAttribute("href", "/admin");
+    screen.queryByRole("link", { name: "Open household administration" }),
+  ).not.toBeInTheDocument();
   view.rerender(<ProfilePages {...props} page="account" />);
   expect(screen.queryByText("Security")).not.toBeInTheDocument();
   expect(
     screen.getByRole("link", { name: "Open household administration" }),
   ).toHaveAttribute("href", "/admin");
   view.rerender(<ProfilePages {...props} page="profile" />);
-  fireEvent.click(
-    screen.getByRole("button", { name: "Choose another profile" }),
-  );
-  expect(props.onSwitchAccount).toHaveBeenCalledOnce();
+  expect(
+    screen.queryByRole("button", { name: "Choose another profile" }),
+  ).not.toBeInTheDocument();
   expect(screen.getByText("Profile privacy")).toBeVisible();
   expect(screen.getByText("Profile photo")).toBeVisible();
   view.rerender(<ProfilePages {...props} page="support" />);
@@ -75,4 +73,67 @@ it("keeps household administration out of playback profile pages", () => {
   expect(
     screen.queryByRole("link", { name: "Open household administration" }),
   ).not.toBeInTheDocument();
+});
+
+it("saves a renamed profile and selected avatar", async () => {
+  const updated = { ...profile, name: "Sam", avatar: "fox" as const };
+  const updateProfile = vi.fn().mockResolvedValue(updated);
+  const onProfileUpdated = vi.fn();
+  render(
+    <ProfilePages
+      {...props}
+      api={{ updateProfile } as unknown as StreamerApi}
+      onProfileUpdated={onProfileUpdated}
+      page="profile"
+    />,
+  );
+  fireEvent.change(screen.getByLabelText("Profile name"), {
+    target: { value: " Sam " },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Fox" }));
+  fireEvent.click(screen.getByRole("button", { name: "Save profile" }));
+  await waitFor(() =>
+    expect(updateProfile).toHaveBeenCalledWith("viewer", {
+      name: "Sam",
+      avatar: "fox",
+    }),
+  );
+  expect(onProfileUpdated).toHaveBeenCalledWith(updated);
+});
+
+it("saves player behaviour with the profile settings", async () => {
+  const updateProfile = vi
+    .fn()
+    .mockImplementation(async (_id, patch) => ({ ...profile, ...patch }));
+  render(
+    <ProfilePages
+      {...props}
+      api={{ updateProfile } as unknown as StreamerApi}
+      page="settings"
+    />,
+  );
+  fireEvent.change(screen.getByRole("slider", { name: /Starting volume/ }), {
+    target: { value: "35" },
+  });
+  fireEvent.change(screen.getByLabelText("Skip interval"), {
+    target: { value: "30" },
+  });
+  fireEvent.click(
+    screen.getByRole("checkbox", {
+      name: "Automatically play the next episode",
+    }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
+  await waitFor(() =>
+    expect(updateProfile).toHaveBeenCalledWith(
+      "viewer",
+      expect.objectContaining({
+        playback: expect.objectContaining({
+          defaultVolume: 35,
+          skipSeconds: 30,
+          autoPlayNextEpisode: false,
+        }),
+      }),
+    ),
+  );
 });

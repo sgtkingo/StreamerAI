@@ -159,7 +159,7 @@ export function VideoPlayer({
   const [hasEnded, setHasEnded] = useState(false);
   const [showPauseBurst, setShowPauseBurst] = useState(false);
   const [needsClick, setNeedsClick] = useState(false);
-  const [volume, setVolume] = useState(0.8);
+  const [volume, setVolume] = useState(preferences.defaultVolume / 100);
   const [muted, setMuted] = useState(false);
   const [resumePrompt, setResumePrompt] = useState(false);
   const [resumeCountdown, setResumeCountdown] = useState(5);
@@ -473,7 +473,7 @@ export function VideoPlayer({
       videoRef.current.volume = volume;
       videoRef.current.muted = muted;
     }
-  }, [volume, muted, sourceVersion]);
+  }, [volume, muted, sourceVersion, info]);
 
   const togglePlayback = () => {
     const video = videoRef.current;
@@ -1118,7 +1118,12 @@ export function VideoPlayer({
                 setCaptionPosition(duration);
               }
               progressRef.current = 100;
-              if (title.kind === "series" && episode) void verifyNextEpisode();
+              if (
+                title.kind === "series" &&
+                episode &&
+                preferences.autoPlayNextEpisode
+              )
+                void verifyNextEpisode();
               void api
                 .savePlaybackProgress(grant.grantId, 100, duration, duration)
                 .catch(() => undefined);
@@ -1480,26 +1485,56 @@ export function VideoPlayer({
                 <span>/ {duration > 0 ? formatTime(duration) : "—"}</span>
               </span>
               <div className="video-player__spacer" />
-              <button
-                type="button"
-                className={`video-player__icon-button video-player__play-toggle${mediaLoading ? " is-loading" : ""}`}
-                ref={playToggleRef}
-                onClick={togglePlayback}
-                disabled={mediaLoading}
-                aria-label={
-                  mediaLoading ? "Loading video" : playing ? "Pause" : "Play"
-                }
-                aria-busy={mediaLoading}
+              <div
+                className="video-player__transport"
+                role="group"
+                aria-label="Playback controls"
               >
-                <span className="video-player__play-symbol" aria-hidden="true">
-                  {playing ? <PauseIcon size="control" /> : "▶"}
-                </span>
-                <span className="video-player__loading-dots" aria-hidden="true">
-                  <span />
-                  <span />
-                  <span />
-                </span>
-              </button>
+                <button
+                  type="button"
+                  className="video-player__text-button"
+                  aria-label={`Skip back ${preferences.skipSeconds} seconds`}
+                  disabled={duration <= 0 || mediaLoading}
+                  onClick={() => commitSeek(position - preferences.skipSeconds)}
+                >
+                  -{preferences.skipSeconds}s
+                </button>
+                <button
+                  type="button"
+                  className={`video-player__icon-button video-player__play-toggle${mediaLoading ? " is-loading" : ""}`}
+                  ref={playToggleRef}
+                  onClick={togglePlayback}
+                  disabled={mediaLoading}
+                  aria-label={
+                    mediaLoading ? "Loading video" : playing ? "Pause" : "Play"
+                  }
+                  aria-busy={mediaLoading}
+                >
+                  <span
+                    className="video-player__play-symbol"
+                    aria-hidden="true"
+                  >
+                    {playing ? <PauseIcon size="control" /> : "▶"}
+                  </span>
+                  <span
+                    className="video-player__loading-dots"
+                    aria-hidden="true"
+                  >
+                    <span />
+                    <span />
+                    <span />
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  className="video-player__text-button"
+                  aria-label={`Skip forward ${preferences.skipSeconds} seconds`}
+                  disabled={duration <= 0 || mediaLoading}
+                  onClick={() => commitSeek(position + preferences.skipSeconds)}
+                >
+                  +{preferences.skipSeconds}s
+                </button>
+              </div>
               <button
                 type="button"
                 className="video-player__icon-button"

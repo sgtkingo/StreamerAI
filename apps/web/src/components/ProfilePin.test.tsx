@@ -168,13 +168,11 @@ describe("profile PIN controls", () => {
     fireEvent.change(screen.getByLabelText("Current profile PIN"), {
       target: { value: "9876" },
     });
-    fireEvent.click(
-      screen.getByRole("button", { name: "Use Master PIN instead" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Forgot PIN?" }));
     const master = screen.getByLabelText("Master PIN");
     expect(master).toHaveValue("");
     expect(
-      master.closest(".digit-slots")?.querySelectorAll(".digit-slots__cell"),
+      master.closest(".pin-pad")?.querySelectorAll(".pin-pad__slot"),
     ).toHaveLength(8);
     fireEvent.change(master, { target: { value: "01234567" } });
     fireEvent.change(screen.getByLabelText("New PIN (4 digits)"), {
@@ -191,13 +189,10 @@ describe("profile PIN controls", () => {
         "01234567",
       ),
     );
-    fireEvent.click(
-      screen.getByRole("button", { name: "Use profile PIN instead" }),
-    );
     expect(screen.getByLabelText("Current profile PIN")).toHaveValue("");
   });
 
-  it("sends a reset request to the local household owner without cloud pairing", async () => {
+  it("asks the local owner to reset the profile PIN before opening the profile", async () => {
     vi.useFakeTimers();
     const unlocked = vi.fn();
     const api = {
@@ -206,6 +201,7 @@ describe("profile PIN controls", () => {
         authenticated: true,
         cloudConfigured: true,
         ownerResetAvailable: true,
+        masterPinEnabled: true,
       }),
       startDeviceAuthorization: vi.fn(),
       requestProfilePinReset: vi.fn().mockResolvedValue({
@@ -227,13 +223,16 @@ describe("profile PIN controls", () => {
     await act(async () => {
       await Promise.resolve();
     });
+    fireEvent.click(screen.getByRole("button", { name: "Forgot PIN?" }));
     fireEvent.click(
-      screen.getByRole("button", { name: "Forgot PIN? Ask household owner" }),
+      screen.getByRole("button", {
+        name: "Ask household owner for PIN reset",
+      }),
     );
     await act(async () => {
       await Promise.resolve();
     });
-    expect(api.requestProfilePinReset).toHaveBeenCalledWith("alex");
+    expect(api.requestProfilePinReset).toHaveBeenCalledWith("alex", "reset");
     expect(api.startDeviceAuthorization).not.toHaveBeenCalled();
     expect(
       screen.getByRole("link", { name: "Open household administration" }),
@@ -243,7 +242,83 @@ describe("profile PIN controls", () => {
     expect(api.setProfilePin).toHaveBeenCalledWith("alex", null);
     expect(unlocked).toHaveBeenCalledOnce();
   });
-  it("offers the Master PIN by default and unlocks after eight digits", async () => {
+  it("does not remove the PIN or unlock the profile when the owner denies the request", async () => {
+    vi.useFakeTimers();
+    const unlocked = vi.fn();
+    const api = {
+      getAuthStatus: vi.fn().mockResolvedValue({ ownerResetAvailable: true }),
+      requestProfilePinReset: vi
+        .fn()
+        .mockResolvedValue({
+          id: "denied",
+          manageUrl: "/admin",
+          expiresAt: new Date(Date.now() + 300000).toISOString(),
+        }),
+      pollProfilePinReset: vi.fn().mockResolvedValue({ status: "denied" }),
+      setProfilePin: vi.fn(),
+    } as unknown as StreamerApi;
+    render(
+      <ProfilePinDialog
+        api={api}
+        profile={profile}
+        onUnlocked={unlocked}
+        onCancel={vi.fn()}
+      />,
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Forgot PIN?" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Ask household owner for PIN reset" }),
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(5000));
+    expect(screen.getByText("This request was declined.")).toBeVisible();
+    expect(api.setProfilePin).not.toHaveBeenCalled();
+    expect(unlocked).not.toHaveBeenCalled();
+  });
+  it("resets the PIN from profile settings after owner approval", async () => {
+    vi.useFakeTimers();
+    const updated = vi.fn();
+    const api = {
+      getAuthStatus: vi.fn().mockResolvedValue({ ownerResetAvailable: true }),
+      requestProfilePinReset: vi.fn().mockResolvedValue({
+        id: "reset-request",
+        manageUrl: "/admin?tab=profiles",
+        expiresAt: new Date(Date.now() + 300000).toISOString(),
+      }),
+      pollProfilePinReset: vi.fn().mockResolvedValue({ status: "approved" }),
+      setProfilePin: vi.fn().mockResolvedValue({ pinEnabled: false }),
+    } as unknown as StreamerApi;
+    render(
+      <ToastProvider>
+        <ProfilePinSettings
+          api={api}
+          profile={profile}
+          onProfileUpdated={updated}
+        />
+      </ToastProvider>,
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Forgot PIN?" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Ask household owner for PIN reset" }),
+    );
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(api.requestProfilePinReset).toHaveBeenCalledWith("alex", "reset");
+    expect(api.setProfilePin).not.toHaveBeenCalled();
+    await act(async () => vi.advanceTimersByTimeAsync(5000));
+    expect(api.setProfilePin).toHaveBeenCalledWith("alex", null);
+    expect(updated).toHaveBeenCalledWith({ ...profile, pinEnabled: false });
+  });
+  it("offers the profile PIN first and the Master PIN after Forgot PIN", async () => {
     const unlocked = vi.fn();
     const api = {
       getAuthStatus: vi.fn().mockResolvedValue({
@@ -260,7 +335,12 @@ describe("profile PIN controls", () => {
         onCancel={vi.fn()}
       />,
     );
-    const input = await screen.findByLabelText("Master PIN");
+    expect(screen.getByLabelText("Profile PIN")).toHaveAttribute(
+      "maxlength",
+      "4",
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Forgot PIN?" }));
+    const input = screen.getByLabelText("Master PIN");
     expect(input).toHaveAttribute("maxlength", "8");
     expect(
       input.closest(".pin-pad")?.querySelectorAll(".pin-pad__slot"),
@@ -287,16 +367,13 @@ describe("profile PIN controls", () => {
         onCancel={vi.fn()}
       />,
     );
-    await screen.findByLabelText("Master PIN");
+    fireEvent.click(await screen.findByRole("button", { name: "Forgot PIN?" }));
     expect(
-      screen.queryByRole("button", { name: "Forgot PIN? Ask household owner" }),
+      screen.queryByRole("button", {
+        name: "Ask household owner for PIN reset",
+      }),
     ).not.toBeInTheDocument();
-    expect(screen.getByText(/Ask the household owner/)).toHaveClass(
-      "settings-note",
-    );
-    fireEvent.click(
-      screen.getByRole("button", { name: "Use profile PIN instead" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(screen.getByLabelText("Profile PIN")).toHaveAttribute(
       "maxlength",
       "4",

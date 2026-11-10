@@ -12,6 +12,11 @@ import { useToasts } from "./ToastProvider";
 import { AppearanceSettings } from "../theme/AppearanceSettings";
 import { ProfilePinSettings } from "./ProfilePin";
 import { SupportPanel } from "./SupportPanel";
+import {
+  avatarOptions,
+  prepareProfilePhoto,
+  ProfileAvatar,
+} from "./ProfileAvatar";
 
 export type ProfilePage =
   "settings" | "preferences" | "account" | "profile" | "support" | "statistics";
@@ -22,7 +27,6 @@ interface ProfilePagesProps {
   profile: ViewerProfile;
   onProfileUpdated: (profile: ViewerProfile) => void;
   onRerunOnboarding: () => void;
-  onSwitchAccount: () => void;
   onSignOut?: () => Promise<void>;
   onDeleteProfile: () => Promise<void>;
   onBackHome: () => void;
@@ -46,9 +50,13 @@ export function ProfilePages({
   profile,
   onProfileUpdated,
   onRerunOnboarding,
-  onSwitchAccount,
   onBackHome,
 }: ProfilePagesProps) {
+  const [name, setName] = useState(profile.name);
+  const [avatar, setAvatar] = useState<ViewerProfile["avatar"]>(
+    profile.avatar ?? null,
+  );
+  const [photoBusy, setPhotoBusy] = useState(false);
   const [playback, setPlayback] = useState<PlaybackPreferences>(
     profile.playback,
   );
@@ -163,40 +171,60 @@ export function ProfilePages({
           <section className="profile-page__section" id="settings-player">
             <p className="eyebrow">04 / Player</p>
             <h2>Player behaviour</h2>
-            <p>
-              Placeholder: default volume, skip controls and playback behaviour
-              will live here.
-            </p>
-          </section>
-          <section className="profile-page__section">
-            <p className="eyebrow">Household administration</p>
-            <h2>Household services and devices</h2>
-            <p>
-              Manage shared settings for everyone in your household on your home
-              server.
-            </p>
-            <ul className="household-settings-list">
-              <li>
-                <strong>Services</strong>
-                <span>Streaming connections and cloud sync</span>
-              </li>
-              <li>
-                <strong>Devices</strong>
-                <span>Pairing and access to your server</span>
-              </li>
-              <li>
-                <strong>Security &amp; backups</strong>
-                <span>Master PIN and household backups</span>
-              </li>
-            </ul>
-            <a
-              className="button button--secondary household-settings-link"
-              href="/admin"
-            >
-              Open household administration
-            </a>
+            <div className="settings-field-grid">
+              <label className="field field--compact">
+                <span>Starting volume: {playback.defaultVolume}%</span>
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  step="5"
+                  value={playback.defaultVolume}
+                  onChange={(event) =>
+                    setPlayback((current) => ({
+                      ...current,
+                      defaultVolume: Number(event.target.value),
+                    }))
+                  }
+                />
+              </label>
+              <label className="field field--compact">
+                <span>Skip interval</span>
+                <select
+                  value={playback.skipSeconds}
+                  onChange={(event) =>
+                    setPlayback((current) => ({
+                      ...current,
+                      skipSeconds: Number(
+                        event.target.value,
+                      ) as PlaybackPreferences["skipSeconds"],
+                    }))
+                  }
+                >
+                  {[5, 10, 15, 30, 60].map((seconds) => (
+                    <option key={seconds} value={seconds}>
+                      {seconds} seconds
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <label className="settings-checkbox">
+              <input
+                type="checkbox"
+                checked={playback.autoPlayNextEpisode}
+                onChange={(event) =>
+                  setPlayback((current) => ({
+                    ...current,
+                    autoPlayNextEpisode: event.target.checked,
+                  }))
+                }
+              />
+              <span>Automatically play the next episode</span>
+            </label>
             <p className="settings-note">
-              Household owner sign-in is required.
+              Starting volume applies when opening a player. You can still
+              adjust it during playback.
             </p>
           </section>
           <div className="profile-page__actions">
@@ -284,30 +312,94 @@ export function ProfilePages({
 
       {page === "profile" && (
         <div className="profile-page__sections">
-          <section className="profile-page__section">
+          <section className="profile-page__section profile-editor">
             <p className="eyebrow">Current profile</p>
-            <h2>{profile.name}</h2>
-            <button
-              className="button button--secondary"
-              type="button"
-              onClick={onSwitchAccount}
+            <h2>Edit profile</h2>
+            <label className="field field--compact">
+              <span>Profile name</span>
+              <input
+                value={name}
+                maxLength={80}
+                onChange={(event) => setName(event.target.value)}
+              />
+            </label>
+            <h3>Profile photo</h3>
+            <div className="profile-editor__preview">
+              <ProfileAvatar name={name} avatar={avatar} />
+            </div>
+            <p>
+              Choose an avatar or upload a photo. Photos are cropped to a
+              square.
+            </p>
+            <div
+              className="profile-editor__choices"
+              role="group"
+              aria-label="Choose an avatar"
             >
-              Choose another profile
-            </button>
+              <button
+                type="button"
+                className="profile-editor__choice"
+                aria-label="Use initial"
+                aria-pressed={!avatar}
+                onClick={() => setAvatar(null)}
+              >
+                <ProfileAvatar name={name} />
+              </button>
+              {avatarOptions.map((option) => (
+                <button
+                  key={option.id}
+                  type="button"
+                  className="profile-editor__choice"
+                  aria-label={option.label}
+                  aria-pressed={avatar === option.id}
+                  onClick={() => setAvatar(option.id)}
+                >
+                  <ProfileAvatar name={name} avatar={option.id} />
+                </button>
+              ))}
+            </div>
+            <label className="field field--compact profile-editor__upload">
+              <span>Upload a photo</span>
+              <input
+                type="file"
+                accept="image/jpeg,image/png,image/webp,image/gif"
+                disabled={photoBusy}
+                onChange={(event) => {
+                  const file = event.currentTarget.files?.[0];
+                  event.currentTarget.value = "";
+                  if (!file) return;
+                  setPhotoBusy(true);
+                  setError("");
+                  void prepareProfilePhoto(file)
+                    .then(setAvatar)
+                    .catch(() =>
+                      setError(
+                        "Could not open this image. Choose an image smaller than 10 MB.",
+                      ),
+                    )
+                    .finally(() => setPhotoBusy(false));
+                }}
+              />
+            </label>
+            <p className="settings-note">The photo is stored on this server.</p>
+            <div className="profile-editor__actions">
+              <button
+                className="button button--primary"
+                type="button"
+                disabled={saving || photoBusy || !name.trim()}
+                onClick={() =>
+                  void save({ name: name.trim(), avatar: avatar ?? null })
+                }
+              >
+                {saving ? "Saving?" : "Save profile"}
+              </button>
+            </div>
           </section>
           <ProfilePinSettings
             api={api}
             profile={profile}
             onProfileUpdated={onProfileUpdated}
           />
-          <section className="profile-page__section">
-            <p className="eyebrow">Portrait · planned</p>
-            <h2>Profile photo</h2>
-            <p>
-              Placeholder: upload and crop a photo for this profile. The
-              initials avatar is used for now.
-            </p>
-          </section>
         </div>
       )}
 

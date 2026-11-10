@@ -550,6 +550,111 @@ it("preserves library and feedback on repeated profile moves and emits new targe
   );
 });
 
+it("immediately transfers a profile between households of the same owner", async () => {
+  const source = await registeredHousehold(f, "a"),
+    target = await registeredHousehold(f, "a");
+  const profile = profileOperation(f, "Family");
+  await push(source.token, [profile]);
+  const response = await f.request(
+    `/v1/households/${source.householdId}/profile-transfers`,
+    {
+      method: "POST",
+      account: "a",
+      data: {
+        profileId: profile.profileId,
+        targetHouseholdId: target.householdId,
+      },
+    },
+  );
+  expect(response.status).toBe(201);
+  expect(await response.json()).toMatchObject({
+    ok: true,
+    sourceHouseholdId: source.householdId,
+    targetHouseholdId: target.householdId,
+  });
+  expect(
+    (await (
+      await f.request(`/v1/households/${target.householdId}/profiles`, {
+        account: "a",
+      })
+    ).json()) as { profiles: unknown[] },
+  ).toMatchObject({ profiles: [{ id: profile.profileId, name: "Family" }] });
+  expect(
+    await (await f.request("/v1/household-requests", { account: "a" })).json(),
+  ).toEqual({ requests: [] });
+});
+
+it("immediately merges sync-only households of the same owner", async () => {
+  const source = await registeredHousehold(f, "a"),
+    target = await registeredHousehold(f, "a");
+  await push(source.token, [profileOperation(f, "Source")]);
+  const response = await f.request(
+    `/v1/households/${source.householdId}/merge`,
+    {
+      method: "POST",
+      account: "a",
+      data: { targetHouseholdId: target.householdId },
+    },
+  );
+  expect(response.status).toBe(201);
+  expect(await response.json()).toMatchObject({
+    ok: true,
+    sourceHouseholdId: source.householdId,
+    targetHouseholdId: target.householdId,
+  });
+  expect((await f.request("/v1/account", { token: source.token })).status).toBe(
+    401,
+  );
+  expect(
+    await (await f.request("/v1/household-requests", { account: "a" })).json(),
+  ).toEqual({ requests: [] });
+});
+
+it("prepares encrypted merges of the same owner for local completion without separate approval", async () => {
+  const source = await registeredHousehold(f, "a"),
+    target = await registeredHousehold(f, "a");
+  await push(source.token, [profileOperation(f, "Source")]);
+  const backup = householdBackup(f, source.householdId);
+  await f.request("/v1/sync/v2/checkpoint", {
+    method: "PUT",
+    token: source.token,
+    data: { expectedRevision: 0, envelope: backup },
+  });
+  const response = await f.request(
+    `/v1/households/${source.householdId}/merge`,
+    {
+      method: "POST",
+      account: "a",
+      data: { targetHouseholdId: target.householdId },
+    },
+  );
+  expect(response.status).toBe(201);
+  const result = (await response.json()) as {
+    id: string;
+    requiresLocalImport: boolean;
+  };
+  expect(result.requiresLocalImport).toBe(true);
+  expect(
+    (
+      await f.request(`/v1/household-requests/${result.id}/decision`, {
+        method: "POST",
+        account: "a",
+        data: { approve: true },
+      })
+    ).status,
+  ).toBe(404);
+  expect(
+    await (
+      await f.request(`/v1/household-requests/${result.id}/import`, {
+        token: target.token,
+      })
+    ).json(),
+  ).toMatchObject({ requestId: result.id, envelope: backup });
+  expect((await f.request("/v1/account", { token: source.token })).status).toBe(
+    200,
+  );
+});
+
 it("merges sync-only households after explicit approval and preserves account deletion", async () => {
   const source = await registeredHousehold(f, "a"),
     target = await registeredHousehold(f, "b");
@@ -791,6 +896,126 @@ it("revokes a detached server credential while keeping its household and backup"
       )
       .get(server.householdId),
   ).toEqual({ envelope_json: JSON.stringify(backup) });
+});
+
+it("requires fresh browser authentication and reports the server connection state", async () => {
+  const server = await registeredHousehold(f);
+  const path = "/v1/households/" + server.householdId + "/connection";
+  const stale = await f.request(path, {
+    method: "DELETE",
+    account: "a",
+    authenticatedAt: f.now() - 300_001,
+  });
+  expect(stale.status).toBe(403);
+  expect(await stale.json()).toEqual({ error: "reauth_required" });
+  const list = async () =>
+    (await (await f.request("/v1/households", { account: "a" })).json()) as {
+      households: { id: string; serverConnected: boolean }[];
+    };
+  expect(
+    (await list()).households.find((h) => h.id === server.householdId)
+      ?.serverConnected,
+  ).toBe(true);
+  expect(
+    (await f.request(path, { method: "DELETE", account: "a" })).status,
+  ).toBe(200);
+  expect(
+    (await list()).households.find((h) => h.id === server.householdId)
+      ?.serverConnected,
+  ).toBe(false);
+  expect((await f.request("/v1/account", { token: server.token })).status).toBe(
+    401,
+  );
+});
+
+it("deletes only the owner's cloud household, revoking its server and removing cloud data", async () => {
+  const source = await registeredHousehold(f);
+  const other = await registeredHousehold(f);
+  await push(source.token, [profileOperation(f, "Family")]);
+  const backup = householdBackup(f, source.householdId);
+  expect(
+    (
+      await f.request("/v1/sync/v2/checkpoint", {
+        method: "PUT",
+        token: source.token,
+        data: { expectedRevision: 0, envelope: backup },
+      })
+    ).status,
+  ).toBe(200);
+  const path = "/v1/households/" + source.householdId;
+  expect(
+    (await f.request(path, { method: "DELETE", token: source.token })).status,
+  ).toBe(403);
+  expect(
+    (
+      await f.request(path, {
+        method: "DELETE",
+        account: "a",
+        authenticatedAt: f.now() - 300_001,
+      })
+    ).status,
+  ).toBe(403);
+  expect(
+    (await f.request(path, { method: "DELETE", account: "b" })).status,
+  ).toBe(404);
+  expect(
+    (
+      await f.request(path, {
+        method: "DELETE",
+        account: "a",
+        origin: "https://other.example",
+      })
+    ).status,
+  ).toBe(403);
+  expect(
+    (await f.request(path, { method: "DELETE", account: "a" })).status,
+  ).toBe(200);
+  expect((await f.request(path, { account: "a" })).status).toBe(404);
+  expect(
+    (await f.request("/v1/households/" + other.householdId, { account: "a" }))
+      .status,
+  ).toBe(200);
+  expect((await f.request("/v1/account", { token: source.token })).status).toBe(
+    401,
+  );
+  expect(
+    f.sqlite
+      .prepare("SELECT 1 FROM cloud_household_checkpoint WHERE household_id=?")
+      .get(source.householdId),
+  ).toBeUndefined();
+  expect(
+    f.sqlite
+      .prepare("SELECT 1 FROM cloud_household_sync_profile WHERE account_id=?")
+      .get(source.householdId),
+  ).toBeUndefined();
+});
+
+it("does not resurrect merged households when their target is deleted", async () => {
+  const source = await registeredHousehold(f);
+  const target = await registeredHousehold(f);
+  f.sqlite
+    .prepare("UPDATE cloud_household SET merged_into=? WHERE id=?")
+    .run(target.householdId, source.householdId);
+  const path = "/v1/households/" + target.householdId;
+  const blocked = await f.request(path, { method: "DELETE", account: "a" });
+  expect(blocked.status).toBe(409);
+  expect(await blocked.json()).toEqual({
+    error: "household_has_merged_sources",
+  });
+  expect((await f.request("/v1/account", { token: target.token })).status).toBe(
+    200,
+  );
+  expect(
+    (
+      await f.request("/v1/households/" + source.householdId, {
+        method: "DELETE",
+        account: "a",
+      })
+    ).status,
+  ).toBe(200);
+  expect(
+    (await f.request(path, { method: "DELETE", account: "a" })).status,
+  ).toBe(200);
 });
 
 it("transfers household ownership only after the target owner approves and revokes the previous owner's tokens", async () => {

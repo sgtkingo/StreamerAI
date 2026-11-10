@@ -302,7 +302,10 @@ export interface StreamerApi {
     newPin: string,
     confirmation: string,
   ): Promise<{ ok: boolean }>;
-  requestProfilePinReset?(profileId: string): Promise<ProfilePinResetRequest>;
+  requestProfilePinReset?(
+    profileId: string,
+    purpose?: "unlock" | "change" | "reset",
+  ): Promise<ProfilePinResetRequest>;
   pollProfilePinReset?(
     profileId: string,
     requestId: string,
@@ -343,6 +346,7 @@ export interface StreamerApi {
       profileId: string;
       profileName: string;
       deviceName: string;
+      purpose?: "unlock" | "change" | "reset";
       expiresAt: string;
     }[];
   }>;
@@ -1025,10 +1029,10 @@ export const apiClient: StreamerApi = {
       method: "PUT",
       body: JSON.stringify({ currentPin, newPin, confirmation }),
     }),
-  requestProfilePinReset: (profileId) =>
+  requestProfilePinReset: (profileId, purpose = "reset") =>
     request(`/profiles/${encodeURIComponent(profileId)}/pin-reset`, {
       method: "POST",
-      body: "{}",
+      body: JSON.stringify({ purpose }),
     }),
   pollProfilePinReset: (profileId, requestId) =>
     request(`/profiles/${encodeURIComponent(profileId)}/pin-reset/poll`, {

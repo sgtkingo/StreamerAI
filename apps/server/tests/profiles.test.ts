@@ -14,6 +14,27 @@ describe("viewer profiles", () => {
     for (const database of databases.splice(0)) database.close();
   });
 
+  it("stores and removes an uploaded profile photo and rejects invalid images", async () => {
+    const app = createApp({ environment: "test", logger: false });
+    apps.push(app);
+    const photo = "data:image/jpeg;base64,/9j/2Q==";
+    const update = (avatar: unknown) =>
+      app.inject({
+        method: "PATCH",
+        url: "/api/v1/profiles/default",
+        payload: { avatar },
+      });
+    expect((await update(photo)).statusCode).toBe(200);
+    expect(
+      (await app.inject({ method: "GET", url: "/api/v1/profiles" })).json()
+        .items[0].avatar,
+    ).toBe(photo);
+    expect(
+      (await update("data:image/svg+xml;base64,PHN2Zz4=")).statusCode,
+    ).toBe(400);
+    expect((await update(null)).json().avatar).toBeNull();
+  });
+
   it("creates at most five profiles and keeps playback preferences per viewer", async () => {
     const app = createApp({ environment: "test", logger: false });
     apps.push(app);
@@ -40,6 +61,8 @@ describe("viewer profiles", () => {
       method: "PATCH",
       url: `/api/v1/profiles/${id}`,
       payload: {
+        name: "Sam",
+        avatar: "fox",
         genres: ["Drama"],
         prompt: "Quiet autumn films with rich dialogue.",
         playback,
@@ -47,7 +70,8 @@ describe("viewer profiles", () => {
     });
     expect(updated.statusCode).toBe(200);
     expect(updated.json()).toMatchObject({
-      name: "Alex",
+      name: "Sam",
+      avatar: "fox",
       genres: ["Drama"],
       prompt: "Quiet autumn films with rich dialogue.",
       playback,
@@ -58,6 +82,12 @@ describe("viewer profiles", () => {
     )
       .json()
       .items.find((item: { id: string }) => item.id === "default");
+    const savedProfile = (
+      await app.inject({ method: "GET", url: "/api/v1/profiles" })
+    )
+      .json()
+      .items.find((item: { id: string }) => item.id === id);
+    expect(savedProfile).toMatchObject({ name: "Sam", avatar: "fox" });
     expect(defaultProfile.playback.autoFindSubtitles).toBe(false);
     const home = await app.inject({
       method: "GET",

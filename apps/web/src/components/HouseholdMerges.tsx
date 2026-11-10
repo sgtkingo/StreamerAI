@@ -48,10 +48,10 @@ export function HouseholdMerges({
   if (!requests.length && !error) return null;
   return (
     <section className="profile-page__section">
-      <h2>Approved household merges</h2>
+      <h2>Household merges to finish</h2>
       <p>
-        Finish an approved cloud merge on this destination server using the
-        source household's Master PIN.
+        Finish a cloud merge on this destination server using the source
+        household's Master PIN.
       </p>
       {requests.map((request) => (
         <HouseholdMerge

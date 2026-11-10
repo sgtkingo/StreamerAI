@@ -969,6 +969,13 @@ html[data-theme]:not([data-theme="cinematic"]) :focus-visible {
   font-size: 12px;
 }
 
+.topbar__report-group {
+  display: grid;
+  gap: 3px;
+  color: var(--slate);
+  font-size: 10px;
+}
+
 .topbar__profile-actions,
 .profile-chooser__header {
   display: flex;

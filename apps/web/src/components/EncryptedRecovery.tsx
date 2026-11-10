@@ -3,6 +3,7 @@ import { getInstallationStatus } from "./InstallationAccess";
 import { useToasts } from "./ToastProvider";
 import { DigitSlotsInput } from "./DigitSlotsInput";
 import { InfoTip } from "./InfoTip";
+import { MasterPinDialog } from "./MasterPinDialog";
 
 const base = "/api/v1/account/encrypted-household";
 async function call<T>(
@@ -84,14 +85,17 @@ function BackupActionIcon({ restore = false }: { restore?: boolean }) {
 export function EncryptedRecovery({
   restoreOnly = false,
   autoLoadCloud = false,
+  clientMasterPinDialog = false,
   onRestored,
 }: {
   restoreOnly?: boolean;
   autoLoadCloud?: boolean;
+  clientMasterPinDialog?: boolean;
   onRestored?: () => void | Promise<void>;
 }) {
   const [status, setStatus] = useState<Status | null>(null);
   const [pin, setPin] = useState("");
+  const [pinDialogOpen, setPinDialogOpen] = useState(false);
   const [envelope, setEnvelope] = useState<unknown>(null);
   const [cloudRevision, setCloudRevision] = useState<number | null>(null);
   const [preview, setPreview] = useState<Preview | null>(null);
@@ -302,14 +306,40 @@ export function EncryptedRecovery({
               />
             </label>
           )}
-          <DigitSlotsInput
-            label="Master PIN for this backup"
-            value={pin}
-            onChange={(value) => {
-              setPin(value);
-              setPreview(null);
-            }}
-          />
+          {clientMasterPinDialog ? (
+            <>
+              <button
+                className="button button--secondary"
+                type="button"
+                disabled={busy}
+                onClick={() => setPinDialogOpen(true)}
+              >
+                {pin ? "Change backup Master PIN" : "Enter backup Master PIN"}
+              </button>
+              {pin && <p role="status">Backup Master PIN entered.</p>}
+              {pinDialogOpen && (
+                <MasterPinDialog
+                  title="Enter the backup Master PIN"
+                  description="Enter the Master PIN that encrypted this backup."
+                  onSubmit={(value) => {
+                    setPin(value);
+                    setPreview(null);
+                    setPinDialogOpen(false);
+                  }}
+                  onCancel={() => setPinDialogOpen(false)}
+                />
+              )}
+            </>
+          ) : (
+            <DigitSlotsInput
+              label="Master PIN for this backup"
+              value={pin}
+              onChange={(value) => {
+                setPin(value);
+                setPreview(null);
+              }}
+            />
+          )}
           <button
             className="button button--secondary"
             type="button"

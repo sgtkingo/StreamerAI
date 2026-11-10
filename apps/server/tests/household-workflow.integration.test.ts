@@ -680,11 +680,146 @@ it("authorizes a client by Master PIN and keeps profile recovery and backup sett
       })
     ).statusCode,
   ).toBe(200);
+  const unlockRequest = await home.app.inject({
+    method: "POST",
+    url: `/api/v1/profiles/${profile.id}/pin-reset`,
+    headers: clientHeaders,
+    payload: { purpose: "unlock" },
+  });
+  expect(unlockRequest.statusCode).toBe(200);
+  const unlockId = unlockRequest.json().id;
+  expect(
+    (
+      await home.app.inject({
+        url: "/api/v1/admin/pin-resets",
+        headers: ownerHeaders,
+      })
+    ).json().requests,
+  ).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ id: unlockId, purpose: "unlock" }),
+    ]),
+  );
+  expect(
+    (
+      await home.app.inject({
+        method: "POST",
+        url: `/api/v1/admin/pin-resets/${unlockId}/decision`,
+        headers: ownerHeaders,
+        payload: { approve: true },
+      })
+    ).statusCode,
+  ).toBe(200);
+  expect(
+    (
+      await home.app.inject({
+        method: "POST",
+        url: `/api/v1/profiles/${profile.id}/pin-reset/poll`,
+        headers: clientHeaders,
+        payload: { requestId: unlockId },
+      })
+    ).json().status,
+  ).toBe("approved");
+  expect(
+    (
+      await home.app.inject({
+        url: `/api/v1/profiles/${profile.id}/library`,
+        headers: clientHeaders,
+      })
+    ).statusCode,
+  ).toBe(200);
+  expect(home.database.profiles.getPinRecord(profile.id).hash).not.toBeNull();
+  expect(
+    (
+      await home.app.inject({
+        method: "PUT",
+        url: `/api/v1/profiles/${profile.id}/pin`,
+        headers: clientHeaders,
+        payload: { pin: null },
+      })
+    ).statusCode,
+  ).toBe(403);
+  const otherClient = await authorize("01234567");
+  const otherHeaders = { ...headers, cookie: getCookie(otherClient) };
+  expect(
+    (
+      await home.app.inject({
+        url: `/api/v1/profiles/${profile.id}/library`,
+        headers: otherHeaders,
+      })
+    ).statusCode,
+  ).toBe(423);
+  expect(
+    (
+      await home.app.inject({
+        method: "POST",
+        url: `/api/v1/profiles/${profile.id}/pin-reset/poll`,
+        headers: otherHeaders,
+        payload: { requestId: unlockId },
+      })
+    ).statusCode,
+  ).toBe(403);
+  expect(
+    (
+      await home.app.inject({
+        method: "POST",
+        url: `/api/v1/profiles/${profile.id}/unlock`,
+        headers: otherHeaders,
+        payload: { pin: "1234" },
+      })
+    ).statusCode,
+  ).toBe(204);
+  expect(
+    (
+      await home.app.inject({
+        url: `/api/v1/profiles/${profile.id}/library`,
+        headers: otherHeaders,
+      })
+    ).statusCode,
+  ).toBe(200);
+  const changeRequest = await home.app.inject({
+    method: "POST",
+    url: `/api/v1/profiles/${profile.id}/pin-reset`,
+    headers: clientHeaders,
+    payload: { purpose: "change" },
+  });
+  expect(changeRequest.statusCode).toBe(200);
+  expect(
+    (
+      await home.app.inject({
+        method: "POST",
+        url: `/api/v1/admin/pin-resets/${changeRequest.json().id}/decision`,
+        headers: ownerHeaders,
+        payload: { approve: true },
+      })
+    ).statusCode,
+  ).toBe(200);
+  expect(
+    (
+      await home.app.inject({
+        method: "POST",
+        url: `/api/v1/profiles/${profile.id}/pin-reset/poll`,
+        headers: clientHeaders,
+        payload: { requestId: changeRequest.json().id },
+      })
+    ).json().status,
+  ).toBe("approved");
+  expect(home.database.profiles.getPinRecord(profile.id).hash).not.toBeNull();
+  expect(
+    (
+      await home.app.inject({
+        method: "PUT",
+        url: `/api/v1/profiles/${profile.id}/pin`,
+        headers: clientHeaders,
+        payload: { pin: "5678" },
+      })
+    ).statusCode,
+  ).toBe(200);
   const requested = await home.app.inject({
     method: "POST",
     url: `/api/v1/profiles/${profile.id}/pin-reset`,
     headers: clientHeaders,
-    payload: {},
+    payload: { purpose: "reset" },
   });
   expect(requested.statusCode).toBe(200);
   const pending = await home.app.inject({
@@ -692,6 +827,11 @@ it("authorizes a client by Master PIN and keeps profile recovery and backup sett
     headers: ownerHeaders,
   });
   expect(pending.json().requests).toHaveLength(1);
+  expect(pending.json().requests[0]).toMatchObject({
+    id: requested.json().id,
+    profileName: profile.name,
+    purpose: "reset",
+  });
   expect(
     (
       await home.app.inject({
@@ -764,7 +904,7 @@ it("saves scheduled local ciphertext only when due and retains it when backups a
   expect(readdirSync(householdDirectory)).toHaveLength(2);
 });
 
-it("imports an approved encrypted merge once, preserves target PIN and uploads before disconnecting the source cloud server", async () => {
+it("imports an internal encrypted merge without separate approval and preserves the target PIN", async () => {
   const f = (cloud = fixture()),
     source = server(f, "merge-source"),
     target = server(f, "merge-target");
@@ -802,13 +942,11 @@ it("imports an approved encrypted merge once, preserves target PIN and uploads b
     data: { targetHouseholdId: targetId },
   });
   expect(requested.status).toBe(201);
-  const { id } = (await requested.json()) as { id: string };
-  const approved = await f.request(`/v1/household-requests/${id}/decision`, {
-    method: "POST",
-    account: "a",
-    data: { approve: true },
-  });
-  expect(approved.status).toBe(200);
+  const { id, requiresLocalImport } = (await requested.json()) as {
+    id: string;
+    requiresLocalImport: boolean;
+  };
+  expect(requiresLocalImport).toBe(true);
   const pendingMerges = await target.app.inject({
     url: "/api/v1/admin/household-merges",
     headers: { ...headers, cookie: targetOwner },

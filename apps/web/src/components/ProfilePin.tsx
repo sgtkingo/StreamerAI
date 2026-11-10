@@ -5,12 +5,17 @@ import { safeErrorMessage } from "../api/client";
 import { PinPad } from "./PinPad";
 import { DigitSlotsInput } from "./DigitSlotsInput";
 import { useToasts } from "./ToastProvider";
+import { MasterPinDialog } from "./MasterPinDialog";
 
 function useOwnerReset(api: StreamerApi) {
   const [supported, setSupported] = useState(false);
   useEffect(() => {
     let active = true;
-    if (api.requestProfilePinReset && api.getAuthStatus) {
+    if (
+      api.requestProfilePinReset &&
+      api.pollProfilePinReset &&
+      api.getAuthStatus
+    ) {
       void api
         .getAuthStatus()
         .then((status) => {
@@ -30,11 +35,13 @@ function ProfilePinRecovery({
   profile,
   onReset,
   onCancel,
+  purpose = "reset",
 }: {
   api: StreamerApi;
   profile: ViewerProfile;
   onReset: () => void | Promise<void>;
   onCancel: () => void;
+  purpose?: "reset" | "unlock" | "change";
 }) {
   const [error, setError] = useState("");
   const [request, setRequest] = useState<ProfilePinResetRequest | null>(null);
@@ -54,7 +61,7 @@ function ProfilePinRecovery({
     const poll = async (grant: ProfilePinResetRequest) => {
       if (!active) return;
       if (Date.parse(grant.expiresAt) <= Date.now()) {
-        setOutcome("This reset request has expired.");
+        setOutcome("This request has expired.");
         return;
       }
       try {
@@ -64,7 +71,7 @@ function ProfilePinRecovery({
         if (response.status === "approved") {
           setApproved(true);
           try {
-            await api.setProfilePin!(profile.id, null);
+            if (purpose === "reset") await api.setProfilePin!(profile.id, null);
             if (active) await callback.current();
           } catch (reason) {
             if (active) setError(safeErrorMessage(reason));
@@ -74,8 +81,8 @@ function ProfilePinRecovery({
         if (response.status === "denied" || response.status === "expired") {
           setOutcome(
             response.status === "denied"
-              ? "This reset request was declined."
-              : "This reset request has expired.",
+              ? "This request was declined."
+              : "This request has expired.",
           );
           return;
         }
@@ -84,7 +91,7 @@ function ProfilePinRecovery({
       }
       if (active) timer = setTimeout(() => void poll(grant), 5000);
     };
-    void api.requestProfilePinReset!(profile.id)
+    void api.requestProfilePinReset!(profile.id, purpose)
       .then((grant) => {
         if (!active) return;
         setRequest(grant);
@@ -97,7 +104,7 @@ function ProfilePinRecovery({
       active = false;
       clearTimeout(timer);
     };
-  }, [api, profile.id, attempt]);
+  }, [api, profile.id, attempt, purpose]);
   useEffect(() => {
     dialogRef.current?.querySelector<HTMLElement>("button, a")?.focus();
   }, [request]);
@@ -107,7 +114,11 @@ function ProfilePinRecovery({
       className="profile-pin-recovery"
       role="dialog"
       aria-modal="true"
-      aria-label="Reset profile PIN"
+      aria-label={
+        purpose === "reset"
+          ? "Reset profile PIN"
+          : "Request household owner approval"
+      }
       onKeyDown={(event) => {
         if (event.key === "Escape") {
           event.preventDefault();
@@ -132,10 +143,20 @@ function ProfilePinRecovery({
         }
       }}
     >
-      <h2>Reset profile PIN</h2>
+      <h2>
+        {purpose === "reset"
+          ? "Reset profile PIN"
+          : "Waiting for owner approval"}
+      </h2>
       <p>
-        Ask the household owner to confirm the reset for {profile.name} in
-        household administration on this server.
+        Ask the household owner to confirm{" "}
+        {purpose === "unlock"
+          ? "profile access"
+          : purpose === "change"
+            ? "a PIN change"
+            : "the reset"}{" "}
+        for {profile.name} in household administration on this server.
+        {purpose === "reset" && " Approval removes the current profile PIN."}
       </p>
       {request ? (
         <>
@@ -162,7 +183,11 @@ function ProfilePinRecovery({
           onClick={() => {
             if (approved) {
               setError("");
-              void api.setProfilePin!(profile.id, null)
+              void Promise.resolve(
+                purpose === "reset"
+                  ? api.setProfilePin!(profile.id, null)
+                  : undefined,
+              )
                 .then(() => callback.current())
                 .catch((reason) => setError(safeErrorMessage(reason)));
             } else setAttempt((value) => value + 1);
@@ -199,7 +224,6 @@ export function ProfilePinDialog({
       .then((status) => {
         if (active) {
           setHasMaster(!!status.masterPinEnabled);
-          setUseMaster(!!status.masterPinEnabled);
         }
       })
       .catch(() => {
@@ -255,8 +279,23 @@ export function ProfilePinDialog({
           profile={profile}
           onCancel={() => setRecovering(false)}
           onReset={onUnlocked}
+          purpose="reset"
         />
       </div>
+    );
+  if (useMaster)
+    return (
+      <MasterPinDialog
+        onSubmit={async (value) => {
+          await api.unlockProfile!(profile.id, value);
+          await onUnlocked();
+        }}
+        onCancel={() => {
+          setUseMaster(false);
+          setPin("");
+        }}
+        onAskOwner={supportsOwnerReset ? () => setRecovering(true) : undefined}
+      />
     );
   return (
     <div className="profile-chooser__overlay">
@@ -306,7 +345,7 @@ export function ProfilePinDialog({
             if (value.length === (useMaster ? 8 : 4)) void unlock(value);
           }}
         />
-        {hasMaster && (
+        {(hasMaster || supportsOwnerReset) && (
           <button
             type="button"
             className="text-button"
@@ -317,7 +356,7 @@ export function ProfilePinDialog({
               setError("");
             }}
           >
-            {useMaster ? "Use profile PIN instead" : "Use Master PIN"}
+            Forgot PIN?
           </button>
         )}
         {error && (
@@ -340,21 +379,11 @@ export function ProfilePinDialog({
             Cancel
           </button>
         </div>
-        {!supportsOwnerReset && (
+        {!hasMaster && !supportsOwnerReset && (
           <p className="settings-note">
             Ask the household owner to reset this profile's PIN in household
             administration.
           </p>
-        )}
-        {supportsOwnerReset && (
-          <button
-            className="text-button"
-            type="button"
-            disabled={pending}
-            onClick={() => setRecovering(true)}
-          >
-            Forgot PIN? Ask household owner
-          </button>
         )}
       </form>
     </div>
@@ -374,6 +403,8 @@ export function ProfilePinSettings({
   const [confirmation, setConfirmation] = useState("");
   const [currentPin, setCurrentPin] = useState("");
   const [useMasterCurrent, setUseMasterCurrent] = useState(false);
+  const [masterOpen, setMasterOpen] = useState(false);
+  const [ownerApproved, setOwnerApproved] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const [recovering, setRecovering] = useState(false);
@@ -383,7 +414,9 @@ export function ProfilePinSettings({
     if (
       !api.setProfilePin ||
       pending ||
-      (profile.pinEnabled && !/^(?:\d{4}|\d{8})$/.test(currentPin))
+      (profile.pinEnabled &&
+        !ownerApproved &&
+        !/^(?:\d{4}|\d{8})$/.test(currentPin))
     )
       return;
     setPending(true);
@@ -399,6 +432,8 @@ export function ProfilePinSettings({
       setPin("");
       setConfirmation("");
       setCurrentPin("");
+      setOwnerApproved(false);
+      setUseMasterCurrent(false);
       showToast(
         value
           ? wasEnabled
@@ -435,27 +470,39 @@ export function ProfilePinSettings({
       >
         {profile.pinEnabled && (
           <>
-            <DigitSlotsInput
-              label={useMasterCurrent ? "Master PIN" : "Current profile PIN"}
-              value={currentPin}
-              onChange={setCurrentPin}
-              className="field--compact"
-              length={useMasterCurrent ? 8 : 4}
-              disabled={pending}
-            />
+            {!useMasterCurrent && !ownerApproved && (
+              <DigitSlotsInput
+                label="Current profile PIN"
+                value={currentPin}
+                onChange={setCurrentPin}
+                className="field--compact"
+                length={4}
+                disabled={pending}
+              />
+            )}
+            {(useMasterCurrent || ownerApproved) && (
+              <p role="status">
+                {ownerApproved
+                  ? "Household owner approved a PIN change."
+                  : "Master PIN entered. Save to verify it."}
+              </p>
+            )}
             <button
               className="text-button profile-pin-method"
               type="button"
               disabled={pending}
               onClick={() => {
-                setUseMasterCurrent((current) => !current);
-                setCurrentPin("");
+                if (useMasterCurrent || ownerApproved) {
+                  setUseMasterCurrent(false);
+                  setOwnerApproved(false);
+                  setCurrentPin("");
+                } else setMasterOpen(true);
                 setError("");
               }}
             >
-              {useMasterCurrent
+              {useMasterCurrent || ownerApproved
                 ? "Use profile PIN instead"
-                : "Use Master PIN instead"}
+                : "Forgot PIN?"}
             </button>
           </>
         )}
@@ -504,7 +551,9 @@ export function ProfilePinSettings({
               pending ||
               !/^\d{4}$/.test(pin) ||
               confirmation !== pin ||
-              (!!profile.pinEnabled && !/^(?:\d{4}|\d{8})$/.test(currentPin))
+              (!!profile.pinEnabled &&
+                !ownerApproved &&
+                !/^(?:\d{4}|\d{8})$/.test(currentPin))
             }
           >
             {pending ? "Saving…" : "Save PIN"}
@@ -513,7 +562,10 @@ export function ProfilePinSettings({
             <button
               className="button button--ghost"
               type="button"
-              disabled={pending || !/^(?:\d{4}|\d{8})$/.test(currentPin)}
+              disabled={
+                pending ||
+                (!ownerApproved && !/^(?:\d{4}|\d{8})$/.test(currentPin))
+              }
               onClick={() => void save(null)}
             >
               Remove PIN
@@ -521,21 +573,24 @@ export function ProfilePinSettings({
           )}
         </div>
       </form>
-      {profile.pinEnabled && !supportsOwnerReset && (
-        <p className="settings-note">
-          Ask the household owner to reset this profile's PIN in household
-          administration.
-        </p>
-      )}
-      {profile.pinEnabled && supportsOwnerReset && (
-        <button
-          className="text-button"
-          type="button"
-          disabled={pending}
-          onClick={() => setRecovering(true)}
-        >
-          Forgot PIN? Ask household owner
-        </button>
+      {masterOpen && (
+        <MasterPinDialog
+          onSubmit={(value) => {
+            setCurrentPin(value);
+            setUseMasterCurrent(true);
+            setOwnerApproved(false);
+            setMasterOpen(false);
+          }}
+          onCancel={() => setMasterOpen(false)}
+          onAskOwner={
+            supportsOwnerReset
+              ? () => {
+                  setMasterOpen(false);
+                  setRecovering(true);
+                }
+              : undefined
+          }
+        />
       )}
       {recovering && (
         <div className="profile-chooser__overlay">
@@ -543,12 +598,15 @@ export function ProfilePinSettings({
             api={api}
             profile={profile}
             onCancel={() => setRecovering(false)}
+            purpose="reset"
             onReset={() => {
-              onProfileUpdated({ ...profile, pinEnabled: false });
               setRecovering(false);
               setCurrentPin("");
+              setOwnerApproved(false);
+              setUseMasterCurrent(false);
               setPin("");
               setConfirmation("");
+              onProfileUpdated({ ...profile, pinEnabled: false });
               showToast("Profile PIN removed.", "success");
             }}
           />
