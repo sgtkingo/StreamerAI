@@ -1,27 +1,28 @@
 import { useEffect, useRef, useState } from "react";
 import { registerSW } from "virtual:pwa-register";
+import {
+  hasUpdateSaves,
+  saveBeforeUpdate,
+  UpdateSaveError,
+} from "./updateSave";
+import { UpdateCoordinator } from "./updateCoordinator";
+import { activateUpdate } from "./activateUpdate";
 
 let updateWorker: ReturnType<typeof registerSW> | null = null;
 let updateReady = false;
 const readyListeners = new Set<() => void>();
-const mediaPlaying = () =>
-  Array.from(document.querySelectorAll("video, audio")).some(
-    (element) =>
-      !(element as HTMLMediaElement).paused &&
-      !(element as HTMLMediaElement).ended,
-  );
+const updateError = (reason: unknown) =>
+  reason instanceof UpdateSaveError
+    ? reason.message
+    : "Changes could not be saved or the update could not be applied. Check your settings and try again.";
 
 export function UpdateNotice() {
   const [ready, setReady] = useState(updateReady);
   const [applying, setApplying] = useState(false);
-  const [blocked, setBlocked] = useState("");
-  const [dirty, setDirty] = useState(false);
-  const dirtyRef = useRef(false);
-  const channel = useRef<BroadcastChannel | null>(null);
-  const peers = useRef(new Map<string, { busy: boolean; at: number }>());
-  const identity = useRef(
-    `tab-${Math.random().toString(36).slice(2)}-${Date.now()}`,
-  );
+  const [error, setError] = useState("");
+  const coordinator = useRef<UpdateCoordinator | null>(null);
+  const notice = useRef<HTMLElement>(null);
+
   useEffect(() => {
     const notify = () => setReady(true);
     readyListeners.add(notify);
@@ -36,114 +37,79 @@ export function UpdateNotice() {
       readyListeners.delete(notify);
     };
   }, []);
+
   useEffect(() => {
-    const connection =
-      typeof BroadcastChannel === "undefined"
-        ? null
-        : new BroadcastChannel("streamerai-update-readiness-v1");
-    channel.current = connection;
-    const publish = () =>
-      connection?.postMessage({
-        kind: "status",
-        id: identity.current,
-        busy: dirtyRef.current || mediaPlaying(),
-      });
-    if (connection)
-      connection.onmessage = (event: MessageEvent<unknown>) => {
-        const message = event.data as {
-          kind?: unknown;
-          id?: unknown;
-          busy?: unknown;
-        } | null;
-        if (
-          !message ||
-          typeof message.id !== "string" ||
-          message.id === identity.current
-        )
-          return;
-        if (message.kind === "query") publish();
-        if (message.kind === "leave") peers.current.delete(message.id);
-        if (
-          message.kind === "status" &&
-          typeof message.busy === "boolean" &&
-          peers.current.size < 50
-        )
-          peers.current.set(message.id, { busy: message.busy, at: Date.now() });
-      };
-    const edited = (event: Event) => {
-      const target = event.target;
-      if (
-        target instanceof HTMLElement &&
-        target.closest(
-          "input:not([type=range]), textarea, select, [contenteditable=true]",
-        ) &&
-        !target.closest(".deployment-update")
-      ) {
-        dirtyRef.current = true;
-        setDirty(true);
-        publish();
-      }
-    };
-    const leave = () =>
-      connection?.postMessage({ kind: "leave", id: identity.current });
-    document.addEventListener("input", edited, true);
-    document.addEventListener("change", edited, true);
+    const controller = new UpdateCoordinator({
+      connection:
+        typeof BroadcastChannel === "undefined"
+          ? null
+          : new BroadcastChannel("streamerai-update-readiness-v1"),
+      prepare: saveBeforeUpdate,
+      busy: hasUpdateSaves,
+      onBusy: (busy) => {
+        setApplying(busy);
+        if (busy) setError("");
+      },
+      onError: (reason) => setError(updateError(reason)),
+    });
+    coordinator.current = controller;
+    const leave = () => controller.dispose();
     window.addEventListener("pagehide", leave);
-    publish();
-    const heartbeat = setInterval(publish, 2000);
     return () => {
-      leave();
-      clearInterval(heartbeat);
-      connection?.close();
-      channel.current = null;
-      document.removeEventListener("input", edited, true);
-      document.removeEventListener("change", edited, true);
       window.removeEventListener("pagehide", leave);
+      controller.dispose();
+      coordinator.current = null;
     };
   }, []);
-  if (!ready) return null;
+
+  useEffect(() => {
+    if (!applying) return;
+    // Prevent edits while saves are in flight, in both the initiating tab and peers.
+    const root = document.getElementById("root");
+    const previous = new Map<HTMLElement, boolean>();
+    const lock = () => {
+      for (const element of Array.from(root?.children ?? [])) {
+        if (
+          !(element instanceof HTMLElement) ||
+          element.contains(notice.current)
+        )
+          continue;
+        if (!previous.has(element)) previous.set(element, element.inert);
+        element.inert = true;
+      }
+    };
+    lock();
+    const observer = new MutationObserver(lock);
+    if (root) observer.observe(root, { childList: true });
+    return () => {
+      observer.disconnect();
+      for (const [element, inert] of previous) element.inert = inert;
+    };
+  }, [applying]);
+
+  if (!ready && !applying && !error) return null;
   const activate = async () => {
-    setApplying(true);
-    setBlocked("");
-    channel.current?.postMessage({ kind: "query", id: identity.current });
-    await new Promise((done) => setTimeout(done, 500));
-    if (
-      mediaPlaying() ||
-      dirtyRef.current ||
-      [...peers.current.values()].some(
-        (peer) => peer.busy || Date.now() - peer.at > 10_000,
-      )
-    ) {
-      setBlocked(
-        "Finish playback and save changes in every StreamerAI tab before updating. If a tab stopped responding, close it and reload this page.",
-      );
-      setApplying(false);
-      return;
-    }
+    setError("");
     try {
-      await updateWorker?.(true);
-    } catch {
-      setBlocked("The update could not be applied. Try again later.");
-      setApplying(false);
+      await coordinator.current?.apply(async () => {
+        if (!updateWorker) throw new Error("Update is unavailable");
+        await activateUpdate(() => updateWorker!(true));
+      });
+    } catch (reason) {
+      setError(updateError(reason));
     }
   };
+
   return (
-    <aside className="deployment-update" aria-label="Application update">
-      <span>A new version is ready. Save your changes before updating.</span>
-      {dirty && (
-        <button
-          type="button"
-          onClick={() => {
-            dirtyRef.current = false;
-            setDirty(false);
-          }}
-        >
-          I have saved my changes
-        </button>
-      )}
-      {!channel.current && (
-        <span>Close other StreamerAI tabs before updating.</span>
-      )}
+    <aside
+      ref={notice}
+      className="deployment-update"
+      aria-label="Application update"
+      aria-busy={applying}
+    >
+      <span role="status">
+        {applying ? "Saving changes and updating…" : "A new version is ready."}
+      </span>
       <button
         type="button"
         disabled={applying}
@@ -151,9 +117,9 @@ export function UpdateNotice() {
           void activate();
         }}
       >
-        Update when ready
+        {applying ? "Updating…" : "Update now"}
       </button>
-      {blocked && <span role="status">{blocked}</span>}
+      {error && <span role="alert">{error}</span>}
     </aside>
   );
 }

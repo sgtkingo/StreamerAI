@@ -1,4 +1,11 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
+import { saveBeforeUpdate } from "./updateSave";
 import {
   DEFAULT_PLAYBACK_PREFERENCES,
   ViewerProfileSchema,
@@ -49,6 +56,26 @@ const props = {
   onBackHome: vi.fn(),
   onIntegrationsChanged: vi.fn(),
 };
+
+it("saves a profile draft before updating without clicking Save profile", async () => {
+  const updateProfile = vi.fn(async (_id, patch) => ({ ...profile, ...patch }));
+  render(
+    <ProfilePages
+      {...props}
+      api={{ updateProfile } as unknown as StreamerApi}
+      page="profile"
+    />,
+  );
+  fireEvent.change(screen.getByLabelText("Profile name"), {
+    target: { value: "Updated name" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Fox" }));
+  await act(async () => saveBeforeUpdate());
+  expect(updateProfile).toHaveBeenCalledWith("viewer", {
+    name: "Updated name",
+    avatar: "fox",
+  });
+});
 
 it("keeps household administration out of playback profile pages", () => {
   const view = render(<ProfilePages {...props} page="settings" />);

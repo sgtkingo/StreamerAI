@@ -1,4 +1,5 @@
 import {
+  act,
   fireEvent,
   render,
   screen,
@@ -13,6 +14,7 @@ import {
 } from "@streamer-ai/contracts";
 import type { AuthStatus, StreamerApi } from "../api/client";
 import { AdminApp } from "./AdminApp";
+import { saveBeforeUpdate } from "./updateSave";
 
 vi.mock("./AccountSettings", () => ({
   AccountSettings: ({ section }: { section: string }) => (
@@ -66,6 +68,23 @@ function apiWith(status = ready) {
     setupMasterPin: vi.fn().mockResolvedValue({ ok: true }),
   } as unknown as StreamerApi;
 }
+
+it("autosaves the household name without reopening administration before an update", async () => {
+  const api = apiWith();
+  api.renameHousehold = vi
+    .fn()
+    .mockResolvedValue({ householdId: "home", name: "Saved on update" });
+  render(<AdminApp api={api} />);
+  fireEvent.change(await screen.findByLabelText("Household name"), {
+    target: { value: "Saved on update" },
+  });
+  await act(async () => saveBeforeUpdate());
+  expect(api.renameHousehold).toHaveBeenCalledWith("Saved on update");
+  expect(api.getInstallationStatus).toHaveBeenCalledOnce();
+  expect(
+    screen.getByRole("button", { name: "Save household name" }),
+  ).toBeDisabled();
+});
 
 it("removes the one-time pairing URL after approval even if the device list cannot refresh", async () => {
   window.history.replaceState({}, "", "/admin/pair?code=123456");

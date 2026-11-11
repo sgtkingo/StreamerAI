@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { UpdateSaveError, useUpdateSave, useUpdatePending } from "./updateSave";
 import { resolveMediaSourceOrder } from "@streamer-ai/contracts";
 import type {
   AccountOverview,
@@ -578,7 +579,11 @@ export function IntegrationManager({
     setAgentFormError("");
   };
 
-  const configureAgent = async () => {
+  const configureAgent = async (forUpdate = false) => {
+    if (forUpdate && (!agentFormBaseUrl.trim() || !agentFormModel.trim()))
+      throw new UpdateSaveError(
+        "Complete the local agent address and model before updating.",
+      );
     setWorkingId("ollama");
     setAgentFormError("");
     try {
@@ -591,6 +596,10 @@ export function IntegrationManager({
         setAgentFormError(
           result.message || "The local agent could not be verified.",
         );
+        if (forUpdate)
+          throw new UpdateSaveError(
+            "The local agent connection could not be saved. Check its settings before updating.",
+          );
         return;
       }
       const model = result.model || agentFormModel.trim();
@@ -610,6 +619,7 @@ export function IntegrationManager({
       showToast("Local agent verified and connected.", "success");
     } catch (reason) {
       setAgentFormError(safeErrorMessage(reason));
+      if (forUpdate) throw reason;
     } finally {
       setWorkingId(null);
     }
@@ -645,7 +655,10 @@ export function IntegrationManager({
     openSetup(item.id);
   };
 
-  const connect = async (id: "tmdb" | "webshare" | "hellspy") => {
+  const connect = async (
+    id: "tmdb" | "webshare" | "hellspy",
+    forUpdate = false,
+  ) => {
     const cleanToken = token.trim().replace(/^Bearer\s+/i, "");
     if (id === "tmdb" && !cleanToken) {
       setMessage({
@@ -653,6 +666,10 @@ export function IntegrationManager({
         text: "Paste your TMDB Read Access Token first.",
         error: true,
       });
+      if (forUpdate)
+        throw new UpdateSaveError(
+          "Enter the TMDB token or close its setup before updating.",
+        );
       return;
     }
     if (id !== "tmdb" && (!username.trim() || !password)) {
@@ -664,6 +681,10 @@ export function IntegrationManager({
             : "Enter your Webshare username and password first.",
         error: true,
       });
+      if (forUpdate)
+        throw new UpdateSaveError(
+          "Complete the service username and password, or close its setup, before updating.",
+        );
       return;
     }
     setWorkingId(id);
@@ -683,6 +704,10 @@ export function IntegrationManager({
           text: connectionError(id, result.messageCode),
           error: true,
         });
+        if (forUpdate)
+          throw new UpdateSaveError(
+            "The service did not accept these credentials. Check its setup before updating.",
+          );
         return;
       }
       setToken("");
@@ -713,10 +738,33 @@ export function IntegrationManager({
       setPassword("");
       setShowPassword(false);
       setMessage({ id, text: safeErrorMessage(error), error: true });
+      if (forUpdate) throw error;
     } finally {
       setWorkingId(null);
     }
   };
+
+  useUpdatePending(Boolean(workingId) || savingOrder || profileSyncBusy);
+  useUpdateSave(
+    (expandedId === "ollama" &&
+      (agentFormBaseUrl !== (agentBaseUrl ?? "") ||
+        agentFormModel !== (agentModel ?? ""))) ||
+      (["tmdb", "webshare", "hellspy"].includes(expandedId ?? "") &&
+        Boolean(token || username || password)),
+    async () => {
+      if (workingId)
+        throw new UpdateSaveError(
+          "A service connection is still being saved. Wait for it to finish, then try updating again.",
+        );
+      if (expandedId === "ollama") await configureAgent(true);
+      else if (
+        expandedId === "tmdb" ||
+        expandedId === "webshare" ||
+        expandedId === "hellspy"
+      )
+        await connect(expandedId, true);
+    },
+  );
 
   const remove = async (item: IntegrationCatalogItem) => {
     setWorkingId(item.id);

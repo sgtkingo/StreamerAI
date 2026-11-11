@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   DEFAULT_APPEARANCE_PREFERENCES,
+  SetupProfileSchema,
   type ViewerProfile,
 } from "@streamer-ai/contracts";
 import type {
@@ -18,6 +19,12 @@ import { ProfileStep } from "./ProfileStep";
 import { WelcomeStep } from "./WelcomeStep";
 import { MasterPinSetup } from "../MasterPinSetup";
 import { useTheme } from "../../theme/ThemeProvider";
+import { discardUpdateDraft, useUpdateDraft } from "../updateDraft";
+import {
+  UpdateSaveError,
+  useUpdateSave,
+  useUpdatePending,
+} from "../updateSave";
 
 const steps = [
   "Welcome",
@@ -79,6 +86,30 @@ export function Onboarding({
   const [signingIn, setSigningIn] = useState(false);
   const [signInError, setSignInError] = useState("");
   const contentRef = useRef<HTMLDivElement>(null);
+  const draftScope = `onboarding:${profileId}`;
+  useUpdateDraft(
+    draftScope,
+    { step, profile, localAiEnabled },
+    Boolean(profile.name || step),
+    (value) => {
+      if (!value || typeof value !== "object") return;
+      const draft = value as Record<string, unknown>;
+      const rawProfile = draft.profile;
+      if (!rawProfile || typeof rawProfile !== "object") return;
+      const name = (rawProfile as Record<string, unknown>).name;
+      if (typeof name !== "string") return;
+      const parsed = SetupProfileSchema.safeParse({
+        ...rawProfile,
+        name: name || "Viewer",
+      });
+      if (!parsed.success) return;
+      setProfile({ ...parsed.data, name });
+      if (typeof draft.step === "number" && draft.step >= 0 && draft.step <= 4)
+        setStep(draft.step);
+      if (typeof draft.localAiEnabled === "boolean")
+        setLocalAiEnabled(draft.localAiEnabled);
+    },
+  );
 
   useEffect(() => {
     previewAppearance(profile.appearance);
@@ -189,9 +220,12 @@ export function Onboarding({
         profileId,
       });
       rememberAppearance(profile.appearance);
+      await discardUpdateDraft(draftScope);
       onComplete(profile);
+      return true;
     } catch (error) {
       setFinishError(safeErrorMessage(error));
+      return false;
     } finally {
       setIsCompleting(false);
     }
@@ -202,6 +236,18 @@ export function Onboarding({
     (step !== 4 ||
       !pinRequested ||
       (/^\d{4}$/.test(pin) && pin === pinConfirmation));
+
+  useUpdatePending(isCompleting || signingIn);
+  useUpdateSave(Boolean(pin || pinConfirmation), async () => {
+    if (isCompleting || step !== 4 || !canContinue || !profile.name.trim())
+      throw new UpdateSaveError(
+        "Complete the matching profile PINs and profile name before updating.",
+      );
+    if (!(await next()))
+      throw new UpdateSaveError(
+        "Profile setup could not be saved. Check its details before updating.",
+      );
+  });
 
   const returnToSignIn = async () => {
     if (!onSignIn || signingIn) return;

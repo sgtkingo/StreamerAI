@@ -12,6 +12,7 @@ import { useToasts } from "./ToastProvider";
 import { AppearanceSettings } from "../theme/AppearanceSettings";
 import { ProfilePinSettings } from "./ProfilePin";
 import { SupportPanel } from "./SupportPanel";
+import { UpdateSaveError, useUpdateSave, useUpdatePending } from "./updateSave";
 import {
   avatarOptions,
   prepareProfilePhoto,
@@ -67,6 +68,7 @@ export function ProfilePages({
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const { showToast } = useToasts();
+  useUpdatePending(photoBusy || saving);
 
   useEffect(() => {
     if (notice) showToast(notice, "success");
@@ -75,7 +77,11 @@ export function ProfilePages({
   useEffect(() => {
     if (error) showToast(error, "error");
   }, [error, showToast]);
-  const save = async (patch: UpdateViewerProfile, closeOnSuccess = false) => {
+  const save = async (
+    patch: UpdateViewerProfile,
+    closeOnSuccess = false,
+    forUpdate = false,
+  ) => {
     setSaving(true);
     setError("");
     setNotice("");
@@ -90,10 +96,36 @@ export function ProfilePages({
       }
     } catch (reason) {
       setError(safeErrorMessage(reason));
+      if (forUpdate) throw reason;
     } finally {
       setSaving(false);
     }
   };
+
+  const updatePatch: UpdateViewerProfile = {
+    ...(name !== profile.name ? { name: name.trim() } : {}),
+    ...(avatar !== (profile.avatar ?? null) ? { avatar } : {}),
+    ...(locale !== profile.locale ? { locale } : {}),
+    ...(JSON.stringify(playback) !== JSON.stringify(profile.playback)
+      ? { playback }
+      : {}),
+    ...(JSON.stringify(selectedGenres) !== JSON.stringify(profile.genres)
+      ? { genres: selectedGenres }
+      : {}),
+    ...(prompt !== profile.prompt ? { prompt } : {}),
+  };
+  useUpdateSave(
+    Object.keys(updatePatch).length > 0 || photoBusy || saving,
+    async () => {
+      if (photoBusy || saving)
+        throw new UpdateSaveError(
+          "Your profile is still being saved. Wait for it to finish, then try updating again.",
+        );
+      if (!name.trim())
+        throw new UpdateSaveError("Enter a profile name before updating.");
+      await save(updatePatch, false, true);
+    },
+  );
 
   return (
     <main className="profile-page">
@@ -403,7 +435,7 @@ export function ProfilePages({
         </div>
       )}
 
-      {page === "support" && <SupportPanel />}
+      {page === "support" && <SupportPanel scope={profile.id} />}
 
       {page === "statistics" && (
         <div className="profile-page__sections">

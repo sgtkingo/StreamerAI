@@ -5,6 +5,7 @@ import { DigitSlotsInput } from "./DigitSlotsInput";
 import { useToasts } from "./ToastProvider";
 import { AdminHelp as InfoTip } from "./AdminUI";
 import { AdminIcon, AdminNote, AdminStatus } from "./AdminUI";
+import { UpdateSaveError, useUpdateSave, useUpdatePending } from "./updateSave";
 
 export function AccountSecurity({
   api,
@@ -21,6 +22,41 @@ export function AccountSecurity({
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const { showToast } = useToasts();
+  useUpdatePending(pending);
+  const savePin = async () => {
+    if (
+      !api.changeMasterPin ||
+      pending ||
+      !/^\d{8}$/.test(currentPin) ||
+      !/^\d{8}$/.test(newPin) ||
+      newPin !== confirmation
+    )
+      throw new UpdateSaveError(
+        "Complete the current Master PIN and matching new PINs, or close the PIN form, before updating.",
+      );
+    setPending(true);
+    setError("");
+    try {
+      await api.changeMasterPin(currentPin, newPin, confirmation);
+      setCurrentPin("");
+      setNewPin("");
+      setConfirmation("");
+      setChangeOpen(false);
+      showToast(
+        "Master PIN changed. New backups will use the new PIN.",
+        "success",
+      );
+    } catch (reason) {
+      setError(safeErrorMessage(reason));
+      throw reason;
+    } finally {
+      setPending(false);
+    }
+  };
+  useUpdateSave(
+    changeOpen && Boolean(currentPin || newPin || confirmation),
+    savePin,
+  );
   useEffect(() => {
     let active = true;
     const refresh = () =>
@@ -115,21 +151,7 @@ export function AccountSecurity({
                     newPin !== confirmation
                   )
                     return;
-                  setPending(true);
-                  setError("");
-                  void api.changeMasterPin!(currentPin, newPin, confirmation)
-                    .then(() => {
-                      setCurrentPin("");
-                      setNewPin("");
-                      setConfirmation("");
-                      setChangeOpen(false);
-                      showToast(
-                        "Master PIN changed. New backups will use the new PIN.",
-                        "success",
-                      );
-                    })
-                    .catch((reason) => setError(safeErrorMessage(reason)))
-                    .finally(() => setPending(false));
+                  void savePin().catch(() => undefined);
                 }}
               >
                 <DigitSlotsInput

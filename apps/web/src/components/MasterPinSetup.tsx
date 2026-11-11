@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { safeErrorMessage } from "../api/client";
 import { DigitSlotsInput } from "./DigitSlotsInput";
+import { UpdateSaveError, useUpdateSave, useUpdatePending } from "./updateSave";
 
 export function MasterPinSetup({
   onSave,
@@ -15,6 +16,26 @@ export function MasterPinSetup({
   const [confirmation, setConfirmation] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
+  useUpdatePending(pending);
+  const save = async () => {
+    if (pending || !/^\d{8}$/.test(pin) || pin !== confirmation)
+      throw new UpdateSaveError(
+        "Complete both matching 8-digit Master PINs before updating.",
+      );
+    setPending(true);
+    setError("");
+    try {
+      await onSave(pin);
+      setPin("");
+      setConfirmation("");
+    } catch (reason) {
+      setError(safeErrorMessage(reason));
+      throw reason;
+    } finally {
+      setPending(false);
+    }
+  };
+  useUpdateSave(Boolean(pin || confirmation), save);
   return (
     <section className="account-login__card">
       <p className="eyebrow">Account security</p>
@@ -33,11 +54,7 @@ export function MasterPinSetup({
         onSubmit={(event) => {
           event.preventDefault();
           if (pending || !/^\d{8}$/.test(pin) || pin !== confirmation) return;
-          setPending(true);
-          setError("");
-          void onSave(pin)
-            .catch((reason) => setError(safeErrorMessage(reason)))
-            .finally(() => setPending(false));
+          void save().catch(() => undefined);
         }}
       >
         <DigitSlotsInput

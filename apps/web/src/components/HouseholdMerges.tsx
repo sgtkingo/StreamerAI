@@ -8,6 +8,7 @@ import {
 import { DigitSlotsInput } from "./DigitSlotsInput";
 import { useToasts } from "./ToastProvider";
 import { AdminStatus } from "./AdminUI";
+import { UpdateSaveError, useUpdateSave, useUpdatePending } from "./updateSave";
 
 export function HouseholdMerges({
   api,
@@ -91,6 +92,12 @@ function HouseholdMerge({
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const { showToast } = useToasts();
+  useUpdatePending(pending);
+  useUpdateSave(Boolean(pin), async () => {
+    throw new UpdateSaveError(
+      "Finish or cancel the household merge before updating. Households will not be merged automatically.",
+    );
+  });
   const review = async () => {
     if (pending || !/^\d{8}$/.test(pin)) return;
     setPending(true);

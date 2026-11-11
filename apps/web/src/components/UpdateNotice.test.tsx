@@ -1,12 +1,13 @@
-import {
+﻿import {
   act,
   fireEvent,
   render,
   screen,
   waitFor,
 } from "@testing-library/react";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { UpdateNotice } from "./UpdateNotice";
+import { useUpdateSave } from "./updateSave";
 
 const shared = vi.hoisted(() => ({
   notify: (() => undefined) as () => void,
@@ -18,63 +19,83 @@ vi.mock("virtual:pwa-register", () => ({
     return shared.activate;
   },
 }));
+beforeEach(() => {
+  vi.stubGlobal("BroadcastChannel", undefined);
+  shared.activate.mockClear();
+});
 afterEach(() => vi.unstubAllGlobals());
 
-it("waits for playback, unsaved edits and a busy sibling tab before activation", async () => {
-  let peerBusy = true;
-  class Channel {
-    onmessage: ((event: { data: unknown }) => void) | null = null;
-    postMessage(message: { kind: string }) {
-      if (message.kind === "query")
-        queueMicrotask(() =>
-          this.onmessage?.({
-            data: { kind: "status", id: "other-tab", busy: peerBusy },
-          }),
-        );
-    }
-    close() {
-      /* test channel */
-    }
-  }
-  vi.stubGlobal("BroadcastChannel", Channel);
+function PendingSetting({ save }: { save: () => Promise<void> }) {
+  useUpdateSave(true, save);
+  return <input aria-label="Setting" />;
+}
+
+it("saves on one click without a separate saved-work confirmation", async () => {
+  let finish!: () => void;
+  const save = vi.fn(
+    () =>
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      }),
+  );
   render(
     <>
-      <input aria-label="Draft title" />
+      <PendingSetting save={save} />
       <UpdateNotice />
     </>,
   );
   act(() => shared.notify());
-  const video = document.createElement("video");
-  Object.defineProperty(video, "paused", { value: false });
-  document.body.append(video);
-  fireEvent.click(screen.getByRole("button", { name: "Update when ready" }));
-  await screen.findByText(/Finish playback and save changes/);
-  expect(shared.activate).not.toHaveBeenCalled();
-  video.remove();
-  fireEvent.input(screen.getByLabelText("Draft title"), {
-    target: { value: "unsaved" },
+  fireEvent.input(screen.getByLabelText("Setting"), {
+    target: { value: "changed" },
   });
   expect(
-    screen.getByRole("button", { name: "I have saved my changes" }),
-  ).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Update when ready" }));
-  await waitFor(() =>
-    expect(
-      screen.getByRole("button", { name: "Update when ready" }),
-    ).not.toBeDisabled(),
-  );
+    screen.queryByRole("button", { name: "I have saved my changes" }),
+  ).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Update now" }));
+  await waitFor(() => expect(save).toHaveBeenCalledOnce());
   expect(shared.activate).not.toHaveBeenCalled();
-  fireEvent.click(
-    screen.getByRole("button", { name: "I have saved my changes" }),
-  );
-  fireEvent.click(screen.getByRole("button", { name: "Update when ready" }));
-  await waitFor(() =>
-    expect(
-      screen.getByRole("button", { name: "Update when ready" }),
-    ).not.toBeDisabled(),
-  );
-  expect(shared.activate).not.toHaveBeenCalled();
-  peerBusy = false;
-  fireEvent.click(screen.getByRole("button", { name: "Update when ready" }));
+  expect(screen.getByRole("button", { name: "Updating…" })).toBeDisabled();
+  await act(async () => finish());
   await waitFor(() => expect(shared.activate).toHaveBeenCalledWith(true));
+});
+
+it("keeps the page open on save failure and allows a single-click retry", async () => {
+  const save = vi
+    .fn(async () => undefined)
+    .mockRejectedValueOnce(new Error("offline"));
+  render(
+    <>
+      <PendingSetting save={save} />
+      <UpdateNotice />
+    </>,
+  );
+  act(() => shared.notify());
+  fireEvent.click(screen.getByRole("button", { name: "Update now" }));
+  await screen.findByRole("alert");
+  expect(shared.activate).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Update now" }));
+  await waitFor(() => expect(shared.activate).toHaveBeenCalledOnce());
+});
+
+it("does not mistake search or login fields for settings or submit arbitrary forms", async () => {
+  const submit = vi.fn((event: React.FormEvent) => event.preventDefault());
+  render(
+    <>
+      <form onSubmit={submit}>
+        <input aria-label="Search" />
+        <input aria-label="Login PIN" type="password" />
+      </form>
+      <UpdateNotice />
+    </>,
+  );
+  act(() => shared.notify());
+  fireEvent.input(screen.getByLabelText("Search"), {
+    target: { value: "film" },
+  });
+  fireEvent.input(screen.getByLabelText("Login PIN"), {
+    target: { value: "1234" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Update now" }));
+  await waitFor(() => expect(shared.activate).toHaveBeenCalledOnce());
+  expect(submit).not.toHaveBeenCalled();
 });

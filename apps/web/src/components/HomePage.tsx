@@ -16,6 +16,7 @@ import { useToasts } from "./ToastProvider";
 import { TitleCard } from "./TitleCard";
 import { usePlaybackChecks } from "./usePlaybackChecks";
 import { WinterSearchIce } from "../theme/WinterSearchIce";
+import { useUpdateDraft } from "./updateDraft";
 
 interface HomePageProps {
   api: StreamerApi;
@@ -92,6 +93,22 @@ export function HomePage({
     null,
   );
   const [turns, setTurns] = useState<ConversationTurn[]>([]);
+  useUpdateDraft(
+    `discovery:${profileId}`,
+    { query, chatDraft, chatOpen },
+    Boolean(query || chatDraft),
+    (value) => {
+      if (!value || typeof value !== "object") return;
+      const draft = value as {
+        query?: unknown;
+        chatDraft?: unknown;
+        chatOpen?: unknown;
+      };
+      if (typeof draft.query === "string") setQuery(draft.query);
+      if (typeof draft.chatDraft === "string") setChatDraft(draft.chatDraft);
+      setChatOpen(draft.chatOpen === true);
+    },
+  );
   const { showToast } = useToasts();
   const requestCounter = useRef(0);
   const orbStartedAt = useRef(0);

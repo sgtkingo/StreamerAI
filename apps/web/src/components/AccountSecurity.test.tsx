@@ -1,7 +1,40 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
+import { saveBeforeUpdate } from "./updateSave";
 import { expect, it, vi } from "vitest";
 import type { StreamerApi } from "../api/client";
 import { AccountSecurity } from "./AccountSecurity";
+
+it("validates and saves a complete Master PIN change during an update", async () => {
+  const changeMasterPin = vi.fn(async () => ({ ok: true }));
+  render(
+    <AccountSecurity api={{ changeMasterPin } as unknown as StreamerApi} />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Change Master PIN" }));
+  fireEvent.change(screen.getByLabelText("Current Master PIN"), {
+    target: { value: "12345678" },
+  });
+  fireEvent.change(screen.getByLabelText("New Master PIN"), {
+    target: { value: "87654321" },
+  });
+  await expect(saveBeforeUpdate()).rejects.toThrow(/matching new PINs/);
+  expect(changeMasterPin).not.toHaveBeenCalled();
+  fireEvent.change(screen.getByLabelText("Confirm new Master PIN"), {
+    target: { value: "87654321" },
+  });
+  await act(async () => saveBeforeUpdate());
+  expect(changeMasterPin).toHaveBeenCalledWith(
+    "12345678",
+    "87654321",
+    "87654321",
+  );
+  expect(screen.queryByLabelText("New Master PIN")).not.toBeInTheDocument();
+});
 
 it("shows Master PIN protection without backup controls", async () => {
   const api = {

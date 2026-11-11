@@ -28,6 +28,7 @@ import { HouseholdMerges } from "./HouseholdMerges";
 import { AdminHelp as InfoTip } from "./AdminUI";
 import { SupportFaq } from "./SupportFaq";
 import { AdminIcon, AdminNote, AdminStatus } from "./AdminUI";
+import { useUpdatePending, useUpdateSave, UpdateSaveError } from "./updateSave";
 
 type AdminSection =
   | "household"
@@ -514,9 +515,29 @@ function HouseholdName({
   onSaved: () => void;
 }) {
   const [value, setValue] = useState(name);
+  const [savedName, setSavedName] = useState(name);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const { showToast } = useToasts();
+  const save = async (forUpdate = false) => {
+    if (!api.renameHousehold || pending || !value.trim())
+      throw new UpdateSaveError("Enter a household name before updating.");
+    setPending(true);
+    setError("");
+    try {
+      await api.renameHousehold(value.trim());
+      setSavedName(value.trim());
+      showToast("Household renamed.", "success");
+      if (!forUpdate) onSaved();
+    } catch (reason) {
+      setError(safeErrorMessage(reason));
+      throw reason;
+    } finally {
+      setPending(false);
+    }
+  };
+  useUpdatePending(pending);
+  useUpdateSave(value.trim() !== savedName, () => save(true));
   if (!api.renameHousehold) return null;
   return (
     <section className="profile-page__section">
@@ -526,18 +547,11 @@ function HouseholdName({
       </p>
       <form
         className="form-stack"
+        data-update-autosave
         onSubmit={(event) => {
           event.preventDefault();
           if (pending || !value.trim()) return;
-          setPending(true);
-          setError("");
-          void api.renameHousehold!(value.trim())
-            .then(() => {
-              showToast("Household renamed.", "success");
-              onSaved();
-            })
-            .catch((reason) => setError(safeErrorMessage(reason)))
-            .finally(() => setPending(false));
+          void save().catch(() => undefined);
         }}
       >
         <label className="field">
@@ -553,7 +567,7 @@ function HouseholdName({
         <div className="deployment-actions">
           <button
             className="button button--primary"
-            disabled={pending || !value.trim() || value.trim() === name}
+            disabled={pending || !value.trim() || value.trim() === savedName}
           >
             <AdminIcon name="check" />
             {pending ? "Saving name…" : "Save household name"}
@@ -827,6 +841,33 @@ function AdminBackupSchedule({ api }: { api: StreamerApi }) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const { showToast } = useToasts();
+  const save = async () => {
+    if (
+      !api.saveBackupSchedule ||
+      !ready ||
+      pending ||
+      schedule.intervalMinutes < 15 ||
+      schedule.intervalMinutes > 10080
+    )
+      throw new UpdateSaveError(
+        "Choose a backup interval between 15 minutes and 7 days before updating.",
+      );
+    setPending(true);
+    setError("");
+    try {
+      const value = await api.saveBackupSchedule(schedule);
+      setSchedule(value);
+      setSaved(value);
+      showToast("Backup schedule saved.", "success");
+    } catch (reason) {
+      setError(safeErrorMessage(reason));
+      throw reason;
+    } finally {
+      setPending(false);
+    }
+  };
+  useUpdatePending(pending);
+  useUpdateSave(dirty, save);
   useEffect(() => {
     if (!api.getBackupSchedule) return;
     void api
@@ -866,6 +907,7 @@ function AdminBackupSchedule({ api }: { api: StreamerApi }) {
       </p>
       <form
         className="form-stack"
+        data-update-autosave
         onSubmit={(event) => {
           event.preventDefault();
           if (
@@ -876,16 +918,7 @@ function AdminBackupSchedule({ api }: { api: StreamerApi }) {
             schedule.intervalMinutes > 10080
           )
             return;
-          setPending(true);
-          setError("");
-          void api.saveBackupSchedule!(schedule)
-            .then((value) => {
-              setSchedule(value);
-              setSaved(value);
-              showToast("Backup schedule saved.", "success");
-            })
-            .catch((reason) => setError(safeErrorMessage(reason)))
-            .finally(() => setPending(false));
+          void save().catch(() => undefined);
         }}
       >
         <fieldset className="admin-subsection">

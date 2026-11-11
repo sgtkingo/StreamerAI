@@ -18,6 +18,8 @@ import {
   type WeatherSnapshot,
 } from "@streamer-ai/contracts";
 import { safeErrorMessage, type StreamerApi } from "../api/client";
+import { UpdateSaveError, useUpdateSave } from "../components/updateSave";
+import { trackUpdateWrite } from "../update-writes";
 import { AmbientBackground } from "./AmbientBackground";
 import { createAdvancingClock, effectiveClock } from "./clock";
 import { resolveTheme, type ResolvedTheme } from "./resolve-theme";
@@ -47,7 +49,7 @@ interface ThemeContextValue {
   appearanceError: string;
   retryAppearance: () => void;
   environment: DeviceEnvironment;
-  updateEnvironment: (environment: DeviceEnvironment) => void;
+  updateEnvironment: (environment: DeviceEnvironment) => boolean;
   storageError: string;
   instant: Date;
   timeZone: string;
@@ -177,6 +179,7 @@ export function ThemeProvider({
             const updated = await api.updateProfile(target.id, {
               appearance: patch,
             });
+            retryPatch.current = null;
             const value = AppearancePreferencesSchema.parse(
               updated.appearance ?? next,
             );
@@ -236,6 +239,7 @@ export function ThemeProvider({
         },
       );
       queues.current.set(target.id, queued);
+      void trackUpdateWrite(queued);
     },
     [api, rememberAppearance, reloadProfile],
   );
@@ -259,13 +263,34 @@ export function ThemeProvider({
 
   const updateEnvironment = useCallback((value: DeviceEnvironment) => {
     setEnvironment(value);
+    const saved = writeDeviceEnvironment(value);
     setStorageError(
-      writeDeviceEnvironment(value)
+      saved
         ? ""
         : "Time and weather settings could not be saved on this device.",
     );
     if (!value.weatherEnabled) clearWeatherCache();
+    return saved;
   }, []);
+
+  useUpdateSave(
+    pending > 0 || Boolean(appearanceError || storageError),
+    async () => {
+      await Promise.all([...queues.current.values()]);
+      if (retryPatch.current) {
+        setAppearance(retryPatch.current);
+        await Promise.all([...queues.current.values()]);
+        if (retryPatch.current)
+          throw new UpdateSaveError(
+            "Appearance changes could not be saved. Check your connection before updating.",
+          );
+      }
+      if (storageError && !writeDeviceEnvironment(environment))
+        throw new UpdateSaveError(
+          "Device appearance settings could not be saved. Check browser storage before updating.",
+        );
+    },
+  );
 
   useEffect(() => {
     const sync = (event: StorageEvent) => {

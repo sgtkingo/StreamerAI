@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useUpdateSave } from "./updateSave";
 import type {
   CatalogTitle,
   PlaybackGrant,
@@ -545,6 +546,18 @@ export function VideoPlayer({
     }, 250);
     return () => window.clearInterval(timer);
   }, [canAutoHide, revealControls]);
+
+  useUpdateSave(true, async () => {
+    // An explicit update pauses playback and waits for the final progress write.
+    videoRef.current?.pause();
+    if (startedRef.current)
+      await api.savePlaybackProgress(
+        grant.grantId,
+        progressRef.current,
+        positionSecondsRef.current,
+        durationSecondsRef.current,
+      );
+  });
 
   const closePlayer = () => {
     if (closingRef.current) return;

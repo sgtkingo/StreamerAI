@@ -17,6 +17,7 @@ import { AppearanceInfluenceFields } from "./AppearanceInfluenceFields";
 import { useTheme } from "./ThemeProvider";
 import { useLocalClock } from "./useLocalClock";
 import { WeatherLocationCard } from "./WeatherLocationCard";
+import { UpdateSaveError, useUpdateSave } from "../components/updateSave";
 import "./settings.css";
 
 export function AppearanceSettings({
@@ -132,12 +133,12 @@ export function AppearanceSettings({
     setTimeError("");
     if (!isValidTimeZone(zoneDraft)) {
       setTimeError("Choose a valid IANA timezone, for example Europe/Prague.");
-      return;
+      return false;
     }
     if (!wallDirty) {
-      updateEnvironment({ ...environment, timeZone: zoneDraft });
-      showToast("Time settings saved on this device.", "success");
-      return;
+      const saved = updateEnvironment({ ...environment, timeZone: zoneDraft });
+      if (saved) showToast("Time settings saved on this device.", "success");
+      return saved;
     }
     if (
       resolution.status === "invalid" ||
@@ -148,7 +149,7 @@ export function AppearanceSettings({
           ? "This local time does not exist because the clocks move forward. Choose another time."
           : "Enter a valid local date and time.",
       );
-      return;
+      return false;
     }
     const candidate =
       resolution.status === "ambiguous"
@@ -156,15 +157,22 @@ export function AppearanceSettings({
         : resolution.candidates[0];
     if (!candidate) {
       setTimeError("This time occurs twice. Choose the UTC offset below.");
-      return;
+      return false;
     }
-    updateEnvironment({
+    const saved = updateEnvironment({
       ...environment,
       timeZone: zoneDraft,
       manualClock: createClockAnchor(new Date(candidate.instant)),
     });
-    showToast("Time settings saved on this device.", "success");
+    if (saved) showToast("Time settings saved on this device.", "success");
+    return saved;
   };
+  useUpdateSave(zoneDraft !== timeZone || wallDirty, async () => {
+    if (!applyTime())
+      throw new UpdateSaveError(
+        "Time settings could not be saved. Check the timezone and local time before updating.",
+      );
+  });
 
   const chooseLocation = (location: WeatherLocation) => {
     locationRequest.current += 1;

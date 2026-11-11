@@ -1,3 +1,4 @@
+import { trackUpdateWrite } from "../update-writes";
 import type {
   DiscoveryRequest,
   DiscoveryResponse,
@@ -748,7 +749,14 @@ async function readPublicErrorCode(
   return typeof value.error.code === "string" ? value.error.code : undefined;
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const operation = performRequest<T>(path, init);
+  return init?.method && init.method !== "GET"
+    ? trackUpdateWrite(operation)
+    : operation;
+}
+
+async function performRequest<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response;
   const displayHeight =
     typeof window === "undefined"
@@ -1307,9 +1315,9 @@ export const apiClient: StreamerApi = {
       ...(profile ? { profile } : {}),
     };
   },
-  connectTmdb,
-  connectWebshare,
-  connectHellspy,
+  connectTmdb: (...args) => trackUpdateWrite(connectTmdb(...args)),
+  connectWebshare: (...args) => trackUpdateWrite(connectWebshare(...args)),
+  connectHellspy: (...args) => trackUpdateWrite(connectHellspy(...args)),
   detectLocalAi: (profileId = "default") =>
     request<LocalAiResult>("/inference/detect", {
       method: "POST",

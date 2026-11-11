@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from "react";
+import { UpdateSaveError, useUpdateSave, useUpdatePending } from "./updateSave";
+import { useUpdateDraft } from "./updateDraft";
 import { createPortal } from "react-dom";
 import type {
   AgentBackend,
@@ -300,6 +302,8 @@ export function AgentBackendSettings({
   const guideApiKeyFieldRef = useRef<HTMLLabelElement | null>(null);
   const guideScanRunRef = useRef(0);
   const [busy, setBusy] = useState(false);
+  const [selectionEdited, setSelectionEdited] = useState(false);
+  const [connectionEdited, setConnectionEdited] = useState(false);
   const [turnOffComplete, setTurnOffComplete] = useState(false);
   const [error, setError] = useState("");
   const { showToast } = useToasts();
@@ -684,6 +688,7 @@ export function AgentBackendSettings({
       if (choice.side === "local") setLocalModel(choice.model ?? "");
       else if (choice.transport === "api") setExternalModel(choice.model ?? "");
       setApiKey("");
+      setSelectionEdited(false);
       onChanged?.(isEnabled(result));
       showToast("Agent preference saved.", "success");
       return true;
@@ -713,6 +718,7 @@ export function AgentBackendSettings({
     });
   const chooseSide = (value: Side) => {
     if (value === side) return;
+    setSelectionEdited(true);
     setSide(value);
     if (value === "local") setExternalSettingsOpen(false);
     else setLocalSettingsOpen(false);
@@ -746,6 +752,7 @@ export function AgentBackendSettings({
       });
       setCurrent(status);
       setTurnOffComplete(true);
+      setSelectionEdited(false);
       onChanged?.(false);
       showToast("Agent turned off.", "success");
     } catch (cause) {
@@ -769,6 +776,7 @@ export function AgentBackendSettings({
       setCurrent(selection);
       onChanged?.(isEnabled(selection));
       showToast("Ollama connected.", "success");
+      setConnectionEdited(false);
       setLocalSettingsOpen(false);
       return true;
     } catch (cause) {
@@ -792,6 +800,7 @@ export function AgentBackendSettings({
       setLocalModel(config.model);
       await discover();
       showToast("Custom local agent settings saved.", "success");
+      setConnectionEdited(false);
       return true;
     } catch (cause) {
       setError(safeErrorMessage(cause));
@@ -1274,6 +1283,162 @@ export function AgentBackendSettings({
     );
   };
 
+  useUpdateDraft(
+    `agent-guide:${profileId}`,
+    {
+      guideOpen,
+      guideStep,
+      guideSide,
+      guideTransport,
+      guidePriority,
+      guideApiProvider,
+      localProvider,
+      ollamaModel,
+      customModel,
+      side,
+      remoteProvider,
+      transport,
+      effort,
+      contextTokens,
+      localModel,
+      externalModel,
+      selectionEdited,
+    },
+    guideOpen,
+    (value) => {
+      if (!value || typeof value !== "object") return;
+      const draft = value as Record<string, unknown>;
+      if (draft.guideOpen !== true) return;
+      setGuideOpen(true);
+      if (
+        typeof draft.guideStep === "number" &&
+        [0, 1, 2].includes(draft.guideStep)
+      )
+        setGuideStep(Math.min(draft.guideStep, 1));
+      if (draft.guideSide === "local" || draft.guideSide === "external")
+        setGuideSide(draft.guideSide);
+      if (draft.guideTransport === "api" || draft.guideTransport === "mcp")
+        setGuideTransport(draft.guideTransport);
+      if (
+        draft.guidePriority === "quality" ||
+        draft.guidePriority === "balanced" ||
+        draft.guidePriority === "speed"
+      )
+        setGuidePriority(draft.guidePriority);
+      if (
+        remoteProviders.some(
+          (provider) => provider.id === draft.guideApiProvider,
+        )
+      )
+        setGuideApiProvider(draft.guideApiProvider as RemoteProvider);
+      if (draft.localProvider === "ollama" || draft.localProvider === "custom")
+        setLocalProvider(draft.localProvider);
+      if (typeof draft.ollamaModel === "string")
+        setOllamaModel(draft.ollamaModel);
+      if (typeof draft.customModel === "string")
+        setCustomModel(draft.customModel);
+      if (draft.side === "local" || draft.side === "external")
+        setSide(draft.side);
+      if (
+        remoteProviders.some((provider) => provider.id === draft.remoteProvider)
+      )
+        setRemoteProvider(draft.remoteProvider as RemoteProvider);
+      if (draft.transport === "api" || draft.transport === "mcp")
+        setTransport(draft.transport);
+      if (
+        ["none", "low", "medium", "high", "xhigh"].includes(
+          String(draft.effort),
+        )
+      )
+        setEffort(draft.effort as AgentReasoningEffort);
+      if (typeof draft.contextTokens === "string")
+        setContextTokens(draft.contextTokens);
+      if (typeof draft.localModel === "string") setLocalModel(draft.localModel);
+      if (typeof draft.externalModel === "string")
+        setExternalModel(draft.externalModel);
+      setSelectionEdited(draft.selectionEdited === true);
+    },
+    loaded,
+  );
+  useUpdatePending(busy || guideCustomBusy);
+  useUpdateSave(
+    (!guideOpen && (selectionEdited || connectionEdited || Boolean(apiKey))) ||
+      (guideOpen &&
+        Boolean(
+          guideApiKey || apiKey || guideConfigurationDirty || connectionEdited,
+        )),
+    async () => {
+      if (busy || !loaded)
+        throw new UpdateSaveError(
+          "Agent settings are still loading or saving. Wait for them to finish, then try updating again.",
+        );
+      if (guideOpen) {
+        if (guideConfigurationDirty || connectionEdited) {
+          if (
+            localProvider === "ollama"
+              ? !ollamaUrl.trim() || !ollamaModel.trim()
+              : !customUrl.trim() || !customModel.trim()
+          )
+            throw new UpdateSaveError(
+              "Complete the local agent URL and model in the guide before updating.",
+            );
+          if (
+            !(localProvider === "ollama"
+              ? await connectOllama()
+              : await connectCustom())
+          )
+            throw new UpdateSaveError(
+              "The local agent connection in the guide could not be saved. Check it before updating.",
+            );
+          setGuideConfigurationDirty(false);
+        }
+        if (guideApiKey) {
+          if (guideApiKey.trim().length < 8)
+            throw new UpdateSaveError(
+              "Complete the API key in the agent guide before updating.",
+            );
+          await api.saveAgentApiKey({
+            profileId,
+            provider: guideApiProvider,
+            apiKey: guideApiKey.trim(),
+          });
+          setGuideApiKey("");
+        }
+        if (apiKey) {
+          await api.saveAgentApiKey({
+            profileId,
+            provider: remoteProvider,
+            apiKey: apiKey.trim(),
+          });
+          setApiKey("");
+        }
+        return;
+      }
+      if (connectionEdited) {
+        if (
+          localProvider === "ollama"
+            ? !ollamaUrl.trim() || !ollamaModel.trim()
+            : !customUrl.trim() || !customModel.trim()
+        )
+          throw new UpdateSaveError(
+            "Complete the local agent URL and model before updating.",
+          );
+        if (
+          !(localProvider === "ollama"
+            ? await connectOllama()
+            : await connectCustom())
+        )
+          throw new UpdateSaveError(
+            "The local agent connection could not be saved. Check its settings before updating.",
+          );
+      }
+      if ((selectionEdited || apiKey) && !(await saveDraft()))
+        throw new UpdateSaveError(
+          "Agent preferences could not be saved. Check the model and API key before updating.",
+        );
+    },
+  );
+
   const guideButton = (
     <button
       className="agent-backend__guide-button"
@@ -1293,7 +1458,20 @@ export function AgentBackendSettings({
   );
 
   return (
-    <section className="integration-group agent-backend" aria-label="AI agent">
+    <section
+      className="integration-group agent-backend"
+      aria-label="AI agent"
+      onChangeCapture={(event) => {
+        const target = event.target;
+        if (
+          !(target instanceof HTMLElement) ||
+          guideDialogRef.current?.contains(target)
+        )
+          return;
+        if (target.closest(".agent-backend__ollama")) setConnectionEdited(true);
+        else setSelectionEdited(true);
+      }}
+    >
       {guideAtTop && guideButton}
       <div className="agent-backend__cards">
         <article

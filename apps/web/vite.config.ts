@@ -33,6 +33,7 @@ export default defineConfig(({ mode }) => {
           ],
         },
         workbox: {
+          clientsClaim: true,
           navigateFallbackDenylist: [/^\/api\//],
         },
       }),

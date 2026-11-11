@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { LocalFolderConfig, StreamerApi } from "../api/client";
 import { safeErrorMessage } from "../api/client";
+import { useUpdateDraft } from "./updateDraft";
 
 export function LocalFolderSettings({
   api,
@@ -13,6 +14,10 @@ export function LocalFolderSettings({
   const [path, setPath] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  // A typed path is a draft; updating must not implicitly add or scan a new folder.
+  useUpdateDraft("local-folder-path", path, Boolean(path), (value) => {
+    if (typeof value === "string") setPath(value);
+  });
 
   useEffect(() => {
     let active = true;

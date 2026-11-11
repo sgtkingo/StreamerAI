@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { UpdateSaveError, useUpdateSave, useUpdatePending } from "./updateSave";
 import type { ViewerProfile } from "@streamer-ai/contracts";
 import type { ProfilePinResetRequest, StreamerApi } from "../api/client";
 import { safeErrorMessage } from "../api/client";
@@ -410,15 +411,20 @@ export function ProfilePinSettings({
   const [recovering, setRecovering] = useState(false);
   const { showToast } = useToasts();
   const supportsOwnerReset = useOwnerReset(api);
-  const save = async (value: string | null) => {
+  const save = async (value: string | null, forUpdate = false) => {
     if (
       !api.setProfilePin ||
       pending ||
       (profile.pinEnabled &&
         !ownerApproved &&
         !/^(?:\d{4}|\d{8})$/.test(currentPin))
-    )
+    ) {
+      if (forUpdate)
+        throw new UpdateSaveError(
+          "Enter the current profile PIN before updating.",
+        );
       return;
+    }
     setPending(true);
     setError("");
     try {
@@ -444,10 +450,19 @@ export function ProfilePinSettings({
       );
     } catch (reason) {
       setError(safeErrorMessage(reason));
+      if (forUpdate) throw reason;
     } finally {
       setPending(false);
     }
   };
+  useUpdatePending(pending);
+  useUpdateSave(Boolean(pin || confirmation || currentPin), async () => {
+    if (!/^\d{4}$/.test(pin) || confirmation !== pin)
+      throw new UpdateSaveError(
+        "Complete both matching 4-digit profile PINs before updating.",
+      );
+    await save(pin, true);
+  });
   if (!api.setProfilePin) return null;
   return (
     <section className="profile-page__section">

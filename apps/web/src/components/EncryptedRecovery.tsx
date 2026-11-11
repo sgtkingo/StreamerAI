@@ -5,9 +5,15 @@ import { DigitSlotsInput } from "./DigitSlotsInput";
 import { AdminHelp as InfoTip } from "./AdminUI";
 import { MasterPinDialog } from "./MasterPinDialog";
 import { AdminIcon, AdminNote, AdminStatus } from "./AdminUI";
+import { UpdateSaveError, useUpdateSave, useUpdatePending } from "./updateSave";
+import { trackUpdateWrite } from "../update-writes";
 
 const base = "/api/v1/account/encrypted-household";
-async function call<T>(
+function call<T>(path: string, method = "GET", body?: unknown): Promise<T> {
+  const operation = performCall<T>(path, method, body);
+  return method === "GET" ? operation : trackUpdateWrite(operation);
+}
+async function performCall<T>(
   path: string,
   method = "GET",
   body?: unknown,
@@ -105,6 +111,12 @@ export function EncryptedRecovery({
   const [notice, setNotice] = useState("");
   const [restoreOpen, setRestoreOpen] = useState(restoreOnly);
   const { showToast } = useToasts();
+  useUpdatePending(busy);
+  useUpdateSave(restoreOpen && Boolean(pin || envelope), async () => {
+    throw new UpdateSaveError(
+      "Finish or close backup recovery before updating. Your backup will not be imported automatically.",
+    );
+  });
   useEffect(() => {
     let active = true;
     const refresh = async () => {

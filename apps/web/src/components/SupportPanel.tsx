@@ -2,6 +2,8 @@
 import { AdminIcon, AdminNote, AdminStatus } from "./AdminUI";
 import { AdminHelp as InfoTip } from "./AdminUI";
 import { makeTextZip } from "./supportZip";
+import { useUpdateDraft } from "./updateDraft";
+import { useUpdatePending } from "./updateSave";
 
 const FIELD_LIMIT = 20000;
 const PREFILLED_URL_LIMIT = 7000;
@@ -28,7 +30,7 @@ function escapeHtml(value: string) {
   );
 }
 
-export function SupportPanel() {
+export function SupportPanel({ scope = "admin" }: { scope?: string }) {
   const [diagnostics, setDiagnostics] = useState("");
   const [description, setDescription] = useState("");
   const [steps, setSteps] = useState("");
@@ -44,6 +46,37 @@ export function SupportPanel() {
   const [screenshotData, setScreenshotData] = useState("");
   const [screenshotError, setScreenshotError] = useState("");
   const [copyStatus, setCopyStatus] = useState("");
+  const draft = {
+    description,
+    steps,
+    expected,
+    includeLogs,
+    screenshot,
+    diagnostics,
+  };
+  useUpdateDraft(
+    `support:${scope}`,
+    draft,
+    Boolean(description || steps || expected || screenshot || diagnostics),
+    (value) => {
+      if (!value || typeof value !== "object") return;
+      const data = value as typeof draft;
+      if (
+        typeof data.description !== "string" ||
+        typeof data.steps !== "string" ||
+        typeof data.expected !== "string"
+      )
+        return;
+      setDescription(data.description.slice(0, FIELD_LIMIT));
+      setSteps(data.steps.slice(0, FIELD_LIMIT));
+      setExpected(data.expected.slice(0, FIELD_LIMIT));
+      setIncludeLogs(data.includeLogs === true);
+      if (data.screenshot instanceof File) setScreenshot(data.screenshot);
+      if (typeof data.diagnostics === "string")
+        setDiagnostics(data.diagnostics);
+    },
+  );
+  useUpdatePending(busy);
 
   useEffect(() => {
     setScreenshotData("");
