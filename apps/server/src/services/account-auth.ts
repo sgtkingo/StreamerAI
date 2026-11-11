@@ -881,6 +881,9 @@ export class AccountAuthService {
             householdId: householdId(this.options.database, accountId),
             name: account.name || "StreamerAI household",
             serverId: this.options.database.settings.get("server.instanceId"),
+            profileIds: this.options.database.profiles
+              .list(accountId)
+              .map((profile) => profile.syncId),
           }),
         },
         credential.token,

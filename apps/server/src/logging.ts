@@ -244,6 +244,61 @@ function protectBindings(logger: Logger): void {
   };
 }
 
+const SHAREABLE_LOG_CODES = new Set([
+  "DISCOVERY_FAILED",
+  "DISCOVERY_COMPLETED",
+  "UNHANDLED_REQUEST_ERROR",
+  "PLAYBACK_MANIFEST_READY",
+  "PLAYBACK_MANIFEST_FAILED",
+  "PLAYBACK_STREAM_STARTED",
+  "PLAYBACK_STREAM_FINISHED",
+  "PLAYBACK_STREAM_FAILED",
+  "PLAYBACK_STREAM_SETUP_FAILED",
+  "PLAYBACK_STREAM_MONITOR_FAILED",
+  "PLAYBACK_THUMBNAIL_FAILED",
+  "PLAYBACK_SUBTITLE_WINDOW_FAILED",
+  "PLAYBACK_SUBTITLE_PROVIDER_FAILED",
+  "PLAYBACK_EXTERNAL_SUBTITLE_DISCOVERY_FAILED",
+  "ACCOUNT_SYNC_CAPTURE_PENDING",
+  "ACCOUNT_DELETION_CHECK_FAILED",
+  "LAN_DISCOVERY_UNAVAILABLE",
+  "VOLATILE_PLAINTEXT_SECRET_STORAGE",
+]);
+
+/** Keep only explicitly classified events, never arbitrary messages, identifiers or paths. */
+export function createDiagnosticLogBuffer() {
+  const events: Array<{ time: string; level: number; code: string }> = [];
+  return {
+    capture(chunk: string) {
+      for (const line of chunk.split("\n")) {
+        if (!line) continue;
+        try {
+          const record: unknown = JSON.parse(line);
+          if (!record || typeof record !== "object") continue;
+          const { time, level, code } = record as Record<string, unknown>;
+          if (
+            typeof code !== "string" ||
+            !SHAREABLE_LOG_CODES.has(code) ||
+            typeof time !== "number" ||
+            !Number.isFinite(time) ||
+            typeof level !== "number"
+          )
+            continue;
+          const date = new Date(time);
+          if (!Number.isFinite(date.getTime())) continue;
+          events.push({ time: date.toISOString(), level, code });
+          if (events.length > 100) events.shift();
+        } catch {
+          /* Ignore incomplete or non-JSON log output. */
+        }
+      }
+    },
+    snapshot() {
+      return events.slice();
+    },
+  };
+}
+
 export interface CreateAppLoggerOptions {
   level?: string;
   destination?: DestinationStream;

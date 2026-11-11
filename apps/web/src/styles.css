@@ -8172,3 +8172,18 @@ textarea:not(:disabled):hover {
   gap: 10px;
   margin-top: 20px;
 }
+
+.support-screenshot {
+  display: grid;
+  justify-items: start;
+  gap: 10px;
+  margin-top: 14px;
+}
+.support-screenshot img {
+  display: block;
+  max-width: min(100%, 480px);
+  max-height: 300px;
+  object-fit: contain;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}

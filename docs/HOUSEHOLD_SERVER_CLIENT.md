@@ -48,6 +48,12 @@ cookie remains the authorization credential. Cloud attach/detach does not
 invalidate local authorization. Portable household imports exclude pairings
 and server identity, so a replacement server requires pairing again.
 
+Chrome and an editor's embedded browser have separate cookie stores. Each must
+pair or enter the household Master PIN independently; both can stay connected
+at the same time. Expired installation authorization returns to that connection
+screen. After upgrading from an older web client, use a hard refresh if the
+browser still shows the previous cloud-only sign-in screen.
+
 The native shell provides discovery, navigation, persisted server selection
 and web playback. Platform WebView/Chromium codec support still determines
 direct playback capability; the existing server transcoding path is unchanged.
@@ -95,3 +101,13 @@ Deploy D1 migration `0011_households.sql` before the matching Worker. It creates
 household registry, synchronization and request tables without deleting archived
 account PIN records. The old cloud-global PIN endpoints return HTTP 410.
 No production migration or deployment is performed by switching to this branch.
+
+Migration 0011 assigns a synthetic `Household` UUID to old cloud profiles when
+there is no checkpoint carrying the original household UUID. Server registration
+includes profile sync IDs so the Worker can recognize this exact migrated
+namespace and move its records to the server's stable UUID in one transaction.
+This repair requires the same owner and complete active profile set, no source
+backup or live server, and an empty target synchronization namespace. The target
+backup stays unchanged. Partial matches and established households require
+explicit review rather than automatic reassignment. Linked household renaming
+must succeed in the cloud before the local name is saved.

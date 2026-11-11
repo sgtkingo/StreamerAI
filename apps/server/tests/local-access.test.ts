@@ -54,6 +54,50 @@ function fixture() {
   };
 }
 describe("installation access", () => {
+  it("keeps an administrator session when pairing is approved in another tab of the same browser", async () => {
+    const { app } = fixture();
+    await app.inject({
+      method: "POST",
+      url: "/api/v1/installation/authorize",
+      payload: { masterPin: "01234567", admin: true },
+    });
+    const started = await app.inject({
+      method: "POST",
+      url: "/api/v1/installation/pair",
+      payload: { name: "Browser" },
+    });
+    const ownerResponse = await app.inject({
+      method: "POST",
+      url: "/api/v1/installation/authorize",
+      payload: { masterPin: "01234567", admin: true },
+    });
+    const owner = cookie(ownerResponse),
+      pair = started.json();
+    const decision = await app.inject({
+      method: "POST",
+      url: "/api/v1/installation/decision",
+      headers: { cookie: owner },
+      payload: { requestId: pair.requestId, code: pair.code, approve: true },
+    });
+    expect(decision.statusCode).toBe(200);
+    const poll = await app.inject({
+      method: "POST",
+      url: "/api/v1/installation/poll",
+      headers: { cookie: `${owner}; ${cookie(started)}` },
+      payload: { requestId: pair.requestId },
+    });
+    expect(poll.json()).toEqual({ status: "approved" });
+    expect(poll.headers["set-cookie"]).toBeUndefined();
+    const status = await app.inject({
+      url: "/api/v1/installation/status",
+      headers: { cookie: owner },
+    });
+    expect(status.json()).toMatchObject({
+      paired: true,
+      role: "owner",
+      clientId: ownerResponse.json().clientId,
+    });
+  });
   it("keeps client identity and access while cloud management is attached or detached", async () => {
     const { app, access, db } = fixture();
     db.accounts.upsert({ id: "household-main", name: "Home" });

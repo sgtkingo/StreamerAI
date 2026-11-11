@@ -258,6 +258,7 @@ export interface HouseholdMergePreview {
 }
 export interface AccountOverview {
   cloudConfigured?: boolean;
+  householdId?: string | null;
   account: AccountIdentity;
   manageUrl: string | null;
   devices: {
@@ -665,6 +666,8 @@ const domainErrorMessages: Record<string, string> = {
     "This profile is not available. Finish setup or choose another profile.",
   PROFILE_LIMIT_REACHED: "This account already has five profiles.",
   AUTH_REQUIRED: "Connect this device to your household to continue.",
+  INSTALLATION_ACCESS_REQUIRED:
+    "Connect this browser to your household using its Master PIN or a pairing code.",
   PROFILE_LOCKED: "Unlock this profile with its PIN to continue.",
   PIN_INVALID: "That PIN was not accepted. Please try again.",
   INVALID_PIN: "Use a PIN containing exactly 4 digits.",
@@ -758,6 +761,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   try {
     response = await fetch(`/api/v1${path}`, {
       credentials: "same-origin",
+      cache: "no-store",
       ...init,
       headers: {
         Accept: "application/json",
@@ -782,7 +786,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     // they can contain provider details or credentials.
     const code = await readPublicErrorCode(response);
     if (
-      (code === "AUTH_REQUIRED" || code === "UNAUTHENTICATED") &&
+      (code === "AUTH_REQUIRED" ||
+        code === "UNAUTHENTICATED" ||
+        code === "INSTALLATION_ACCESS_REQUIRED") &&
       typeof window !== "undefined"
     ) {
       window.dispatchEvent(new Event("streamer:auth-required"));

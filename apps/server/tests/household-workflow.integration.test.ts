@@ -14,6 +14,10 @@ import {
   type StreamerDatabase,
 } from "@streamer-ai/database";
 import { fixture, origin } from "../../cloud/test/helpers.js";
+import {
+  registeredHousehold,
+  profileOperation,
+} from "../../cloud/test/household-helpers.js";
 import { createApp } from "../src/app.js";
 import { readRuntimeConfig } from "../src/runtime-config.js";
 import { NonPersistentMemorySecretStore } from "../src/stores/secret-store.js";
@@ -189,10 +193,63 @@ it("pairs clients locally, preserves the household and PIN through cloud attach/
       })
     ).statusCode,
   ).toBe(403);
+  // A pre-household installation had profiles but no encrypted checkpoint.
+  // Migration 0011 assigned those profiles a synthetic cloud household ID.
+  const legacy = await registeredHousehold(f);
+  expect(
+    (
+      await f.request("/v1/sync/push", {
+        method: "POST",
+        token: legacy.token,
+        data: {
+          operations: [profileOperation(f, "Our viewer", profile.syncId)],
+        },
+      })
+    ).status,
+  ).toBe(200);
+  f.sqlite
+    .prepare(
+      "UPDATE cloud_household SET server_id='migrated',created_at=0,updated_at=0 WHERE id=?",
+    )
+    .run(legacy.householdId);
+  f.sqlite
+    .prepare("UPDATE cloud_device SET revoked_at=? WHERE id=?")
+    .run(f.now(), legacy.deviceId);
   const connected = await connect(f, first.app, admin);
   expect(connected.statusCode).toBe(200);
   expect(connected.json().status).toBe("approved");
   expect(first.database.accounts.getHousehold().id).toBe("local");
+  const publicId = first.database.settings.get<string>("household.id.local");
+  const renamed = await first.app.inject({
+    method: "PUT",
+    url: "/api/v1/admin/household",
+    headers: { ...headers, cookie: admin },
+    payload: { name: "Hnízdo" },
+  });
+  expect(renamed.statusCode).toBe(200);
+  expect(renamed.json()).toEqual({ householdId: publicId, name: "Hnízdo" });
+  expect(
+    cloud!.sqlite.prepare("SELECT id,name FROM cloud_household").all(),
+  ).toEqual([{ id: publicId, name: "Hnízdo" }]);
+  // An independent browser has no cookie; it connects without invalidating
+  // the first browser or starting household setup again.
+  const secondBrowser = await first.app.inject({
+    method: "POST",
+    url: "/api/v1/installation/authorize",
+    headers,
+    payload: { masterPin: "01234567", deviceName: "Chrome", admin: true },
+  });
+  expect(secondBrowser.statusCode).toBe(200);
+  for (const browser of [admin, getCookie(secondBrowser)]) {
+    expect(
+      (
+        await first.app.inject({
+          url: "/api/v1/installation/status",
+          headers: { ...headers, cookie: browser },
+        })
+      ).json(),
+    ).toMatchObject({ paired: true, role: "owner" });
+  }
   expect((await new MasterPinService(first.secrets).read("local"))?.pin).toBe(
     "01234567",
   );
@@ -256,6 +313,30 @@ it("pairs clients locally, preserves the household and PIN through cloud attach/
   expect((await f.request("/v1/households", { account: "a" })).status).toBe(
     200,
   );
+});
+
+it("keeps the local name when a connected cloud refuses the rename", async () => {
+  const f = (cloud = fixture()),
+    home = server(f, "rename-failure"),
+    cookie = await owner(home.app);
+  await setup(home.app, cookie);
+  expect((await connect(f, home.app, cookie)).json().status).toBe("approved");
+  const name = home.database.accounts.getHousehold().name;
+  const credential = JSON.parse(
+    (await home.secrets.get(householdCloudCredentialKey("local")))!,
+  ) as { deviceId: string };
+  f.sqlite
+    .prepare("UPDATE cloud_device SET revoked_at=? WHERE id=?")
+    .run(f.now(), credential.deviceId);
+  const renamed = await home.app.inject({
+    method: "PUT",
+    url: "/api/v1/admin/household",
+    headers: { ...headers, cookie },
+    payload: { name: "Unsaved" },
+  });
+  expect(renamed.statusCode).toBe(503);
+  expect(renamed.json().error.code).toBe("HOUSEHOLD_CLOUD_UNAVAILABLE");
+  expect(home.database.accounts.getHousehold().name).toBe(name);
 });
 
 it("opens setup without an installation key and grants administration only after creating the Master PIN", async () => {

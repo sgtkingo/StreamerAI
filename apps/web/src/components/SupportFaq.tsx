@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { AdminIcon } from "./AdminUI";
 
 const questions = [
   {
@@ -77,7 +78,10 @@ export function SupportFaq() {
       <div className="support-faq__list">
         {matches.map(({ question, answer }) => (
           <details key={question}>
-            <summary>{question}</summary>
+            <summary>
+              <span>{question}</span>
+              <AdminIcon name="support" />
+            </summary>
             <p>{answer}</p>
           </details>
         ))}

@@ -17,7 +17,10 @@ export function deploymentDiagnostics() {
   };
 }
 
-export function registerDeploymentRoutes(app: FastifyInstance) {
+export function registerDeploymentRoutes(
+  app: FastifyInstance,
+  recentLogs?: () => Array<{ time: string; level: number; code: string }>,
+) {
   app.get("/api/v1/server/version", async (_request, reply) => {
     reply.header("cache-control", "no-store");
     return {
@@ -25,6 +28,10 @@ export function registerDeploymentRoutes(app: FastifyInstance) {
       apiProtocol: 1,
       minimumClientProtocol: 1,
     };
+  });
+  app.get("/api/v1/server/diagnostic-logs", async (_request, reply) => {
+    reply.header("cache-control", "no-store");
+    return { available: !!recentLogs, entries: recentLogs?.() ?? [] };
   });
   app.get("/api/v1/server/diagnostics", async (_request, reply) => {
     reply.header("cache-control", "no-store");

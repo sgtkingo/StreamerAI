@@ -13,7 +13,9 @@ it("shows Master PIN protection without backup controls", async () => {
     changeMasterPin: vi.fn().mockResolvedValue({ ok: true }),
   } as unknown as StreamerApi;
   render(<AccountSecurity api={api} />);
-  expect(screen.getByRole("heading", { name: "Security" })).toBeVisible();
+  expect(
+    screen.getByRole("heading", { name: "Household protection" }),
+  ).toBeVisible();
   expect(
     screen.queryByRole("heading", { name: "Household backups" }),
   ).not.toBeInTheDocument();

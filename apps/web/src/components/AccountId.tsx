@@ -1,8 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 import { useToasts } from "./ToastProvider";
 
-export function AccountId({ value }: { value: string | null }) {
+export function AccountId({
+  value,
+  label = "Account ID",
+}: {
+  value: string | null;
+  label?: "Account ID" | "Household ID";
+}) {
   const [copied, setCopied] = useState(false);
+  const identifier = label === "Household ID" ? "household ID" : "account ID";
   const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { showToast } = useToasts();
   useEffect(
@@ -14,14 +21,14 @@ export function AccountId({ value }: { value: string | null }) {
 
   return (
     <div className="account-uid">
-      <span>Account ID:</span>
+      <span>{label}:</span>
       <code>{value ?? "Unavailable"}</code>
       {value && (
         <button
           className="button button--secondary copy-uid"
           type="button"
-          aria-label="Copy account ID"
-          title={copied ? "Account ID copied" : "Copy account ID"}
+          aria-label={`Copy ${identifier}`}
+          title={copied ? `${label} copied` : `Copy ${identifier}`}
           data-copied={copied}
           onClick={async () => {
             if (resetTimer.current) clearTimeout(resetTimer.current);
@@ -31,7 +38,10 @@ export function AccountId({ value }: { value: string | null }) {
               setCopied(true);
               resetTimer.current = setTimeout(() => setCopied(false), 2000);
             } catch {
-              showToast("Select the account ID and copy it manually.", "error");
+              showToast(
+                `Select the ${identifier} and copy it manually.`,
+                "error",
+              );
             }
           }}
         >
@@ -63,7 +73,7 @@ export function AccountId({ value }: { value: string | null }) {
         </button>
       )}
       <span className="copy-uid-status" role="status" aria-live="polite">
-        {copied ? "Account ID copied." : ""}
+        {copied ? `${label} copied.` : ""}
       </span>
     </div>
   );

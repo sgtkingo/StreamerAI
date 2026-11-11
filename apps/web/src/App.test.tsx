@@ -666,16 +666,45 @@ describe("profile navigation", () => {
     );
   });
 
-  it("keeps profile creation in household administration", async () => {
+  it("creates a profile from an available slot and opens its setup", async () => {
+    const user = userEvent.setup();
     const api = createApi();
     render(<App api={api} />);
-    await screen.findByRole("heading", { name: /who's watching/i });
+    await user.click(
+      await screen.findByRole("button", { name: "Add profile" }),
+    );
+    await user.type(screen.getByLabelText("Profile name"), "Guest");
+    await user.click(screen.getByRole("button", { name: "Create profile" }));
+    await waitFor(() =>
+      expect(api.createProfile).toHaveBeenCalledWith({
+        name: "Guest",
+        locale: "en",
+      }),
+    );
+    await user.click(
+      await screen.findByRole("button", { name: /start setup/i }),
+    );
+    expect(screen.getByLabelText("Display name")).toHaveValue("Guest");
+  });
+
+  it("keeps profile creation unavailable when all five slots are occupied", async () => {
+    const api = createApi();
+    const initial = (await api.getProfiles()).items[0]!;
+    vi.mocked(api.getProfiles).mockResolvedValue({
+      items: Array.from({ length: 5 }, (_, index) => ({
+        ...initial,
+        id: `profile-${index}`,
+        name: `Viewer ${index}`,
+      })),
+      limit: 5,
+    });
+    render(<App api={api} />);
     expect(
-      screen.queryByRole("button", { name: /add profile/i }),
+      await screen.findByRole("heading", { name: /who's watching/i }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "Add profile" }),
     ).not.toBeInTheDocument();
-    expect(
-      screen.getByRole("link", { name: "Open household administration" }),
-    ).toHaveAttribute("href", "/admin");
   });
 
   it("reopens onboarding for the selected profile", async () => {

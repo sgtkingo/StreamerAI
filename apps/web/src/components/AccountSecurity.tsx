@@ -3,9 +3,16 @@ import type { AccountOverview, StreamerApi } from "../api/client";
 import { safeErrorMessage } from "../api/client";
 import { DigitSlotsInput } from "./DigitSlotsInput";
 import { useToasts } from "./ToastProvider";
-import { InfoTip } from "./InfoTip";
+import { AdminHelp as InfoTip } from "./AdminUI";
+import { AdminIcon, AdminNote, AdminStatus } from "./AdminUI";
 
-export function AccountSecurity({ api }: { api: StreamerApi }) {
+export function AccountSecurity({
+  api,
+  masterPinEnabled,
+}: {
+  api: StreamerApi;
+  masterPinEnabled?: boolean;
+}) {
   const [account, setAccount] = useState<AccountOverview | null>(null);
   const [changeOpen, setChangeOpen] = useState(false);
   const [currentPin, setCurrentPin] = useState("");
@@ -36,19 +43,35 @@ export function AccountSecurity({ api }: { api: StreamerApi }) {
   return (
     <section className="profile-page__section" id="account-security">
       <p className="eyebrow">Account protection</p>
-      <h2>Security</h2>
+      <div className="admin-card-heading">
+        <h2>Household protection</h2>
+        {masterPinEnabled !== undefined && (
+          <AdminStatus tone={masterPinEnabled ? "success" : "warning"}>
+            {masterPinEnabled ? "Master PIN enabled" : "PIN not configured"}
+          </AdminStatus>
+        )}
+      </div>
       <section
-        className="account-security__subsection"
+        className="account-security__subsection admin-subsection"
         aria-labelledby="account-master-pin-title"
       >
-        <h3 id="account-master-pin-title">Master PIN</h3>
+        <h3 id="account-master-pin-title">
+          <AdminIcon name="lock" />
+          Master PIN{" "}
+          <InfoTip label="What your Master PIN protects">
+            This eight-digit code authorizes household administration, can
+            unlock profiles and encrypts portable backups. Individual profile
+            PINs are managed in Profiles.
+          </InfoTip>
+        </h3>
         <p>
           Your 8-digit Master PIN unlocks any profile and encrypts household
           backups.
         </p>
-        <p className="settings-note">
-          Older backups still require the PIN that protected them.
-        </p>
+        <AdminNote>
+          Changing the PIN protects <strong>new backups</strong>. Older backups
+          still require the PIN that protected them.
+        </AdminNote>
         {api.changeMasterPin && (
           <>
             <div className="deployment-actions">
@@ -66,6 +89,7 @@ export function AccountSecurity({ api }: { api: StreamerApi }) {
                   setError("");
                 }}
               >
+                <AdminIcon name="lock" />
                 Change Master PIN
               </button>
               {account?.account.cloudLinked && account.manageUrl && (
@@ -81,7 +105,7 @@ export function AccountSecurity({ api }: { api: StreamerApi }) {
             </div>
             {changeOpen && (
               <form
-                className="form-stack"
+                className="form-stack admin-pin-form"
                 onSubmit={(event) => {
                   event.preventDefault();
                   if (
@@ -141,17 +165,20 @@ export function AccountSecurity({ api }: { api: StreamerApi }) {
                     confirmation !== newPin
                   }
                 >
-                  Save Master PIN
+                  {pending ? "Saving PIN…" : "Save Master PIN"}
                 </button>
               </form>
             )}
           </>
         )}
         {account?.account.cloudLinked === false && (
-          <p className="settings-note">
-            If you forget the Master PIN for a local account, it cannot be
-            recovered.
-          </p>
+          <div className="admin-note admin-note--warning">
+            <AdminIcon name="security" />
+            <p>
+              If you forget the Master PIN for a local account, it cannot be
+              recovered.
+            </p>
+          </div>
         )}
         {error && (
           <p className="account-inline-error" role="alert">

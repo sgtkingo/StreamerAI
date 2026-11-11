@@ -202,3 +202,12 @@ DONE: V Settings sekci "Profile PIN" zobrazuj hlášku "Profile PIN saved" nebo 
 DONE: V Onbordingu by se měl pod blokem "Your viewing data stays at home." v sekci Welcome, objevit i druh blok s importem zálohy. Přesun tam "Restore an encrypted household instead of starting over", klíč ted bude Master PIN, takže při rekovery se již nevytváří, použe žádá.
 
 - DONE: Přidat Report a bug i do klienta, Open household administration odstranit z hlavní profilové nabídky, vylepšit UI/UX sekce "Household services and devices" v Settings, v rámci https://cloud.streamer-ai.workers.dev/account nepoužívat na převod profilů a sloučení domácnsti UID domácnosti ale vybrat z nabídky (dostupné pouze vlastněné domácnosti). 
+
+- DONE: Musíme znovu zvážit párovací logiku: Schvalování přes Cloud byl dobrý mechanismus, asi by měl být jako primární: zkrátka klient počítá s tím že household je propojen na Cloud. Takže párovací kod a QR kod by měl primárně odkazovat na https://cloud.streamer-ai.workers.dev/pair a od tama se přepojit přes login na konkterétní domácnost - server. Protože server může běžet klidně někde vzdáleně. Na Cloudu by tedy měla být možnost přidat zařízení přes párovací kod do domácnosti. Tato možnost ale musí zůstat i na admin konzoli serveru. 
+
+K tomu tam musí být alternativa: "Using private server household?" která umožní najít a lognout se na lokální sever (nebo server dle IP/URL adresy) přes přímý request - pro servery které nejsou na cloudu. 
+
+Obojí je tedy stejný párovací mechanismus - jen jeden se snaží vytvořit spojení přes Cloud a druhý přímé na konkterétní server. 
+
+Musíme tedy počítat i s tím že klien může být na zcela jiné siti než server - separovaný. V aktuální Docker deploy implementaci to takto nevidím: klient má http://localhost:8080/ a server http://localhost:8080/admin. 
+Chápeš mě? Je to správná uvaha? 

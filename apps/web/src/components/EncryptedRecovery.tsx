@@ -2,8 +2,9 @@
 import { getInstallationStatus } from "./InstallationAccess";
 import { useToasts } from "./ToastProvider";
 import { DigitSlotsInput } from "./DigitSlotsInput";
-import { InfoTip } from "./InfoTip";
+import { AdminHelp as InfoTip } from "./AdminUI";
 import { MasterPinDialog } from "./MasterPinDialog";
+import { AdminIcon, AdminNote, AdminStatus } from "./AdminUI";
 
 const base = "/api/v1/account/encrypted-household";
 async function call<T>(
@@ -175,15 +176,53 @@ export function EncryptedRecovery({
     >
       {!restoreOnly && (
         <>
-          <h3>Household backups</h3>
+          <div className="admin-card-heading">
+            <h2>
+              Household backups{" "}
+              <InfoTip label="What a household backup includes">
+                An encrypted household file contains profiles, viewing data and
+                portable service credentials. It can be restored with its
+                original Master PIN on an empty household.
+              </InfoTip>
+            </h2>
+            <AdminStatus>
+              <AdminIcon name="lock" />
+              Encrypted
+            </AdminStatus>
+          </div>
           <p>
-            Household files and cloud backups are encrypted automatically with
-            your Master PIN. A saved file can be restored on a new server. Full
-            server backups include additional data; use the offline backup
-            command while the server is stopped.
+            Keep a portable copy of your profiles and viewing data, encrypted
+            with your Master PIN. Restore it on a new server using the PIN that
+            protected the backup.
           </p>
-          <div className="deployment-card household-backup-cloud">
-            <h4>Automatic cloud backup</h4>
+          <div className="deployment-card household-backup-cloud admin-subsection">
+            <div className="admin-card-heading">
+              <h3>
+                <AdminIcon name="cloud" />
+                Automatic cloud backup
+              </h3>
+              <AdminStatus
+                tone={
+                  !status.cloudConfigured
+                    ? "neutral"
+                    : status.cloudBackup?.status === "current"
+                      ? "success"
+                      : status.cloudBackup?.status === "error"
+                        ? "danger"
+                        : "warning"
+                }
+              >
+                {!status.cloudConfigured
+                  ? "Not connected"
+                  : status.cloudBackup?.status === "current"
+                    ? "Current"
+                    : status.cloudBackup?.status === "saving"
+                      ? "Saving"
+                      : status.cloudBackup?.status === "error"
+                        ? "Needs attention"
+                        : "Waiting"}
+              </AdminStatus>
+            </div>
             <p
               role="status"
               className={
@@ -219,6 +258,9 @@ export function EncryptedRecovery({
             >
               <BackupActionIcon />
               <span>Create</span>
+              <small aria-hidden="true">
+                Download an encrypted household file
+              </small>
             </button>
             <button
               className="household-backup-action"
@@ -230,6 +272,9 @@ export function EncryptedRecovery({
             >
               <BackupActionIcon restore />
               <span>Restore</span>
+              <small aria-hidden="true">
+                Review a saved file or cloud backup
+              </small>
             </button>
           </div>
         </>
@@ -250,6 +295,13 @@ export function EncryptedRecovery({
             </p>
           ) : (
             <h3>Restore into an empty household</h3>
+          )}
+          {!restoreOnly && (
+            <AdminNote tone="warning">
+              Restore is available for an <strong>empty household</strong>.
+              Review the backup contents before confirming. Use the Master PIN
+              that protected that backup.
+            </AdminNote>
           )}
           {status.cloudConfigured && !autoLoadCloud && (
             <button

@@ -20,6 +20,127 @@ afterEach(() => f.close());
 const push = (token: string, operations: unknown[]) =>
   f.request("/v1/sync/push", { method: "POST", token, data: { operations } });
 
+async function migratedProfiles() {
+  const legacy = await registeredHousehold(f);
+  const profiles = [
+    profileOperation(f, "Jirka"),
+    profileOperation(f, "Test 2"),
+  ];
+  expect((await push(legacy.token, profiles)).status).toBe(200);
+  f.sqlite
+    .prepare(
+      "UPDATE cloud_household SET name='Household',server_id='migrated',created_at=0,updated_at=0 WHERE id=?",
+    )
+    .run(legacy.householdId);
+  f.sqlite
+    .prepare("UPDATE cloud_device SET revoked_at=? WHERE id=?")
+    .run(f.now(), legacy.deviceId);
+  return { legacy, profiles };
+}
+
+it("reattaches the exact migrated profile namespace to the home server without replacing its identity or backup", async () => {
+  const { legacy, profiles } = await migratedProfiles();
+  const home = await registeredHousehold(f);
+  const backup = householdBackup(f, home.householdId);
+  await f.request("/v1/sync/v2/checkpoint", {
+    method: "PUT",
+    token: home.token,
+    data: { expectedRevision: 0, envelope: backup },
+  });
+  const before = f.sqlite
+    .prepare(
+      "SELECT * FROM cloud_household_sync_entity WHERE account_id=? ORDER BY profile_id",
+    )
+    .all(legacy.householdId) as { account_id: string }[];
+  const register = () =>
+    f.request("/v1/households", {
+      method: "POST",
+      token: home.token,
+      data: {
+        householdId: home.householdId,
+        name: "Hnízdo",
+        serverId: "home-server",
+        profileIds: profiles.map((p) => p.profileId),
+      },
+    });
+  expect((await register()).status).toBe(200);
+  expect((await register()).status).toBe(200);
+  expect(f.sqlite.prepare("SELECT id FROM cloud_household").all()).toEqual([
+    { id: home.householdId },
+  ]);
+  expect(
+    f.sqlite
+      .prepare(
+        "SELECT * FROM cloud_household_sync_entity WHERE account_id=? ORDER BY profile_id",
+      )
+      .all(home.householdId),
+  ).toEqual(before.map((row) => ({ ...row, account_id: home.householdId })));
+  expect(
+    await (
+      await f.request("/v1/sync/v2/checkpoint", { token: home.token })
+    ).json(),
+  ).toEqual({ revision: 1, envelope: backup });
+  expect((await push(home.token, profiles)).status).toBe(200);
+  expect(
+    (await f.request("/v1/sync/snapshot", { token: home.token })).status,
+  ).toBe(200);
+});
+
+it("refuses partial profile matches and real households before creating a duplicate", async () => {
+  const { legacy, profiles } = await migratedProfiles();
+  const credential = await deviceToken(f);
+  const id = randomUUID();
+  const register = (ids: string[]) =>
+    f.request("/v1/households", {
+      method: "POST",
+      token: credential.token,
+      data: {
+        householdId: id,
+        name: "Hnízdo",
+        serverId: "server",
+        profileIds: ids,
+      },
+    });
+  expect((await register([profiles[0]!.profileId])).status).toBe(409);
+  expect(
+    f.sqlite.prepare("SELECT id FROM cloud_household WHERE id=?").get(id),
+  ).toBeUndefined();
+  f.sqlite
+    .prepare("UPDATE cloud_household SET server_id='real-server' WHERE id=?")
+    .run(legacy.householdId);
+  expect((await register(profiles.map((p) => p.profileId))).status).toBe(409);
+  expect(
+    f.sqlite
+      .prepare(
+        "SELECT COUNT(*) AS count FROM cloud_household_sync_profile WHERE account_id=?",
+      )
+      .get(legacy.householdId),
+  ).toEqual({ count: 2 });
+});
+
+it("does not move another account's migrated profiles", async () => {
+  const { legacy, profiles } = await migratedProfiles();
+  const stranger = await deviceToken(f, "b");
+  const response = await f.request("/v1/households", {
+    method: "POST",
+    token: stranger.token,
+    data: {
+      householdId: randomUUID(),
+      name: "Other",
+      serverId: "other",
+      profileIds: profiles.map((p) => p.profileId),
+    },
+  });
+  expect(response.status).toBe(409);
+  expect(
+    f.sqlite
+      .prepare(
+        "SELECT COUNT(*) AS count FROM cloud_household_sync_profile WHERE account_id=?",
+      )
+      .get(legacy.householdId),
+  ).toEqual({ count: 2 });
+});
+
 it("establishes profile ownership before dependent rows in a mixed first upload", async () => {
   const server = await registeredHousehold(f),
     other = await registeredHousehold(f);

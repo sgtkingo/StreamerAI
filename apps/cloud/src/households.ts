@@ -7,6 +7,7 @@ import {
   string,
 } from "./http.js";
 import type { Env, Principal } from "./types.js";
+import { legacyHouseholdStatements } from "./legacy-household.js";
 
 export interface HouseholdRow {
   id: string;
@@ -160,6 +161,13 @@ export async function household(
   if (existing && existing.account_id !== principal.account.id)
     throw new HttpError(409, "household_conflict");
   if (existing?.merged_into) throw new HttpError(409, "household_merged");
+  const legacy = await legacyHouseholdStatements(
+    env,
+    principal,
+    input.householdId,
+    input.profileIds,
+    now,
+  );
   const results = await env.DB.batch([
     env.DB.prepare(
       `INSERT OR IGNORE INTO cloud_household (id,account_id,name,server_id,created_at,updated_at)
@@ -200,6 +208,7 @@ export async function household(
       principal.account.id,
       input.householdId,
     ),
+    ...legacy,
   ]);
   if (!results[1]?.meta.changes) throw new HttpError(409, "household_conflict");
   const registered = await requireHousehold(env, principal, input.householdId);

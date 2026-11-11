@@ -127,6 +127,9 @@ export class HouseholdCloudService {
         householdId: id,
         name,
         serverId: this.db.settings.get("server.instanceId"),
+        profileIds: this.db.profiles
+          .list(accountId)
+          .map((profile) => profile.syncId),
       },
     );
     if (!response.ok) throw new Error("HOUSEHOLD_CLOUD_CONFLICT");
@@ -511,15 +514,20 @@ export class HouseholdCloudService {
         return failure(reply, 400, "INVALID_HOUSEHOLD_NAME");
       const account = this.db.accounts.getHousehold(),
         id = householdId(this.db, account.id);
-      this.db.accounts.upsert({ id: account.id, name: name.trim() });
       const credential = await this.options.auth.getCredential(account.id);
-      if (credential)
-        await this.request(
+      if (account.cloudUserId && !credential)
+        return failure(reply, 503, "HOUSEHOLD_CLOUD_UNAVAILABLE");
+      if (credential) {
+        const response = await this.request(
           `/v1/households/${encodeURIComponent(id)}`,
           credential.token,
           "PUT",
           { name: name.trim() },
-        ).catch(() => undefined);
+        ).catch(() => null);
+        if (!response?.ok)
+          return failure(reply, 503, "HOUSEHOLD_CLOUD_UNAVAILABLE");
+      }
+      this.db.accounts.upsert({ id: account.id, name: name.trim() });
       return { householdId: id, name: name.trim() };
     });
     app.post<{ Params: { profileId: string } }>(

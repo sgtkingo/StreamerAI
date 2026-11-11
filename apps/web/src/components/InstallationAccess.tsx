@@ -2,7 +2,10 @@ import { useCallback, useEffect, useState } from "react";
 import type { StreamerApi } from "../api/client";
 import { AccountLogin } from "./AccountLogin";
 import { DigitSlotsInput } from "./DigitSlotsInput";
-import { MasterPinDialog } from "./MasterPinDialog";
+import { ClientPairing } from "./ClientPairing";
+import { AdminIcon, AdminStatus } from "./AdminUI";
+import { AdminHelp as InfoTip } from "./AdminUI";
+import { Brand } from "./Brand";
 
 export interface InstallationStatus {
   enabled: boolean;
@@ -30,96 +33,61 @@ async function call<T>(path: string, body?: unknown): Promise<T> {
       body === undefined ? undefined : { "content-type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  if (!response.ok)
-    throw new Error(
+  if (!response.ok) {
+    const result = (await response.json().catch(() => null)) as {
+      error?: { code?: unknown };
+    } | null;
+    const error = new Error(
       response.status === 429
         ? "Too many attempts. Wait a few minutes before trying again."
         : "The request could not be completed. Check the code and try again.",
     );
+    Object.assign(error, {
+      code:
+        typeof result?.error?.code === "string" ? result.error.code : undefined,
+    });
+    throw error;
+  }
   return response.json() as Promise<T>;
 }
 export const getInstallationStatus = () => call<InstallationStatus>("status");
 export const beginHouseholdSetup = () =>
   call<{ setupAuthorized: boolean }>("setup", {});
-export function InstallationAccess({
-  status,
-  onConnected,
-  api,
-  administration = false,
-}: {
+interface InstallationAccessProps {
   status: InstallationStatus;
   onConnected(): void;
   api?: StreamerApi;
   administration?: boolean;
-}) {
-  const [name, setName] = useState("Home browser");
-  const [request, setRequest] = useState<{
-    requestId: string;
-    code: string;
-    expiresAt: string;
-    qrCodeDataUrl?: string;
-    verificationUriComplete?: string;
-  } | null>(null);
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
+}
+
+export function InstallationAccess(props: InstallationAccessProps) {
+  return props.administration ? (
+    <AdministrationAccess {...props} />
+  ) : (
+    <ClientPairing {...props} requestInstallation={call} />
+  );
+}
+
+function AdministrationAccess({
+  status,
+  onConnected,
+  api,
+}: InstallationAccessProps) {
   const [pin, setPin] = useState("");
-  const [signIn, setSignIn] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
   const [cloudLogin, setCloudLogin] = useState(false);
-  useEffect(() => {
-    if (!request) return;
-    let active = true;
-    const timer = setInterval(() => {
-      void call<{ status: string }>("poll", { requestId: request.requestId })
-        .then((result) => {
-          if (!active) return;
-          if (result.status === "approved") onConnected();
-          if (["expired", "denied"].includes(result.status)) {
-            setError(`Access request ${result.status}. Start a new request.`);
-            setRequest(null);
-          }
-        })
-        .catch((reason: unknown) => {
-          if (active)
-            setError(
-              reason instanceof Error ? reason.message : "Access unavailable.",
-            );
-        });
-    }, 3000);
-    return () => {
-      active = false;
-      clearInterval(timer);
-    };
-  }, [request, onConnected]);
-  const submit = async () => {
+  const authorize = async () => {
+    if (busy || !/^\d{8}$/.test(pin)) return;
     setBusy(true);
     setError("");
     try {
-      setRequest(await call("pair", { name }));
-      setSignIn(false);
-    } catch (reason) {
-      setError(
-        reason instanceof Error ? reason.message : "Access unavailable.",
-      );
-    } finally {
-      setBusy(false);
-    }
-  };
-  const authorize = async (value = pin) => {
-    if (busy || !/^\d{8}$/.test(value)) return;
-    setBusy(true);
-    setError("");
-    try {
-      const input = {
-        masterPin: value,
-        deviceName: name.trim() || "Home browser",
-        admin: administration,
-      };
+      const input = { masterPin: pin, deviceName: "Home browser", admin: true };
       if (api?.authorizeInstallation) await api.authorizeInstallation(input);
       else await call("authorize", input);
       setPin("");
       onConnected();
     } catch (reason) {
-      if (!administration) throw reason;
       setError(
         reason instanceof Error ? reason.message : "Authorization failed.",
       );
@@ -127,28 +95,6 @@ export function InstallationAccess({
       setBusy(false);
     }
   };
-  if (
-    !administration &&
-    (status.householdReady === false ||
-      (!status.claimed && status.householdReady !== true))
-  )
-    return (
-      <main className="installation-screen">
-        <p className="eyebrow">StreamerAI home server</p>
-        <h1>
-          {status.claimed
-            ? "Your household is not ready yet"
-            : "Set up your household first"}
-        </h1>
-        <p>
-          The server owner can create a household or import a backup in
-          household administration.
-        </p>
-        <a className="button button--primary" href="/admin">
-          Open household administration
-        </a>
-      </main>
-    );
   if (cloudLogin && api)
     return (
       <AccountLogin
@@ -159,32 +105,30 @@ export function InstallationAccess({
         onAuthenticated={onConnected}
       />
     );
-  const localPairUrl =
-    request?.verificationUriComplete ??
-    (request
-      ? new URL(
-          `/admin/pair?code=${encodeURIComponent(request.code)}`,
-          window.location.origin,
-        ).href
-      : "");
   return (
-    <main className="installation-screen">
+    <main className="installation-screen admin-login">
+      <div className="admin-login__brand">
+        <Brand />
+        <AdminStatus>Home server</AdminStatus>
+      </div>
+      <div className="admin-login__icon">
+        <AdminIcon name="lock" />
+      </div>
       <p className="eyebrow">StreamerAI home server</p>
-      <h1>
-        {administration
-          ? "Your household, fully under your control"
-          : "Connect this device"}
-      </h1>
-      <p>
-        {administration
-          ? "Enter this household's Master PIN to administer this server."
-          : "Pair this browser with your home server. Your device stays connected when the cloud is unavailable."}
-      </p>
-      {administration && !status.claimed && status.householdReady !== true ? (
+      <h1>Sign in to administration</h1>
+      <p>Enter this household's Master PIN to administer this server.</p>
+      <div className="admin-login__household">
+        <AdminIcon name="household" />
+        <strong>{status.householdName ?? "Your household"}</strong>
+        <AdminStatus tone={status.householdReady ? "success" : "neutral"}>
+          {status.householdReady ? "Ready" : "Home server"}
+        </AdminStatus>
+      </div>
+      {!status.claimed && status.householdReady !== true ? (
         <a className="button button--primary" href="/admin">
           Set up your household
         </a>
-      ) : administration ? (
+      ) : (
         <form
           className="form-stack"
           onSubmit={(event) => {
@@ -198,100 +142,22 @@ export function InstallationAccess({
             onChange={setPin}
             disabled={busy}
           />
+          <div className="admin-login__pin-help">
+            <span>8-digit household PIN</span>
+            {status.cloudLinked && status.cloudConfigured && (
+              <a href="/admin/recover">Forgot PIN?</a>
+            )}
+          </div>
           <button
             className="button button--primary"
             type="submit"
             disabled={busy || !/^\d{8}$/.test(pin)}
           >
-            {busy
-              ? "Authorizing?"
-              : administration
-                ? "Open administration"
-                : "Connect this device"}
+            {busy ? "Authorizing..." : "Open administration"}
           </button>
-          {!administration && (
-            <button
-              className="button button--ghost"
-              type="button"
-              onClick={() => {
-                setSignIn(false);
-                setPin("");
-              }}
-            >
-              Use a pairing code instead
-            </button>
-          )}
         </form>
-      ) : (
-        <>
-          {!request && (
-            <form
-              className="form-stack"
-              onSubmit={(event) => {
-                event.preventDefault();
-                void submit();
-              }}
-            >
-              <label className="field">
-                <span>Device name</span>
-                <input
-                  value={name}
-                  maxLength={80}
-                  required
-                  onChange={(event) => setName(event.target.value)}
-                />
-              </label>
-              <button
-                className="button button--primary"
-                type="submit"
-                disabled={busy}
-              >
-                {busy ? "Preparing code?" : "Show pairing code"}
-              </button>
-            </form>
-          )}
-          {request && (
-            <div className="local-device-pairing" role="status">
-              {request.qrCodeDataUrl && (
-                <img
-                  src={request.qrCodeDataUrl}
-                  width={208}
-                  height={208}
-                  alt="Scan to approve this device on your home server"
-                />
-              )}
-              <p>
-                Open household administration on an approved device and compare
-                this code:
-              </p>
-              <p
-                className="installation-code"
-                aria-label={`Pairing code ${request.code}`}
-              >
-                {request.code.replace(/(\d{3})(\d{3})/, "$1 $2")}
-              </p>
-              <a href={localPairUrl}>{localPairUrl}</a>
-              <p>Waiting for approval. This code expires in five minutes.</p>
-              <button
-                className="button button--secondary"
-                type="button"
-                onClick={() => setRequest(null)}
-              >
-                Get a new code
-              </button>
-            </div>
-          )}
-          <button
-            className="button button--secondary"
-            type="button"
-            onClick={() => setSignIn(true)}
-          >
-            Sign in on this device
-          </button>
-        </>
       )}
-      {administration &&
-        status.claimed &&
+      {status.claimed &&
         status.cloudConfigured &&
         status.cloudLinked !== false &&
         api?.startDeviceAuthorization && (
@@ -300,39 +166,48 @@ export function InstallationAccess({
             type="button"
             onClick={() => setCloudLogin(true)}
           >
+            <AdminIcon name="cloud" />
             Sign in with cloud account
           </button>
         )}
-      {!administration && (
-        <p>
-          <a href="/admin">Open household administration</a>
-        </p>
-      )}
+      <p className="admin-login__help">
+        <AdminIcon name="security" />
+        This browser connects directly to your home server.{" "}
+        <InfoTip label="About administration access">
+          Each browser signs in independently. Your Master PIN grants
+          administration on this server. Your profiles and paired devices stay
+          connected when another browser signs in.
+        </InfoTip>
+      </p>
       {error && <p role="alert">{error}</p>}
-      {!administration && signIn && (
-        <MasterPinDialog
-          onSubmit={authorize}
-          onCancel={() => setSignIn(false)}
-          onAskOwner={() => void submit()}
-          askOwnerLabel="Ask household owner to approve this device"
-        />
-      )}
     </main>
   );
 }
 
 export function InstallationDevices({
   initialCode = "",
+  onPairingResolved,
 }: {
   initialCode?: string;
+  onPairingResolved?(code: string): void;
 }) {
   const [data, setData] = useState<{
-    devices: { id: string; name: string; role: string; current: boolean }[];
+    devices: {
+      id: string;
+      name: string;
+      role: string;
+      current: boolean;
+      lastSeenAt?: number;
+    }[];
     pending: { id: string; name: string; code?: string }[];
   } | null>(null);
   const [owner, setOwner] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [pending, setPending] = useState(false);
+  const [revokeId, setRevokeId] = useState<string | null>(null);
   const [codes, setCodes] = useState<Record<string, string>>({});
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const refresh = useCallback(
     () => call<NonNullable<typeof data>>("devices").then(setData),
     [],
@@ -344,103 +219,257 @@ export function InstallationDevices({
       .then((status) => {
         if (!active || status.role !== "owner") return;
         setOwner(true);
-        void refresh().catch(() => undefined);
+        void refresh().catch(() =>
+          setError("Devices could not be loaded. Try refreshing this page."),
+        );
         timer = setInterval(() => {
           void refresh().catch(() => undefined);
         }, 5000);
       })
-      .catch(() => undefined);
+      .catch(() =>
+        setError(
+          "Server access could not be checked. Try refreshing this page.",
+        ),
+      )
+      .finally(() => {
+        if (active) setLoading(false);
+      });
     return () => {
       active = false;
       clearInterval(timer);
     };
   }, [refresh]);
-  if (!owner) return null;
-  const action = async (path: string, input: unknown) => {
+  useEffect(() => {
+    if (
+      !data ||
+      !initialCode ||
+      data.pending.some((item) => item.code === initialCode)
+    )
+      return;
+    setNotice("This pairing request is no longer waiting for approval.");
+    onPairingResolved?.(initialCode);
+  }, [data, initialCode, onPairingResolved]);
+  if (!owner && !loading && !error) return null;
+  const action = async (
+    path: string,
+    input: unknown,
+    onSuccess?: () => void,
+  ) => {
+    if (pending) return;
+    setPending(true);
     setError("");
     try {
       await call(path, input);
+      onSuccess?.();
       await refresh();
+      setRevokeId(null);
     } catch (reason) {
       setError(
         reason instanceof Error ? reason.message : "Device action failed.",
       );
+    } finally {
+      setPending(false);
     }
   };
   return (
     <section className="profile-page__section">
-      <p className="eyebrow">Server access</p>
-      <h2>Approved devices</h2>
+      <div className="admin-card-heading">
+        <h2>
+          Approved devices{" "}
+          <InfoTip label="How device access works">
+            Each approved browser or client receives independent access.
+            Household administrators can manage settings; viewers can use the
+            player. Removing one device does not disconnect the others.
+          </InfoTip>
+        </h2>
+        <AdminStatus>
+          {data ? `${data.devices.length} connected` : "Loading…"}
+        </AdminStatus>
+      </div>
       <p>
         Devices need approval before they can use this home server. Each paired
         device receives its own revocable access to this household.
       </p>
-      {data?.pending.map((item) => (
-        <div className="deployment-card" key={item.id}>
-          <strong>{item.name}</strong>
-          <label className="field">
-            <span>Code shown on the requesting device</span>
-            <input
-              value={
-                codes[item.id] ?? (item.code === initialCode ? initialCode : "")
-              }
-              maxLength={6}
-              onChange={(event) =>
-                setCodes({
-                  ...codes,
-                  [item.id]: event.target.value.replace(/\D/g, "").slice(0, 6),
-                })
-              }
-            />
-          </label>
-          <div className="deployment-actions">
-            <button
-              className="button button--secondary"
-              type="button"
-              onClick={() =>
-                void action("decision", {
-                  requestId: item.id,
-                  code:
-                    codes[item.id] ??
-                    (item.code === initialCode ? initialCode : ""),
-                  approve: true,
-                })
-              }
-            >
-              Approve
-            </button>
-            <button
-              className="button button--secondary"
-              type="button"
-              onClick={() =>
-                void action("decision", { requestId: item.id, approve: false })
-              }
-            >
-              Deny
-            </button>
+      {!data && !error && <p role="status">Loading device access…</p>}
+      {notice && <p role="status">{notice}</p>}
+      {data && (
+        <section
+          className="admin-subsection"
+          aria-labelledby="pairing-requests-title"
+        >
+          <div className="admin-card-heading">
+            <h3 id="pairing-requests-title">Pairing requests</h3>
+            <AdminStatus tone={data.pending.length ? "warning" : "neutral"}>
+              {data.pending.length
+                ? `${data.pending.length} awaiting approval`
+                : "None pending"}
+            </AdminStatus>
           </div>
-        </div>
-      ))}
-      {data?.devices.map((device) => (
-        <div className="deployment-card" key={device.id}>
-          <span>
-            {device.name} · {device.role}
-            {device.current ? " · This device" : ""}
-          </span>
-          {!device.current &&
-            (device.role !== "owner" ||
-              (data?.devices.filter((item) => item.role === "owner").length ??
-                0) > 1) && (
-              <button
-                className="button button--secondary"
-                type="button"
-                onClick={() => void action("revoke", { deviceId: device.id })}
+          {data.pending.length === 0 && (
+            <p className="settings-note">
+              New device requests appear here. Approve only a code you
+              recognize.
+            </p>
+          )}
+          {data.pending.map((item) => (
+            <div
+              className="deployment-card admin-pairing-request"
+              key={item.id}
+            >
+              <div className="admin-device__identity">
+                <AdminIcon name="devices" />
+                <strong>{item.name}</strong>
+              </div>
+              <p className="settings-note">
+                Compare the code with the requesting device before approving.
+              </p>
+              <label className="field">
+                <span>Code shown on the requesting device</span>
+                <input
+                  value={
+                    codes[item.id] ??
+                    (item.code === initialCode ? initialCode : "")
+                  }
+                  maxLength={6}
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  disabled={pending}
+                  onChange={(event) =>
+                    setCodes({
+                      ...codes,
+                      [item.id]: event.target.value
+                        .replace(/\D/g, "")
+                        .slice(0, 6),
+                    })
+                  }
+                />
+              </label>
+              <div className="deployment-actions">
+                <button
+                  className="button button--secondary"
+                  type="button"
+                  disabled={
+                    pending ||
+                    (
+                      codes[item.id] ??
+                      (item.code === initialCode ? initialCode : "")
+                    ).length !== 6
+                  }
+                  onClick={() =>
+                    void action(
+                      "decision",
+                      {
+                        requestId: item.id,
+                        code:
+                          codes[item.id] ??
+                          (item.code === initialCode ? initialCode : ""),
+                        approve: true,
+                      },
+                      () => {
+                        if (item.code && item.code === initialCode)
+                          onPairingResolved?.(item.code);
+                      },
+                    )
+                  }
+                >
+                  Approve
+                </button>
+                <button
+                  className="button button--secondary"
+                  type="button"
+                  disabled={pending}
+                  onClick={() =>
+                    void action(
+                      "decision",
+                      {
+                        requestId: item.id,
+                        approve: false,
+                      },
+                      () => {
+                        if (item.code && item.code === initialCode)
+                          onPairingResolved?.(item.code);
+                      },
+                    )
+                  }
+                >
+                  Deny
+                </button>
+              </div>
+            </div>
+          ))}
+        </section>
+      )}
+      <div className="admin-device-list">
+        {data?.devices.map((device) => (
+          <article className="admin-device" key={device.id}>
+            <div className="admin-device__identity">
+              <span className="admin-device__icon">
+                <AdminIcon name="devices" />
+              </span>
+              <div>
+                <strong>{device.name}</strong>
+                <div className="admin-device__meta">
+                  <AdminStatus>
+                    {device.role === "owner" ? "Administrator" : "Viewer"}
+                  </AdminStatus>
+                  {device.current && (
+                    <AdminStatus tone="success">This device</AdminStatus>
+                  )}
+                </div>
+                {device.lastSeenAt && (
+                  <p className="settings-note">
+                    Last seen {new Date(device.lastSeenAt).toLocaleString()}
+                  </p>
+                )}
+              </div>
+            </div>
+            {!device.current &&
+              (device.role !== "owner" ||
+                (data?.devices.filter((item) => item.role === "owner").length ??
+                  0) > 1) && (
+                <button
+                  className="button button--ghost admin-danger-button"
+                  type="button"
+                  disabled={pending}
+                  onClick={() => setRevokeId(device.id)}
+                >
+                  <AdminIcon name="trash" />
+                  Revoke access
+                </button>
+              )}
+            {revokeId === device.id && (
+              <div
+                className="admin-confirmation"
+                role="alertdialog"
+                aria-label={`Revoke access for ${device.name}?`}
               >
-                Revoke access
-              </button>
+                <p>
+                  Remove <strong>{device.name}</strong> from this server? It
+                  will need to pair again.
+                </p>
+                <div className="deployment-actions">
+                  <button
+                    className="button button--secondary admin-danger-button"
+                    disabled={pending}
+                    onClick={() =>
+                      void action("revoke", { deviceId: device.id })
+                    }
+                  >
+                    {pending ? "Removing…" : "Confirm removal"}
+                  </button>
+                  <button
+                    className="button button--ghost"
+                    disabled={pending}
+                    onClick={() => setRevokeId(null)}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
             )}
-        </div>
-      ))}
+          </article>
+        ))}
+      </div>
       {error && <p role="alert">{error}</p>}
     </section>
   );

@@ -7,6 +7,7 @@ import {
 } from "../api/client";
 import { DigitSlotsInput } from "./DigitSlotsInput";
 import { useToasts } from "./ToastProvider";
+import { AdminStatus } from "./AdminUI";
 
 export function HouseholdMerges({
   api,
@@ -48,7 +49,12 @@ export function HouseholdMerges({
   if (!requests.length && !error) return null;
   return (
     <section className="profile-page__section">
-      <h2>Household merges to finish</h2>
+      <div className="admin-card-heading">
+        <h2>Household merges to finish</h2>
+        <AdminStatus tone="warning">
+          {requests.length} awaiting import
+        </AdminStatus>
+      </div>
       <p>
         Finish a cloud merge on this destination server using the source
         household's Master PIN.

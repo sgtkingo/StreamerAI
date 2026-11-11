@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { StrictMode } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import {
@@ -61,6 +67,121 @@ function apiWith(status = ready) {
   } as unknown as StreamerApi;
 }
 
+it("removes the one-time pairing URL after approval even if the device list cannot refresh", async () => {
+  window.history.replaceState({}, "", "/admin/pair?code=123456");
+  let decided = false;
+  const fetcher = vi.fn(async (path: string) => {
+    if (path.endsWith("/installation/status")) return Response.json(owner);
+    if (path.endsWith("/installation/decision")) {
+      decided = true;
+      return Response.json({ status: "approved" });
+    }
+    if (path.endsWith("/installation/devices"))
+      return decided
+        ? Response.json({ error: {} }, { status: 503 })
+        : Response.json({
+            devices: [],
+            pending: [{ id: "p1", name: "Living room TV", code: "123456" }],
+          });
+    throw new Error("Unexpected request");
+  });
+  vi.stubGlobal("fetch", fetcher);
+  render(<AdminApp api={apiWith()} />);
+  expect(await screen.findByDisplayValue("123456")).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+  await waitFor(() => expect(window.location.pathname).toBe("/admin"));
+  expect(window.location.search).toBe("?tab=devices");
+  expect(await screen.findByRole("alert")).toBeVisible();
+});
+
+it("does not discard a pairing link when approving a different request or when the decision fails", async () => {
+  window.history.replaceState({}, "", "/admin/pair?code=123456");
+  let requests = [
+    { id: "p1", name: "First TV", code: "123456" },
+    { id: "p2", name: "Second TV", code: "654321" },
+  ];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (path: string, init?: RequestInit) => {
+      if (path.endsWith("/installation/status")) return Response.json(owner);
+      if (path.endsWith("/installation/devices"))
+        return Response.json({ devices: [], pending: requests });
+      if (path.endsWith("/installation/decision")) {
+        const input = JSON.parse(String(init?.body)) as { requestId: string };
+        if (input.requestId === "p1")
+          return Response.json(
+            { error: { code: "CODE_MISMATCH" } },
+            { status: 403 },
+          );
+        requests = requests.filter((item) => item.id !== input.requestId);
+        return Response.json({ status: "approved" });
+      }
+      throw new Error("Unexpected request");
+    }),
+  );
+  render(<AdminApp api={apiWith()} />);
+  const second = await screen.findByText("Second TV");
+  const card = second.closest<HTMLElement>(".admin-pairing-request")!;
+  fireEvent.change(
+    within(card).getByLabelText("Code shown on the requesting device"),
+    { target: { value: "654321" } },
+  );
+  fireEvent.click(within(card).getByRole("button", { name: "Approve" }));
+  await waitFor(() =>
+    expect(screen.queryByText("Second TV")).not.toBeInTheDocument(),
+  );
+  expect(window.location.pathname + window.location.search).toBe(
+    "/admin/pair?code=123456",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+  await screen.findByRole("alert");
+  expect(window.location.pathname + window.location.search).toBe(
+    "/admin/pair?code=123456",
+  );
+});
+
+it("retires an old pairing link once the server confirms no matching request exists", async () => {
+  window.history.replaceState({}, "", "/admin/pair?code=123456");
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (path: string) =>
+      path.endsWith("/installation/status")
+        ? Response.json(owner)
+        : Response.json({ devices: [], pending: [] }),
+    ),
+  );
+  render(<AdminApp api={apiWith()} />);
+  expect(
+    await screen.findByText(
+      "This pairing request is no longer waiting for approval.",
+    ),
+  ).toBeVisible();
+  expect(window.location.pathname + window.location.search).toBe(
+    "/admin?tab=devices",
+  );
+});
+
+it("drops the pairing route when the owner navigates to another section", async () => {
+  window.history.replaceState({}, "", "/admin/pair?code=123456");
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (path: string) =>
+      path.endsWith("/installation/status")
+        ? Response.json(owner)
+        : Response.json({
+            devices: [],
+            pending: [{ id: "p1", name: "TV", code: "123456" }],
+          }),
+    ),
+  );
+  render(<AdminApp api={apiWith()} />);
+  await screen.findByDisplayValue("123456");
+  fireEvent.click(screen.getByRole("button", { name: "Cloud" }));
+  expect(window.location.pathname + window.location.search).toBe(
+    "/admin?tab=cloud",
+  );
+});
+
 it("shows cloud management on its own page", async () => {
   render(<AdminApp api={apiWith()} />);
   expect(
@@ -75,6 +196,27 @@ it("shows cloud management on its own page", async () => {
   ).toBeVisible();
   expect(
     screen.queryByRole("heading", { name: "Household account" }),
+  ).not.toBeInTheDocument();
+});
+
+it("returns an expired browser to household authorization without reopening setup", async () => {
+  const api = apiWith();
+  render(<AdminApp api={api} />);
+  await screen.findByRole("heading", { name: "Household account" });
+  vi.mocked(api.getInstallationStatus!).mockResolvedValue({
+    ...owner,
+    paired: false,
+    role: null,
+  });
+  fireEvent(window, new Event("streamer:auth-required"));
+  expect(
+    await screen.findByText(
+      "Enter this household's Master PIN to administer this server.",
+    ),
+  ).toBeVisible();
+  expect(api.getProfiles).toHaveBeenCalledTimes(1);
+  expect(
+    screen.queryByRole("heading", { name: "Set up your household" }),
   ).not.toBeInTheDocument();
 });
 
@@ -93,13 +235,11 @@ it("opens the report form from the administration header", async () => {
 
 it("groups household backups and their schedule on the Backups page", async () => {
   const api = apiWith();
-  api.getBackupSchedule = vi
-    .fn()
-    .mockResolvedValue({
-      enabled: true,
-      intervalMinutes: 1440,
-      cloudEnabled: true,
-    });
+  api.getBackupSchedule = vi.fn().mockResolvedValue({
+    enabled: true,
+    intervalMinutes: 1440,
+    cloudEnabled: true,
+  });
   vi.stubGlobal(
     "fetch",
     vi.fn(async (path: string) =>
@@ -281,7 +421,9 @@ it("resets a profile PIN locally and saves the backup schedule", async () => {
   render(<AdminApp api={api} />);
   fireEvent.click(await screen.findByRole("button", { name: /^Profiles$/ }));
   expect(screen.queryByLabelText("New profile name")).not.toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "Add profile" })).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Add profile" }),
+  ).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Reset profile PIN" }));
   fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
   await waitFor(() => expect(api.resetProfilePin).toHaveBeenCalledWith("alex"));

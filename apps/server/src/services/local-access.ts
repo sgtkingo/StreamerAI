@@ -552,13 +552,18 @@ export class LocalAccessService {
       item.nextPollAt = this.now() + 3000;
       if (item.state !== "approved") return { status: item.state };
       this.pending.delete(item.id);
-      this.issue(
-        request,
-        reply,
-        "viewer",
-        item.name,
-        this.householdAccountId(),
-      );
+      // The approval page may have authorized this same browser as owner
+      // while the original tab was waiting. Do not replace that cookie with
+      // a lower-privilege viewer session when it redeems the pairing grant.
+      const existing = this.actor(request);
+      if (!existing || existing.setupPending)
+        this.issue(
+          request,
+          reply,
+          "viewer",
+          item.name,
+          this.householdAccountId(),
+        );
       return { status: "approved" };
     });
     app.get("/api/v1/installation/devices", async (request, reply) => {

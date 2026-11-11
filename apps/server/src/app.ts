@@ -51,7 +51,11 @@ import {
   type ManualAgentConfig,
 } from "./integrations/manual-agent-config.js";
 import { AdapterRegistry } from "./integrations/provider-registry.js";
-import { createAppLogger, logDiscoveryEvent } from "./logging.js";
+import {
+  createAppLogger,
+  createDiagnosticLogBuffer,
+  logDiscoveryEvent,
+} from "./logging.js";
 import { registerSystemRoutes } from "./routes/system.js";
 import { registerContentRoutes } from "./routes/content.js";
 import { registerInferenceRoutes } from "./routes/inference.js";
@@ -533,13 +537,23 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
           void core.runScheduledAvailabilityChecks();
         }, 60_000);
   availabilityTimer?.unref();
+  const diagnosticLogs = createDiagnosticLogBuffer();
+  const capturesLogs = options.logger === undefined;
   const app =
     options.logger === false
       ? Fastify({ logger: false, bodyLimit: 64 * 1024 })
       : Fastify({
           loggerInstance:
             options.logger ??
-            createAppLogger({ level: runtimeConfig.server.logLevel }),
+            createAppLogger({
+              level: runtimeConfig.server.logLevel,
+              destination: {
+                write(chunk: string) {
+                  diagnosticLogs.capture(chunk);
+                  process.stdout.write(chunk);
+                },
+              },
+            }),
           bodyLimit: 64 * 1024,
         });
 
@@ -607,7 +621,10 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
     localAccess,
   });
   accountAuth.register(app);
-  registerDeploymentRoutes(app);
+  registerDeploymentRoutes(
+    app,
+    capturesLogs ? () => diagnosticLogs.snapshot() : undefined,
+  );
   registerServerAiSetupRoutes(app, {
     service: new ServerAiSetupService({
       dataDirectory: runtimeConfig.server.dataDir,

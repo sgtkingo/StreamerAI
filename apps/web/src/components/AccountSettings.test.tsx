@@ -4,6 +4,7 @@ import {
   ViewerProfileSchema,
 } from "@streamer-ai/contracts";
 import { describe, expect, it, vi } from "vitest";
+import userEvent from "@testing-library/user-event";
 import type { AccountOverview, StreamerApi } from "../api/client";
 import { AccountSettings } from "./AccountSettings";
 
@@ -32,6 +33,28 @@ const profile = ViewerProfileSchema.parse({
 });
 
 describe("account management", () => {
+  it("shows and copies the household and account IDs independently", async () => {
+    const user = userEvent.setup();
+    const writeText = vi.spyOn(navigator.clipboard, "writeText");
+    const api = {
+      getAccount: vi.fn().mockResolvedValue({
+        ...overview,
+        householdId: "household-123",
+        account: {
+          ...overview.account,
+          cloudLinked: true,
+          cloudAccountId: "account-456",
+        },
+      }),
+    } as unknown as StreamerApi;
+    render(<AccountSettings api={api} section="account" />);
+    expect(await screen.findByText("household-123")).toBeVisible();
+    expect(screen.getByText("account-456")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Copy household ID" }));
+    expect(writeText).toHaveBeenLastCalledWith("household-123");
+    await user.click(screen.getByRole("button", { name: "Copy account ID" }));
+    expect(writeText).toHaveBeenLastCalledWith("account-456");
+  });
   it("does not show or fetch connected accounts in local administration", async () => {
     const getAccountConnections = vi.fn();
     const api = {

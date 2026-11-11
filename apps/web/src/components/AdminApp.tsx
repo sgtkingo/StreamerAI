@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ViewerProfile } from "@streamer-ai/contracts";
 import {
   apiClient,
@@ -25,8 +25,9 @@ import { AgentBackendSettings } from "./AgentBackendSettings";
 import { SupportPanel } from "./SupportPanel";
 import { useToasts } from "./ToastProvider";
 import { HouseholdMerges } from "./HouseholdMerges";
-import { InfoTip } from "./InfoTip";
+import { AdminHelp as InfoTip } from "./AdminUI";
 import { SupportFaq } from "./SupportFaq";
+import { AdminIcon, AdminNote, AdminStatus } from "./AdminUI";
 
 type AdminSection =
   | "household"
@@ -37,6 +38,28 @@ type AdminSection =
   | "backups"
   | "security"
   | "support";
+
+const sectionCopy: Record<AdminSection, string> = {
+  household: "The home for your profiles, preferences and shared services.",
+  cloud:
+    "Connect your household, check synchronization and manage your online account.",
+  profiles: "Manage personal spaces, profile access and viewing data.",
+  devices: "Approve new connections and manage who can use this home server.",
+  services: "",
+  backups:
+    "Keep an encrypted copy of your household and choose when it is saved.",
+  security:
+    "Protect administration, profile access and your household backups.",
+  support: "Find an answer, collect diagnostics or report a problem.",
+};
+const navGroups: { label: string; items: AdminSection[] }[] = [
+  {
+    label: "Your household",
+    items: ["household", "cloud", "profiles", "devices"],
+  },
+  { label: "Configuration", items: ["services", "backups", "security"] },
+  { label: "Help", items: ["support"] },
+];
 
 export function AdminApp({ api = apiClient }: { api?: StreamerApi }) {
   const setupSession = useRef<Promise<unknown> | null>(null);
@@ -49,15 +72,48 @@ export function AdminApp({ api = apiClient }: { api?: StreamerApi }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [importing, setImporting] = useState(false);
+  const [pairingCode, setPairingCode] = useState(
+    () => new URLSearchParams(window.location.search).get("code") ?? "",
+  );
   const [section, setSection] = useState<AdminSection>(
     window.location.pathname.startsWith("/admin/pair")
       ? "devices"
-      : new URLSearchParams(window.location.search).get("tab") === "profiles"
-        ? "profiles"
+      : Object.hasOwn(
+            sectionCopy,
+            new URLSearchParams(window.location.search).get("tab") ?? "",
+          )
+        ? (new URLSearchParams(window.location.search).get(
+            "tab",
+          ) as AdminSection)
         : window.location.hash === "#support"
           ? "support"
           : "household",
   );
+  const selectSection = (next: AdminSection) => {
+    setSection(next);
+    const url = new URL(window.location.href);
+    if (/^\/admin\/pair\/?$/.test(url.pathname)) {
+      url.pathname = "/admin";
+      url.searchParams.delete("code");
+      setPairingCode("");
+    }
+    url.searchParams.set("tab", next);
+    url.hash = "";
+    window.history.replaceState({}, "", url);
+  };
+  const clearPairingLink = useCallback((code: string) => {
+    const url = new URL(window.location.href);
+    if (
+      !/^\/admin\/pair\/?$/.test(url.pathname) ||
+      url.searchParams.get("code") !== code
+    )
+      return;
+    url.pathname = "/admin";
+    url.searchParams.delete("code");
+    url.searchParams.set("tab", "devices");
+    window.history.replaceState(window.history.state, "", url);
+    setPairingCode("");
+  }, []);
   const reload = () => setRevision((value) => value + 1);
   useEffect(() => {
     let active = true;
@@ -104,9 +160,11 @@ export function AdminApp({ api = apiClient }: { api?: StreamerApi }) {
         if (active) setLoading(false);
       });
     window.addEventListener("streamer:household-changed", reload);
+    window.addEventListener("streamer:auth-required", reload);
     return () => {
       active = false;
       window.removeEventListener("streamer:household-changed", reload);
+      window.removeEventListener("streamer:auth-required", reload);
     };
   }, [api, revision]);
 
@@ -119,7 +177,7 @@ export function AdminApp({ api = apiClient }: { api?: StreamerApi }) {
     );
   if (error)
     return (
-      <main className="installation-screen">
+      <main className="installation-screen admin-state">
         <h1>Your household, fully under your control</h1>
         <p role="alert">{error}</p>
         <button className="button button--primary" onClick={reload}>
@@ -131,7 +189,7 @@ export function AdminApp({ api = apiClient }: { api?: StreamerApi }) {
   const recovering = window.location.pathname.startsWith("/admin/recover");
   if (recovering && installation.cloudLinked === false)
     return (
-      <main className="installation-screen">
+      <main className="installation-screen admin-state">
         <h1>Master PIN recovery</h1>
         <p>
           This household has no connected cloud account. Its Master PIN can be
@@ -142,7 +200,7 @@ export function AdminApp({ api = apiClient }: { api?: StreamerApi }) {
     );
   if (recovering && installation.cloudRecoveryAuthorized)
     return (
-      <main className="installation-screen">
+      <main className="installation-screen admin-state">
         <MasterPinSetup
           title="Reset your household Master PIN"
           description="Your cloud account has confirmed household ownership. Choose a new Master PIN for this server. Existing backup files keep their original PIN."
@@ -180,7 +238,7 @@ export function AdminApp({ api = apiClient }: { api?: StreamerApi }) {
     );
   if (!auth)
     return (
-      <main className="installation-screen">
+      <main className="installation-screen admin-state">
         <p>Household status is unavailable.</p>
         <button onClick={reload}>Try again</button>
       </main>
@@ -207,7 +265,7 @@ export function AdminApp({ api = apiClient }: { api?: StreamerApi }) {
     );
   if (importing || auth.householdRestoreRequired)
     return (
-      <main className="installation-screen">
+      <main className="installation-screen admin-state">
         <h1>
           {auth.householdRestoreRequired
             ? "Restore your cloud household"
@@ -255,17 +313,23 @@ export function AdminApp({ api = apiClient }: { api?: StreamerApi }) {
       />
     );
   const first = profiles[0];
-  const code = new URLSearchParams(window.location.search).get("code") ?? "";
   return (
     <div className="admin-shell">
       <header className="admin-header">
         <Brand />
-        <span>Your household, fully under your control</span>
+        <span className="admin-header__context">
+          <span>Household administration</span>
+          <strong>
+            {installation.householdName ??
+              auth.account?.name ??
+              "Your household"}
+          </strong>
+        </span>
         <button
           className="admin-header__report"
           type="button"
           onClick={() => {
-            setSection("support");
+            selectSection("support");
             requestAnimationFrame(() =>
               document
                 .getElementById("settings-support")
@@ -289,36 +353,81 @@ export function AdminApp({ api = apiClient }: { api?: StreamerApi }) {
           </svg>
           Report a bug
         </button>
-        <a href="/">Open player ↗</a>
+        <a className="admin-header__player" href="/">
+          Open player <AdminIcon name="arrow" />
+        </a>
       </header>
       <div className="admin-layout">
         <nav className="admin-nav" aria-label="Household administration">
-          {(
-            [
-              "household",
-              "cloud",
-              "profiles",
-              "devices",
-              "services",
-              "backups",
-              "security",
-              "support",
-            ] as AdminSection[]
-          ).map((item) => (
-            <button
-              key={item}
-              type="button"
-              aria-current={section === item ? "page" : undefined}
-              onClick={() => setSection(item)}
-            >
-              {item[0]!.toUpperCase() + item.slice(1)}
-            </button>
+          {navGroups.map((group) => (
+            <div className="admin-nav__group" key={group.label}>
+              <p>{group.label}</p>
+              {group.items.map((item) => (
+                <button
+                  key={item}
+                  type="button"
+                  aria-current={section === item ? "page" : undefined}
+                  onClick={() => selectSection(item)}
+                >
+                  <AdminIcon name={item} />
+                  <span>{item[0]!.toUpperCase() + item.slice(1)}</span>
+                </button>
+              ))}
+            </div>
           ))}
+          <div className="admin-nav__footer">
+            <AdminStatus
+              tone={installation.householdReady ? "success" : "warning"}
+            >
+              {installation.householdReady
+                ? "Household ready"
+                : "Setup pending"}
+            </AdminStatus>
+            <span>Managed on this server</span>
+          </div>
         </nav>
-        <main className="admin-content">
-          <h1>{section[0]!.toUpperCase() + section.slice(1)}</h1>
+        <main className="admin-content" data-admin-section={section}>
+          <div className="admin-page-heading">
+            <p className="eyebrow">
+              Administration <span aria-hidden="true">/</span> {section}
+            </p>
+            <h1>{section[0]!.toUpperCase() + section.slice(1)}</h1>
+            {sectionCopy[section] && <p>{sectionCopy[section]}</p>}
+          </div>
           {section === "household" && (
             <>
+              <div className="admin-overview" aria-label="Household overview">
+                <div>
+                  <AdminIcon name="profiles" />
+                  <span>
+                    Profiles
+                    <strong>
+                      {profiles.length}
+                      <small> / 5</small>
+                    </strong>
+                  </span>
+                </div>
+                <div>
+                  <AdminIcon name="security" />
+                  <span>
+                    Master PIN
+                    <strong>
+                      {installation.masterPinEnabled
+                        ? "Enabled"
+                        : "Not configured"}
+                    </strong>
+                  </span>
+                </div>
+                <div>
+                  <AdminIcon name="cloud" />
+                  <span>
+                    Cloud management
+                    <strong>
+                      {auth.account?.cloudLinked ? "Connected" : "Local only"}
+                    </strong>
+                  </span>
+                </div>
+              </div>
               <HouseholdName
                 api={api}
                 name={
@@ -330,10 +439,11 @@ export function AdminApp({ api = apiClient }: { api?: StreamerApi }) {
               />
               <AccountSettings api={api} section="account" />
               <HouseholdMerges api={api} onCompleted={reload} />
-              <p className="settings-note">
-                This server stores your household locally. Clients connect here
-                and keep working when cloud services are unavailable.
-              </p>
+              <AdminNote>
+                <strong>Your household lives here.</strong> Profiles, settings
+                and services stay on this server. Paired clients can keep using
+                it when the cloud is unavailable.
+              </AdminNote>
             </>
           )}
           {section === "cloud" && <AccountSettings api={api} section="cloud" />}
@@ -345,7 +455,8 @@ export function AdminApp({ api = apiClient }: { api?: StreamerApi }) {
           )}
           {section === "devices" && (
             <InstallationDevices
-              initialCode={/^\d{6}$/.test(code) ? code : ""}
+              initialCode={/^\d{6}$/.test(pairingCode) ? pairingCode : ""}
+              onPairingResolved={clearPairingLink}
             />
           )}
           {section === "services" &&
@@ -367,7 +478,12 @@ export function AdminApp({ api = apiClient }: { api?: StreamerApi }) {
             ) : (
               <p>Create a profile before connecting services.</p>
             ))}
-          {section === "security" && <AccountSecurity api={api} />}
+          {section === "security" && (
+            <AccountSecurity
+              api={api}
+              masterPinEnabled={installation.masterPinEnabled}
+            />
+          )}
           {section === "backups" && (
             <>
               <div className="profile-page__section">
@@ -434,12 +550,18 @@ function HouseholdName({
             onChange={(event) => setValue(event.target.value)}
           />
         </label>
-        <button
-          className="button button--primary"
-          disabled={pending || !value.trim() || value.trim() === name}
-        >
-          Save household name
-        </button>
+        <div className="deployment-actions">
+          <button
+            className="button button--primary"
+            disabled={pending || !value.trim() || value.trim() === name}
+          >
+            <AdminIcon name="check" />
+            {pending ? "Saving name…" : "Save household name"}
+          </button>
+          <span className="settings-note">
+            Visible to your household and connected cloud account.
+          </span>
+        </div>
         {error && <p role="alert">{error}</p>}
       </form>
     </section>
@@ -473,20 +595,22 @@ function CloudHouseholdSelection({
       .finally(() => setPending(false));
   };
   return (
-    <main className="installation-screen">
+    <main className="installation-screen admin-state admin-household-selection">
       <h1>Choose your household</h1>
       <p>Select the household to restore on this server.</p>
       {!data && !error && <p role="status">Loading households…</p>}
-      {data?.households.map((item) => (
-        <button
-          className="button button--secondary"
-          key={item.id}
-          disabled={pending}
-          onClick={() => choose({ householdId: item.id })}
-        >
-          {item.name}
-        </button>
-      ))}
+      <div className="admin-household-options">
+        {data?.households.map((item) => (
+          <button
+            className="button button--secondary"
+            key={item.id}
+            disabled={pending}
+            onClick={() => choose({ householdId: item.id })}
+          >
+            {item.name}
+          </button>
+        ))}
+      </div>
       {data?.canCreate && (
         <button
           className="button button--primary"
@@ -514,7 +638,7 @@ function LegacyHouseholdPin({
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
   return (
-    <main className="installation-screen">
+    <main className="installation-screen admin-state">
       <h1>Finish household setup</h1>
       <p>
         Enter this household's current Master PIN once to enable automatic
@@ -592,15 +716,31 @@ function AdminProfiles({
   };
   return (
     <section className="profile-page__section">
-      <h2>Household profiles</h2>
+      <div className="admin-card-heading">
+        <h2>Household profiles</h2>
+        <AdminStatus>{profiles.length} of 5 profiles</AdminStatus>
+      </div>
       <p>Every profile and its viewing data belongs to this household.</p>
       {profiles.map((profile) => (
         <article className="admin-profile" key={profile.id}>
-          <div>
-            <strong>{profile.name}</strong>
-            <p className="settings-note">
-              {profile.pinEnabled ? "Profile PIN enabled" : "No profile PIN"}
-            </p>
+          <div className="admin-profile__identity">
+            <span className="admin-avatar" aria-hidden="true">
+              {profile.name.trim().slice(0, 1).toUpperCase()}
+            </span>
+            <div>
+              <strong>{profile.name}</strong>
+              <div className="admin-profile__meta">
+                <AdminStatus tone={profile.pinEnabled ? "success" : "neutral"}>
+                  {profile.pinEnabled
+                    ? "Profile PIN enabled"
+                    : "No profile PIN"}
+                </AdminStatus>
+                <InfoTip label={`Profile access for ${profile.name}`}>
+                  A profile PIN protects this person's viewing space. The
+                  household Master PIN can also unlock it.
+                </InfoTip>
+              </div>
+            </div>
           </div>
           <div className="deployment-actions">
             {profile.pinEnabled && api.resetProfilePin && (
@@ -609,20 +749,22 @@ function AdminProfiles({
                 disabled={pending}
                 onClick={() => setConfirm({ id: profile.id, action: "reset" })}
               >
+                <AdminIcon name="lock" />
                 Reset profile PIN
               </button>
             )}
             <button
-              className="button button--ghost"
+              className="button button--ghost admin-danger-button"
               disabled={pending}
               onClick={() => setConfirm({ id: profile.id, action: "delete" })}
             >
+              <AdminIcon name="trash" />
               Delete profile
             </button>
           </div>
           {confirm?.id === profile.id && (
             <div
-              className="deployment-card"
+              className="deployment-card admin-confirmation"
               role="alertdialog"
               aria-label={
                 confirm.action === "reset"
@@ -637,7 +779,7 @@ function AdminProfiles({
               </p>
               <div className="deployment-actions">
                 <button
-                  className="button button--primary"
+                  className={`button button--primary${confirm.action === "delete" ? " admin-danger-button" : ""}`}
                   disabled={pending}
                   onClick={() =>
                     void run(
@@ -651,7 +793,7 @@ function AdminProfiles({
                     )
                   }
                 >
-                  Confirm
+                  {pending ? "Working…" : "Confirm"}
                 </button>
                 <button
                   className="button button--ghost"
@@ -676,6 +818,12 @@ function AdminBackupSchedule({ api }: { api: StreamerApi }) {
     cloudEnabled: true,
   });
   const [ready, setReady] = useState(false);
+  const [saved, setSaved] = useState<typeof schedule | null>(null);
+  const dirty =
+    saved !== null &&
+    (saved.enabled !== schedule.enabled ||
+      saved.cloudEnabled !== schedule.cloudEnabled ||
+      saved.intervalMinutes !== schedule.intervalMinutes);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const { showToast } = useToasts();
@@ -685,6 +833,7 @@ function AdminBackupSchedule({ api }: { api: StreamerApi }) {
       .getBackupSchedule()
       .then((value) => {
         setSchedule(value);
+        setSaved(value);
         setReady(true);
       })
       .catch((reason) => setError(safeErrorMessage(reason)));
@@ -692,7 +841,25 @@ function AdminBackupSchedule({ api }: { api: StreamerApi }) {
   if (!api.getBackupSchedule) return null;
   return (
     <section className="profile-page__section">
-      <h2>Automatic backup schedule</h2>
+      <div className="admin-card-heading">
+        <h2>
+          Automatic backup schedule{" "}
+          <InfoTip label="About automatic backups">
+            Local and cloud copies use your household's Master PIN. The interval
+            applies to automatic saves; you can also download a copy at any
+            time.
+          </InfoTip>
+        </h2>
+        <AdminStatus
+          tone={!ready ? "neutral" : saved?.enabled ? "success" : "warning"}
+        >
+          {!ready
+            ? "Loading…"
+            : saved?.enabled
+              ? "Scheduled"
+              : "Local backups paused"}
+        </AdminStatus>
+      </div>
       <p>
         Encrypted local backups run on this server. Cloud copies are sent when
         the household has a connected online account.
@@ -704,6 +871,7 @@ function AdminBackupSchedule({ api }: { api: StreamerApi }) {
           if (
             !ready ||
             pending ||
+            !dirty ||
             schedule.intervalMinutes < 15 ||
             schedule.intervalMinutes > 10080
           )
@@ -713,61 +881,87 @@ function AdminBackupSchedule({ api }: { api: StreamerApi }) {
           void api.saveBackupSchedule!(schedule)
             .then((value) => {
               setSchedule(value);
+              setSaved(value);
               showToast("Backup schedule saved.", "success");
             })
             .catch((reason) => setError(safeErrorMessage(reason)))
             .finally(() => setPending(false));
         }}
       >
-        <label>
-          <input
-            type="checkbox"
-            checked={schedule.enabled}
-            disabled={!ready || pending}
-            onChange={(event) =>
-              setSchedule({ ...schedule, enabled: event.target.checked })
+        <fieldset className="admin-subsection">
+          <legend>On this server</legend>
+          <label className="admin-toggle">
+            <input
+              type="checkbox"
+              checked={schedule.enabled}
+              disabled={!ready || pending}
+              onChange={(event) =>
+                setSchedule({ ...schedule, enabled: event.target.checked })
+              }
+            />{" "}
+            <span>
+              <strong>Create automatic local backups</strong>
+              <small>
+                Save encrypted files on this server at the interval below.
+              </small>
+            </span>
+          </label>
+          <label className="field">
+            <span>Backup interval (minutes)</span>
+            <input
+              type="number"
+              aria-label="Backup interval (minutes)"
+              min={15}
+              max={10080}
+              value={schedule.intervalMinutes}
+              disabled={!ready || pending}
+              onChange={(event) =>
+                setSchedule({
+                  ...schedule,
+                  intervalMinutes: Number(event.target.value),
+                })
+              }
+            />
+          </label>
+          <p className="settings-note">
+            Choose between 15 minutes and 7 days (10,080 minutes).
+          </p>
+        </fieldset>
+        <fieldset className="admin-subsection">
+          <legend>In the cloud</legend>
+          <label className="admin-toggle">
+            <input
+              type="checkbox"
+              checked={schedule.cloudEnabled}
+              disabled={!ready || pending}
+              onChange={(event) =>
+                setSchedule({ ...schedule, cloudEnabled: event.target.checked })
+              }
+            />{" "}
+            <span>
+              <strong>Keep an automatic cloud copy when connected</strong>
+              <small>
+                Requires a connected cloud account and internet access.
+              </small>
+            </span>
+          </label>
+        </fieldset>
+        <div className="deployment-actions">
+          <button
+            className="button button--primary"
+            disabled={
+              !ready ||
+              pending ||
+              !dirty ||
+              schedule.intervalMinutes < 15 ||
+              schedule.intervalMinutes > 10080
             }
-          />{" "}
-          Create automatic local backups
-        </label>
-        <label className="field">
-          <span>Backup interval (minutes)</span>
-          <input
-            type="number"
-            min={15}
-            max={10080}
-            value={schedule.intervalMinutes}
-            disabled={!ready || pending}
-            onChange={(event) =>
-              setSchedule({
-                ...schedule,
-                intervalMinutes: Number(event.target.value),
-              })
-            }
-          />
-        </label>
-        <label>
-          <input
-            type="checkbox"
-            checked={schedule.cloudEnabled}
-            disabled={!ready || pending}
-            onChange={(event) =>
-              setSchedule({ ...schedule, cloudEnabled: event.target.checked })
-            }
-          />{" "}
-          Keep an automatic cloud copy when connected
-        </label>
-        <button
-          className="button button--primary"
-          disabled={
-            !ready ||
-            pending ||
-            schedule.intervalMinutes < 15 ||
-            schedule.intervalMinutes > 10080
-          }
-        >
-          Save backup schedule
-        </button>
+          >
+            <AdminIcon name="check" />
+            {pending ? "Saving schedule…" : "Save backup schedule"}
+          </button>
+          {dirty && <AdminStatus tone="warning">Unsaved changes</AdminStatus>}
+        </div>
       </form>
       {error && <p role="alert">{error}</p>}
     </section>
@@ -815,7 +1009,12 @@ function AdminPinResetRequests({ api }: { api: StreamerApi }) {
   };
   return (
     <section className="profile-page__section">
-      <h2>Profile access requests</h2>
+      <div className="admin-card-heading">
+        <h2>Profile access requests</h2>
+        <AdminStatus tone="warning">
+          {requests.length} awaiting approval
+        </AdminStatus>
+      </div>
       <p>Approve only requests from someone in your household.</p>
       {requests.map((item) => (
         <div className="deployment-card" key={item.id}>

@@ -332,6 +332,14 @@ export function App({ api = apiClient, forceOnboarding = false }: AppProps) {
               void loadProfiles();
             }}
             onSelect={selectProfile}
+            onCreate={async (name) => {
+              const created = await api.createProfile({
+                name,
+                locale: profiles[0]?.locale ?? "en",
+              });
+              setProfiles((current) => [...current, created]);
+              setRerunProfile(created);
+            }}
             accountName={
               auth?.enabled ? (auth.account?.email ?? undefined) : undefined
             }
