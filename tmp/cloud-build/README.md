@@ -1,1 +1,0 @@
-This folder contains the built output assets for the worker "streamer-ai" generated at 2026-11-02T20:43:21.725Z.

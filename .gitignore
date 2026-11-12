@@ -12,6 +12,7 @@ test-results/
 !.env.example
 .secrets/
 .flight/
+tmp/
 
 data/
 *.db
