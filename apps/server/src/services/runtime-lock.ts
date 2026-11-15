@@ -10,6 +10,24 @@ import {
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
+// Nonces of locks held by this process. In containers the server is usually
+// PID 1 on every start, so a lock left by a killed container carries our own
+// PID; it is only live if this process actually wrote it.
+const heldNonces = new Set<string>();
+
+function isOwnerAlive(owner: { pid?: unknown; nonce?: unknown }): boolean {
+  const pid = Number(owner.pid);
+  if (pid === process.pid)
+    return typeof owner.nonce === "string" && heldNonces.has(owner.nonce);
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (failure) {
+    if ((failure as NodeJS.ErrnoException).code === "ESRCH") return false;
+    throw failure;
+  }
+}
+
 export function acquireServerRuntimeLock(dataDirectory: string): {
   release(): void;
 } {
@@ -35,12 +53,8 @@ export function acquireServerRuntimeLock(dataDirectory: string): {
     }
     if (!Number.isSafeInteger(owner.pid) || Number(owner.pid) < 1)
       throw new Error("Invalid server runtime lock; inspect it locally.");
-    try {
-      process.kill(Number(owner.pid), 0);
+    if (isOwnerAlive(owner))
       throw new Error("The server data directory is already in use.");
-    } catch (failure) {
-      if ((failure as NodeJS.ErrnoException).code !== "ESRCH") throw failure;
-    }
     // Check the entire observed record before unlinking a stale owner.
     const current = JSON.parse(readFileSync(filename, "utf8")) as typeof owner;
     if (current.pid !== owner.pid || current.nonce !== owner.nonce)
@@ -53,6 +67,7 @@ export function acquireServerRuntimeLock(dataDirectory: string): {
   } finally {
     closeSync(descriptor);
   }
+  heldNonces.add(nonce);
   const release = () => {
     try {
       const owner = JSON.parse(readFileSync(filename, "utf8")) as {
@@ -61,6 +76,8 @@ export function acquireServerRuntimeLock(dataDirectory: string): {
       if (owner.nonce === nonce) unlinkSync(filename);
     } catch (cause) {
       if ((cause as NodeJS.ErrnoException).code !== "ENOENT") throw cause;
+    } finally {
+      heldNonces.delete(nonce);
     }
   };
   if (maintenance()) {
