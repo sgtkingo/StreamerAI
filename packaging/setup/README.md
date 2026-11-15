@@ -77,6 +77,13 @@ successful flow waits for the user to choose **Open StreamerAI**.
    availability before reporting success. A failed/cancelled AI step leaves the
    installed server usable and can be retried from **Configure local AI** in the
    Start menu (`setup.exe --configure-ai`).
+7. After the server step, the normal user process registers the per-user
+   `streamerai-agent:` link (`HKCU\Software\Classes\streamerai-agent`) for
+   the bundled agent connector. StreamerAI Settings uses it to install the MCP
+   server into Claude Code, Codex, Claude Desktop or Cursor in this person's
+   account, which the `LocalService` server cannot see. Registration is
+   optional and never elevated; `--configure-ai` repeats it. See
+   [docs/AGENT_INTEGRATION.md](../../docs/AGENT_INTEGRATION.md#installed-server-the-agent-connector).
 
 Binary download redirects are restricted to official GitHub asset hosts. Reads,
 sizes and time are bounded. Skip AI cancels network/model transfer; it is

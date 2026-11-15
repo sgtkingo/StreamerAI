@@ -42,6 +42,16 @@ import { discoverOllamaModels } from "./integrations/ollama-model-catalog.js";
 import { discoveryTierForAgent } from "./integrations/agent-model-catalog.js";
 import { AgentRouter } from "./integrations/agent-router.js";
 import { StreamerToolService } from "./mcp/streamer-tools.js";
+import {
+  McpAccessTokens,
+  McpHostInstaller,
+  resolveMcpBridge,
+  resolveMcpScript,
+  type McpBridgeCommand,
+  type McpHostEnvironment,
+} from "./mcp/mcp-host-installer.js";
+import { registerMcpHostRoutes } from "./routes/mcp-hosts.js";
+import { McpConnectorTickets } from "./mcp/mcp-connector.js";
 import { LocalAgentHost } from "./integrations/local-agent-host.js";
 import { CustomLocalAgent } from "./integrations/custom-local-agent.js";
 import { RemoteApiAgent } from "./integrations/remote-api-agent.js";
@@ -115,6 +125,12 @@ import { registerServerAiSetupRoutes } from "./routes/ollama-setup.js";
 import { ServerAiSetupService } from "./services/ollama-setup.js";
 
 export interface CreateAppOptions {
+  /** Test seam: the stdio bridge command written into agent host configs. */
+  mcpBridge?: McpBridgeCommand;
+  /** Test seam: the user-side agent connector command. */
+  mcpConnector?: McpBridgeCommand | null;
+  /** Test seam: where agent host configurations are looked up. */
+  mcpHostEnvironment?: () => McpHostEnvironment;
   accountServiceUrl?: string | null;
   accountFetch?: typeof fetch;
   environment?: string;
@@ -608,6 +624,7 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
         },
       )
     : undefined;
+  const mcpAccessTokens = new McpAccessTokens(stores.secretStore);
   const accountAuth: AccountAuthService = new AccountAuthService({
     database,
     secretStore: stores.secretStore,
@@ -616,6 +633,7 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
     fetch: options.accountFetch,
     now,
     internalToken: internalAccountToken,
+    mcpAccess: mcpAccessTokens,
     tickets: playbackTicketStore,
     sync: accountSync,
     localAccess,
@@ -625,6 +643,24 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
     app,
     capturesLogs ? () => diagnosticLogs.snapshot() : undefined,
   );
+  const mcpConnector = () =>
+    options.mcpConnector !== undefined
+      ? options.mcpConnector
+      : resolveMcpScript("connect");
+  registerMcpHostRoutes(app, {
+    installer: new McpHostInstaller({
+      tokens: mcpAccessTokens,
+      baseUrl: `http://127.0.0.1:${runtimeConfig.server.port}`,
+      bridge: () => options.mcpBridge ?? resolveMcpBridge(),
+      connector: mcpConnector,
+      environment: options.mcpHostEnvironment,
+    }),
+    canManage: (request) =>
+      !localAccess.enabled || localAccess.isOwner(request),
+    tokens: mcpAccessTokens,
+    tickets: new McpConnectorTickets(mcpAccessTokens),
+    connector: mcpConnector,
+  });
   registerServerAiSetupRoutes(app, {
     service: new ServerAiSetupService({
       dataDirectory: runtimeConfig.server.dataDir,

@@ -240,17 +240,104 @@ cannot be executed by this launcher without a shell.
 
 ## MCP server
 
-Build the server, start the StreamerAI API, then configure an external host to
-launch `node <project>/apps/server/dist/mcp/stdio.js` as an MCP stdio server.
 The five tools are `search_media`, `inspect_media`, `get_subtitles`,
-`start_playback`, and `stop_playback`. The bridge defaults to
-`http://127.0.0.1:4400`. For the Docker web proxy, set
-`STREAMERAI_MCP_BASE_URL=http://127.0.0.1:8080` in the MCP bridge process.
-The bridge accepts only loopback backend addresses.
-`STREAMERAI_MCP_PROFILE_ID` binds an external bridge to one viewer profile
-(`default` unless set). A tool call cannot select another profile through its
-`profileId` argument. Subtitle and stop tools accept only playback grants
-created by that bridge process.
+`start_playback`, and `stop_playback`. External hosts run
+`apps/server/dist/mcp/stdio.js` (in a distribution: `app/dist/mcp/stdio.js`
+with the bundled Node runtime) as a stdio MCP server.
+
+### One-click connect
+
+Settings → AI agent → External Agent → **MCP** scans the server computer for
+supported hosts and lists them with their state (Found, Connected, Needs update,
+Another profile, Not found). **Activate** installs StreamerAI into every found
+host that is not yet connected and switches the profile to MCP mode; each host
+can also be installed, updated or removed individually. The guide's MCP path
+does the same when applied.
+
+| Host | Configuration written | Entry |
+| --- | --- | --- |
+| Claude Code | `~/.claude.json` (`$CLAUDE_CONFIG_DIR` respected), user scope | `mcpServers.streamer-ai` with `type: "stdio"` |
+| Codex (CLI, IDE extension and app; ChatGPT sign-in) | `~/.codex/config.toml` (`$CODEX_HOME` respected) | `[mcp_servers.streamer-ai]` + `.env` table |
+| Claude Desktop | `claude_desktop_config.json` in the platform app-data folder | `mcpServers.streamer-ai` |
+| Cursor | `~/.cursor/mcp.json` | `mcpServers.streamer-ai` |
+
+ChatGPT itself (web/desktop chat) accepts only remote HTTPS connectors, not
+local stdio servers, so the ChatGPT path is Codex.
+
+Installation edits only the `streamer-ai` entry, keeps every other setting,
+writes atomically and leaves the previous file as `<file>.streamerai.bak`. An
+invalid JSON file is never overwritten. Removal deletes the entry only when it
+belongs to the current profile.
+
+Hosts load the new server only after a restart or a new session; StreamerAI
+cannot reload them. The bridge therefore announces itself on MCP `initialize`
+(`POST /api/v1/profiles/:id/mcp/bridge` with its token), and the server
+records when each credential was issued and last loaded. The panel shows a
+connected host as **Restart needed** with the host's restart hint until its
+bridge has started, then as **Active**, and refreshes itself while it waits.
+
+The entry runs the server's own Node executable with the absolute bridge path
+and sets:
+
+- `STREAMERAI_MCP_BASE_URL` – the server's loopback port (`http://127.0.0.1:<port>`);
+- `STREAMERAI_MCP_PROFILE_ID` – the profile the bridge is bound to;
+- `STREAMERAI_MCP_TOKEN` – a per-profile, per-host credential.
+
+Only the owner may connect hosts: in paired mode the request must come from the
+household owner's session, and the profile must be unlocked. Other paired
+devices see the MCP state but cannot change host files.
+
+A server started under the signed-in user (development, `pnpm start`) detects
+and edits the hosts directly. **Manual setup** remains available for other MCP
+hosts: copyable `claude mcp add …` and `codex mcp add …` commands and a JSON
+snippet with a dedicated manual credential.
+
+### Installed server: the agent connector
+
+The Windows installer runs the server as `LocalService` (Linux: the
+`streamerai` system user). That account cannot see or edit the agent hosts in
+the person's own account, so the installed server uses a short-lived helper,
+`app/dist/mcp/connect.js`, started as that person:
+
+1. **Activate** (or **Connect agents on this computer**) asks the server for a
+   one-time ticket (`POST /api/v1/profiles/:id/mcp/connector`, owner only, valid
+   10 minutes) and opens
+   `streamerai-agent://connect?server=http://127.0.0.1:<port>&ticket=…`.
+2. Windows setup registers that link for the installing user under
+   `HKCU\Software\Classes\streamerai-agent`, running the release's bundled
+   `runtime\node.exe app\dist\mcp\connect.js "%1"`. The browser asks once
+   before opening it. Registration happens in setup's normal user process, never
+   with administrator rights; **Configure local AI** re-registers it.
+3. The connector accepts only a loopback `http` server, finds the hosts in its
+   own account, validates their files, then redeems the ticket
+   (`POST /api/v1/mcp/connector/redeem`, loopback without `Origin`, once) for
+   one credential per writable host. It writes the entries exactly like direct
+   setup (atomic, `.streamerai.bak`, invalid JSON refused) and reports the
+   outcome (`POST /api/v1/mcp/connector/report`). Credentials for hosts it did
+   not write are revoked. Its console window shows the result for 10 seconds.
+4. The panel polls the ticket, lists what was connected or failed and then
+   follows each host to **Active**.
+
+If no connector window appears within 12 seconds (no registration: Linux, a
+setup from before this feature, a blocked link), the panel shows the same
+connector as a copyable command to run in the person's terminal on the server
+computer. As a service the server sees connections only through their
+credentials: the list shows connected hosts, and **Disconnect** revokes the
+credential (the stale entry then answers "Reconnect StreamerAI…" until it is
+removed or reconnected).
+
+### Bridge authentication
+
+The bridge sends `x-streamer-mcp-token`. The server stores only the token's
+SHA-256 digest in the secret store and accepts it only from loopback, without an
+`Origin` header, and only on the five tool routes (discovery session, title
+detail, playback start, grant manifest, grant revoke). Every request is pinned
+to the token's profile: another `profileId` or another profile's grant is
+rejected. The announce route is the only other route the token may call.
+Reinstalling rotates the token; removing a host revokes it, and the
+next tool call answers "Reconnect StreamerAI…". The bridge accepts only loopback
+backend addresses. Subtitle and stop tools accept only playback grants created
+by that bridge process.
 
 `start_playback` creates a time-limited grant on the running StreamerAI server;
 the user opens the title in the StreamerAI player. `stop_playback` revokes that

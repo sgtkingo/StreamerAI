@@ -3259,6 +3259,168 @@ textarea:not(:disabled):hover {
   border-radius: 7px;
   background: #202329;
 }
+.mcp-hosts {
+  display: grid;
+  gap: 10px;
+}
+.mcp-hosts p {
+  margin: 0;
+}
+.mcp-hosts__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+.mcp-hosts__head .button {
+  flex: none;
+  padding: 5px 10px;
+  font-size: 11px;
+}
+.mcp-hosts__list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.mcp-hosts__list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px 10px;
+  padding: 9px 10px;
+  border: 1px solid #3b4144;
+  border-radius: 8px;
+  background: #1c1f24;
+}
+.mcp-hosts__list li.is-installed {
+  border-color: rgba(96, 185, 135, 0.55);
+}
+.mcp-hosts__list li > small {
+  grid-column: 1 / -1;
+  color: #9ea5ae;
+}
+.mcp-hosts__name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  min-width: 0;
+}
+.mcp-hosts__name strong {
+  color: #e4e9f4;
+  font-size: 12px;
+}
+.mcp-hosts__state {
+  color: #aeb4bc;
+}
+.is-installed .mcp-hosts__state {
+  color: #8fdbb6;
+}
+.is-outdated .mcp-hosts__state,
+.is-other-profile .mcp-hosts__state {
+  color: #e8c37a;
+}
+.mcp-hosts__actions {
+  display: flex;
+  gap: 6px;
+}
+.mcp-hosts__actions .button,
+.mcp-hosts__all,
+.mcp-hosts__manual .button {
+  padding: 5px 10px;
+  font-size: 11px;
+}
+.mcp-hosts__all {
+  justify-self: start;
+}
+.mcp-hosts__notice {
+  padding: 8px 10px;
+  border-radius: 7px;
+  background: #23262c;
+  color: #cbd4df;
+}
+.is-installed.is-restart .mcp-hosts__state {
+  color: #e8c37a;
+}
+.mcp-hosts__list li.is-restart {
+  border-color: rgba(232, 195, 122, 0.5);
+}
+.mcp-hosts__connector {
+  display: grid;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 7px;
+  background: #23262c;
+  color: #cbd4df;
+}
+.mcp-hosts__connector a {
+  color: #9cc7ff;
+}
+.mcp-hosts__results {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.mcp-hosts__results .is-ok {
+  color: #8fdbb6;
+}
+.mcp-hosts__results .is-failed {
+  color: #f0a3a3;
+}
+.mcp-hosts__missing {
+  color: #8d939c;
+}
+.mcp-hosts .mcp-hosts__failure {
+  color: #f0a3a3;
+}
+.mcp-hosts__manual {
+  display: grid;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #3b4144;
+}
+.mcp-hosts__manual[open] {
+  gap: 8px;
+}
+.mcp-hosts__manual summary {
+  cursor: pointer;
+  color: #cbd4df;
+}
+.mcp-hosts__manual > * + * {
+  margin-top: 8px;
+}
+.mcp-hosts__copy {
+  display: grid;
+  gap: 4px;
+}
+.mcp-hosts__copy-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.mcp-hosts__copy code {
+  display: block;
+  max-height: 140px;
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid #424750;
+  border-radius: 7px;
+  background: #202329;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+@media (max-width: 420px) {
+  .mcp-hosts__head,
+  .mcp-hosts__list li {
+    grid-template-columns: 1fr;
+    flex-direction: column;
+  }
+}
 .agent-backend__shared {
   display: grid;
   gap: 12px;

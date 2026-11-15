@@ -9,6 +9,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { StreamerApi } from "../api/client";
 import { AgentBackendSettings } from "./AgentBackendSettings";
+import { mcpConnectorLauncher } from "./McpHostSetup";
 import { ToastProvider } from "./ToastProvider";
 
 function createApi(mode: "api" | "mcp" | "disabled" = "api") {
@@ -88,6 +89,23 @@ function createApi(mode: "api" | "mcp" | "disabled" = "api") {
     getAgentApiKeyStatus: vi.fn().mockResolvedValue({ configured: false }),
     saveAgentApiKey: vi.fn().mockResolvedValue({ configured: true }),
     deleteAgentApiKey: vi.fn().mockResolvedValue({ configured: false }),
+    getMcpHosts: vi.fn().mockResolvedValue({
+      canManage: true,
+      bridge: { available: true },
+      serviceAccount: false,
+      hosts: [],
+    }),
+    connectMcpHosts: vi.fn().mockResolvedValue({
+      canManage: true,
+      bridge: { available: true },
+      serviceAccount: false,
+      hosts: [],
+      failures: [],
+    }),
+    removeMcpHost: vi.fn(),
+    createMcpManualSetup: vi.fn(),
+    startMcpConnector: vi.fn(),
+    getMcpConnector: vi.fn(),
     setAgentSelection: vi.fn().mockImplementation(async (input) => ({
       ...input,
       available: input.mode !== "mcp",
@@ -485,6 +503,182 @@ describe("AgentBackendSettings", () => {
       screen.getByText(/The external MCP host chooses/),
     ).toBeInTheDocument();
   });
+
+  it("finds agent hosts, installs StreamerAI MCP and activates MCP in one click", async () => {
+    const api = createApi();
+    const host = (id: string, name: string, state: string) => ({
+      id,
+      name,
+      state,
+      configPath: `/home/${id}`,
+      restartHint: `Restart ${name}.`,
+    });
+    vi.mocked(api.getMcpHosts).mockResolvedValue({
+      canManage: true,
+      bridge: { available: true },
+      serviceAccount: false,
+      hosts: [
+        host("claude-code", "Claude Code", "available"),
+        host("codex", "Codex (ChatGPT)", "outdated"),
+        host("claude-desktop", "Claude Desktop", "other-profile"),
+        host("cursor", "Cursor", "not-detected"),
+      ],
+    } as never);
+    vi.mocked(api.connectMcpHosts).mockResolvedValue({
+      canManage: true,
+      bridge: { available: true },
+      serviceAccount: false,
+      failures: [],
+      hosts: [
+        host("claude-code", "Claude Code", "installed"),
+        host("codex", "Codex (ChatGPT)", "installed"),
+        host("claude-desktop", "Claude Desktop", "other-profile"),
+        host("cursor", "Cursor", "not-detected"),
+      ],
+    } as never);
+    const user = userEvent.setup();
+    render(<AgentBackendSettings api={api} profileId="viewer-2" />);
+    await user.click(await screen.findByRole("radio", { name: "MCP" }));
+    const list = await screen.findByRole("list", {
+      name: "Agents on this server",
+    });
+    expect(within(list).getByText("Claude Code")).toBeInTheDocument();
+    expect(
+      within(list).getByRole("button", { name: "Update Codex (ChatGPT)" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Also supported: Cursor/)).toBeInTheDocument();
+    const external = screen
+      .getByRole("heading", { name: "External Agent" })
+      .closest("article")!;
+    await user.click(
+      within(external).getByRole("button", { name: "Activate" }),
+    );
+    await waitFor(() =>
+      expect(api.setAgentSelection).toHaveBeenCalledWith(
+        expect.objectContaining({ profileId: "viewer-2", mode: "mcp" }),
+      ),
+    );
+    expect(api.connectMcpHosts).toHaveBeenCalledWith("viewer-2", [
+      "claude-code",
+      "codex",
+    ]);
+    expect(
+      await within(list).findAllByRole("button", { name: /^Remove from/ }),
+    ).toHaveLength(2);
+  });
+
+  it("starts the user-side connector when the server runs as a service and asks for an agent restart", async () => {
+    const api = createApi();
+    const host = (
+      id: string,
+      name: string,
+      state: string,
+      connection?: { issuedAt: string; seenAt?: string },
+    ) => ({
+      id,
+      name,
+      state,
+      configPath: `~/${id}`,
+      restartHint: `Restart ${name}.`,
+      ...(connection ? { connection } : {}),
+    });
+    const service = (hosts: ReturnType<typeof host>[]) => ({
+      canManage: true,
+      bridge: { available: true },
+      serviceAccount: true,
+      connector: { available: true },
+      hosts,
+    });
+    vi.mocked(api.getMcpHosts).mockResolvedValue(
+      service([
+        host("claude-code", "Claude Code", "not-detected"),
+        host("codex", "Codex (ChatGPT)", "not-detected"),
+      ]) as never,
+    );
+    const url = "streamerai-agent://connect?server=x&ticket=t";
+    vi.mocked(api.startMcpConnector).mockResolvedValue({
+      ticket: "t",
+      url,
+      command: `& "node.exe" "connect.js" "${url}"`,
+      expiresAt: "2026-11-15T12:00:00.000Z",
+    });
+    vi.mocked(api.getMcpConnector)
+      .mockResolvedValueOnce({
+        state: "waiting",
+        expiresAt: "",
+        detected: [],
+        results: [],
+      })
+      .mockResolvedValue({
+        state: "done",
+        expiresAt: "",
+        detected: ["claude-code", "codex"],
+        results: [
+          { id: "claude-code", ok: true },
+          { id: "codex", ok: false, message: "config.toml is read-only" },
+        ],
+      });
+    // The browser blocked the link: the command is offered immediately.
+    const open = vi
+      .spyOn(mcpConnectorLauncher, "open")
+      .mockImplementation(() => {
+        throw new Error("blocked");
+      });
+    const user = userEvent.setup();
+    render(<AgentBackendSettings api={api} profileId="viewer-2" />);
+    await user.click(await screen.findByRole("radio", { name: "MCP" }));
+    expect(
+      await screen.findByRole("button", {
+        name: "Connect agents on this computer",
+      }),
+    ).toBeInTheDocument();
+    vi.mocked(api.getMcpHosts).mockResolvedValue(
+      service([
+        host("claude-code", "Claude Code", "installed", {
+          issuedAt: "2026-11-15T11:50:00.000Z",
+        }),
+        host("codex", "Codex (ChatGPT)", "not-detected"),
+      ]) as never,
+    );
+    const external = screen
+      .getByRole("heading", { name: "External Agent" })
+      .closest("article")!;
+    await user.click(
+      within(external).getByRole("button", { name: "Activate" }),
+    );
+    await waitFor(() =>
+      expect(api.setAgentSelection).toHaveBeenCalledWith(
+        expect.objectContaining({ profileId: "viewer-2", mode: "mcp" }),
+      ),
+    );
+    expect(api.connectMcpHosts).not.toHaveBeenCalled();
+    expect(api.startMcpConnector).toHaveBeenCalledWith("viewer-2");
+    expect(open).toHaveBeenCalledWith(url);
+    expect(
+      screen.getByText(/StreamerAI Agent Connector/, { selector: "strong" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Nothing opened\?/)).toBeInTheDocument();
+    expect(
+      screen.getByText(`& "node.exe" "connect.js" "${url}"`),
+    ).toBeInTheDocument();
+
+    expect(
+      await screen.findByText(/✓ Claude Code connected/, undefined, {
+        timeout: 5000,
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Codex \(ChatGPT\): config\.toml is read-only/),
+    ).toBeInTheDocument();
+    const list = await screen.findByRole("list", {
+      name: "Agents on this server",
+    });
+    expect(within(list).getByText("Restart needed")).toBeInTheDocument();
+    expect(
+      within(list).getByRole("button", { name: "Remove from Claude Code" }),
+    ).toHaveTextContent("Disconnect");
+    open.mockRestore();
+  }, 15_000);
 
   it("checks a local agent automatically in the dialog and applies it", async () => {
     const api = createApi("disabled");

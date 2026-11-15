@@ -12,14 +12,26 @@ type Message = {
     protocolVersion?: string;
   };
 };
+const accessToken = process.env.STREAMERAI_MCP_TOKEN?.trim() || undefined;
+if (!accessToken)
+  process.stderr.write(
+    "StreamerAI MCP: STREAMERAI_MCP_TOKEN is not set. Connect this host from StreamerAI Settings → AI agent → External Agent → MCP.\n",
+  );
 const service = new StreamerToolService(
   process.env.STREAMERAI_MCP_BASE_URL || "http://127.0.0.1:4400",
   fetch,
   process.env.STREAMERAI_MCP_PROFILE_ID || "default",
+  undefined,
+  accessToken,
 );
 const active = new Map<string | number, AbortController>();
 const input = createInterface({ input: process.stdin, crlfDelay: Infinity });
-const supportedVersions = new Set(["2024-11-05", "2025-03-26", "2025-06-18"]);
+const supportedVersions = new Set([
+  "2024-11-05",
+  "2025-03-26",
+  "2025-06-18",
+  "2025-11-25",
+]);
 let initialized = false;
 const send = (value: unknown) =>
   process.stdout.write(`${JSON.stringify(value)}\n`);
@@ -48,6 +60,14 @@ input.on("line", (line) => {
   if (message.id === undefined) return;
   const id = message.id;
   if (message.method === "initialize") {
+    if (!initialized)
+      void service
+        .announce()
+        .catch((cause: unknown) =>
+          process.stderr.write(
+            `StreamerAI MCP: ${cause instanceof Error ? cause.message : "StreamerAI is not reachable."}\n`,
+          ),
+        );
     initialized = true;
     result(id, {
       protocolVersion: supportedVersions.has(

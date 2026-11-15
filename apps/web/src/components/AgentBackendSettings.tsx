@@ -13,6 +13,12 @@ import type {
 } from "../api/client";
 import { safeErrorMessage } from "../api/client";
 import { InfoTip } from "./InfoTip";
+import {
+  canStartMcpConnector,
+  installableMcpHosts,
+  McpHostSetup,
+  useMcpHosts,
+} from "./McpHostSetup";
 import { useToasts } from "./ToastProvider";
 
 type LocalProvider = "ollama" | "custom";
@@ -532,6 +538,41 @@ export function AgentBackendSettings({
   useEffect(() => {
     if (!guideOpen) guideScanRunRef.current += 1;
   }, [guideOpen]);
+
+  const mcpHosts = useMcpHosts(api, profileId, loaded && transport === "mcp");
+  /**
+   * One-click MCP: find agents on the server computer and install StreamerAI.
+   * A service-account server starts the user-side connector instead.
+   */
+  const connectDetectedMcpHosts = async (): Promise<string[] | "connector"> => {
+    const overview = mcpHosts.overview ?? (await mcpHosts.scan());
+    if (canStartMcpConnector(overview)) {
+      if (overview!.hosts.some((host) => host.state === "installed")) return [];
+      return (await mcpHosts.startConnector()) ? "connector" : [];
+    }
+    const targets = installableMcpHosts(overview);
+    if (!targets.length) return [];
+    const result = await mcpHosts.install(targets.map((host) => host.id));
+    return (result?.hosts ?? [])
+      .filter(
+        (host) =>
+          host.state === "installed" &&
+          targets.some((target) => target.id === host.id),
+      )
+      .map((host) => host.name);
+  };
+  const announceMcpHosts = (names: string[] | "connector") => {
+    if (names === "connector")
+      showToast(
+        "Allow your browser to open StreamerAI Agent Connector to connect the agents in your account.",
+        "info",
+      );
+    else if (names.length)
+      showToast(
+        `StreamerAI MCP installed in ${names.join(", ")}. Restart ${names.length > 1 ? "them" : "it"} to load the tools.`,
+        "success",
+      );
+  };
 
   const discover = async () => {
     setDiscovering(true);
@@ -1112,20 +1153,28 @@ export function AgentBackendSettings({
         })
       )
         setGuideOpen(false);
-    } else if (
-      await apply(
-        {
-          side: "external",
-          local: localProvider,
-          remote: guideApiProvider,
-          transport: guideTransport,
-          effort: guideTransport === "mcp" ? "low" : requestedEffort,
-        },
-        guideApiKey,
-        requireGuideKey,
-      )
-    )
-      setGuideOpen(false);
+    } else {
+      const installed =
+        guideTransport === "mcp"
+          ? await connectDetectedMcpHosts()
+          : ([] as string[]);
+      if (
+        await apply(
+          {
+            side: "external",
+            local: localProvider,
+            remote: guideApiProvider,
+            transport: guideTransport,
+            effort: guideTransport === "mcp" ? "low" : requestedEffort,
+          },
+          guideApiKey,
+          requireGuideKey,
+        )
+      ) {
+        setGuideOpen(false);
+        announceMcpHosts(installed);
+      }
+    }
   };
 
   const localSettingsContent = (inGuide: boolean) => {
@@ -1672,16 +1721,25 @@ export function AgentBackendSettings({
               disabled={busy || !loaded}
               onClick={(event) => {
                 event.stopPropagation();
-                void apply({
-                  side: "external",
-                  local: localProvider,
-                  remote: remoteProvider,
-                  transport,
-                  effort: selectedEffort,
-                  ...(transport === "api" && externalModel
-                    ? { model: externalModel }
-                    : {}),
-                });
+                void (async () => {
+                  const installed =
+                    transport === "mcp"
+                      ? await connectDetectedMcpHosts()
+                      : ([] as string[]);
+                  if (
+                    await apply({
+                      side: "external",
+                      local: localProvider,
+                      remote: remoteProvider,
+                      transport,
+                      effort: selectedEffort,
+                      ...(transport === "api" && externalModel
+                        ? { model: externalModel }
+                        : {}),
+                    })
+                  )
+                    announceMcpHosts(installed);
+                })();
               }}
             >
               <Mark active={draftExternalActive} />
@@ -1837,29 +1895,11 @@ export function AgentBackendSettings({
               )}
             </div>
           ) : (
-            <div
-              className="agent-backend__mcp-info"
-              onClick={(event) => event.stopPropagation()}
-            >
-              <p>
-                Run the StreamerAI server, then add this stdio MCP command to
-                Codex, Claude Code, Cursor or another host:
-              </p>
-              <code>
-                node &lt;StreamerAI
-                installation&gt;/apps/server/dist/mcp/stdio.js
-              </code>
-              <p>
-                Set <code>STREAMERAI_MCP_PROFILE_ID={profileId}</code>. The
-                bridge uses <code>http://127.0.0.1:4400</code>; in Docker
-                Compose set{" "}
-                <code>STREAMERAI_MCP_BASE_URL=http://127.0.0.1:8080</code>.
-              </p>
-              <p>
-                Tools: search_media, inspect_media, get_subtitles,
-                start_playback, stop_playback.
-              </p>
-            </div>
+            <McpHostSetup
+              api={api}
+              profileId={profileId}
+              controller={mcpHosts}
+            />
           )}
         </article>
       </div>
@@ -2374,9 +2414,10 @@ export function AgentBackendSettings({
                     ) : (
                       <div className="agent-backend__guide-help">
                         <p>
-                          Your external host runs the agent. After applying, add
-                          StreamerAI’s MCP bridge to Codex, Claude Code, Cursor,
-                          or another MCP host. No API key is needed here.
+                          Your own agent runs the model. When you apply,
+                          StreamerAI finds Claude Code, Codex, Claude Desktop or
+                          Cursor on the server computer and installs its MCP
+                          server into them. No API key is needed here.
                         </p>
                       </div>
                     )}
@@ -2465,7 +2506,7 @@ export function AgentBackendSettings({
                               ? guideAllowedLevels.length > 1
                                 ? "Choose from the thinking levels supported by this local model."
                                 : "This local model does not offer a thinking setting."
-                              : "Your external host chooses its model and thinking level. Connect it using the MCP instructions in External Agent."}
+                              : "StreamerAI installs its MCP server into the agents it finds on the server computer. Your agent chooses its own model and thinking level."}
                           </p>
                           {guideSide === "local" &&
                             guideAllowedLevels.length > 1 && (

@@ -22,6 +22,7 @@ using System.Threading.Tasks;
 using System.Web.Script.Serialization;
 using System.Windows.Forms;
 using System.Xml;
+using Microsoft.Win32;
 
 internal sealed class SetupConfiguration {
     public string version { get; set; }
@@ -100,6 +101,25 @@ internal static class Program {
             if (args.Contains("--self-test") || args.Contains("--check-managed-state")) Console.Error.WriteLine(exception.GetType().Name + ": " + exception.Message);
             else MessageBox.Show("Setup could not continue. " + exception.Message, "StreamerAI Setup", MessageBoxButtons.OK, MessageBoxIcon.Error);
             return 1;
+        }
+    }
+
+    /// <summary>
+    /// Registers the per-user streamerai-agent: link. The server service cannot
+    /// see the signed-in person's agent hosts (Claude Code, Codex…); this link
+    /// lets StreamerAI Settings start the installed connector as that person.
+    /// It runs in the normal user process, never with administrator rights.
+    /// </summary>
+    internal static void RegisterAgentConnector() {
+        string release = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "StreamerAI", "releases", Configuration.version);
+        string node = Path.Combine(release, "runtime", "node.exe");
+        string connector = Path.Combine(release, "app", "dist", "mcp", "connect.js");
+        if (!File.Exists(node) || !File.Exists(connector)) return;
+        using (RegistryKey key = Registry.CurrentUser.CreateSubKey(@"Software\Classes\streamerai-agent")) {
+            key.SetValue("", "URL:StreamerAI Agent Connector");
+            key.SetValue("URL Protocol", "");
+            using (RegistryKey command = key.CreateSubKey(@"shell\open\command"))
+                command.SetValue("", Quote(node) + " " + Quote(connector) + " \"%1\"");
         }
     }
 
@@ -607,6 +627,7 @@ internal sealed class SetupWindow : Form {
             if (!configureOnly && !installed) {
                 await InstallServer(); installed = true;
             }
+            try { Program.RegisterAgentConnector(); } catch { /* optional: StreamerAI Settings offers a copyable command */ }
             aiCancellation = new CancellationTokenSource(); aiCancellation.CancelAfter(TimeSpan.FromHours(3));
             cancel.Enabled = true; cancel.Text = "Skip AI setup";
             if (installAi.Checked) await PrepareOllama();

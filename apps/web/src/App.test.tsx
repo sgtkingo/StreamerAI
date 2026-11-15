@@ -177,6 +177,23 @@ function createApi(): StreamerApi {
     saveAgentApiKey: vi.fn(),
     getAgentApiKeyStatus: vi.fn().mockResolvedValue({ configured: false }),
     deleteAgentApiKey: vi.fn().mockResolvedValue({ configured: false }),
+    getMcpHosts: vi.fn().mockResolvedValue({
+      canManage: true,
+      bridge: { available: true },
+      serviceAccount: false,
+      hosts: [],
+    }),
+    connectMcpHosts: vi.fn().mockResolvedValue({
+      canManage: true,
+      bridge: { available: true },
+      serviceAccount: false,
+      hosts: [],
+      failures: [],
+    }),
+    removeMcpHost: vi.fn(),
+    createMcpManualSetup: vi.fn(),
+    startMcpConnector: vi.fn(),
+    getMcpConnector: vi.fn(),
     connectLocalAgent: vi.fn().mockResolvedValue({
       ok: true,
       message: "Ready",

@@ -6,6 +6,11 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { StreamerDatabase } from "@streamer-ai/database";
 import { toDataURL } from "qrcode";
 import { householdHasData, householdReadyKey } from "./household-state.js";
+import {
+  isConnectorRoute,
+  isToolRoute,
+  LOOPBACK_ADDRESSES,
+} from "../mcp/tool-routes.js";
 
 /** A first-run browser can only create or restore a household until its PIN is verified. */
 const householdSetupRoutes = new Set([
@@ -368,6 +373,23 @@ export class LocalAccessService {
     app.addHook("onRequest", async (request, reply) => {
       const path = request.url.split("?", 1)[0]!;
       if (!path.startsWith("/api/")) return;
+      // Same-machine tool bridges authenticate with their own credential,
+      // which account authentication verifies for every /api/v1 request.
+      if (
+        LOOPBACK_ADDRESSES.includes(request.ip) &&
+        !request.headers.origin &&
+        (typeof request.headers["x-streamer-mcp-token"] === "string" ||
+          typeof request.headers["x-streamer-internal-token"] === "string") &&
+        isToolRoute(request.method, path)
+      )
+        return;
+      // The user-side agent connector proves itself with a one-time ticket.
+      if (
+        LOOPBACK_ADDRESSES.includes(request.ip) &&
+        !request.headers.origin &&
+        isConnectorRoute(request.method, path)
+      )
+        return;
       let requestedHost: string;
       try {
         requestedHost = new URL(

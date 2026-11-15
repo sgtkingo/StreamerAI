@@ -25,6 +25,11 @@ import type { SecretStore } from "../stores/secret-store.js";
 import type { PlaybackTicketStore } from "./playback-ticket-store.js";
 import type { LocalAccessService } from "./local-access.js";
 import {
+  isConnectorRoute,
+  isToolRoute,
+  LOOPBACK_ADDRESSES,
+} from "../mcp/tool-routes.js";
+import {
   createMasterPinVerifier,
   isMasterPinVerifier,
   MasterPinService,
@@ -74,6 +79,8 @@ interface Context {
   session: AccountSession | null;
   hash: string;
   internal: boolean;
+  /** Set for external MCP bridge calls; restricts every request to this profile. */
+  mcpProfileId?: string;
 }
 interface Pairing {
   binding: string;
@@ -102,6 +109,10 @@ export interface AccountAuthOptions {
   fetch?: typeof fetch;
   now?: () => Date;
   internalToken?: string;
+  /** Verifies per-host credentials of the external stdio MCP bridge. */
+  mcpAccess?: {
+    verify(token: string): Promise<{ profileId: string } | null>;
+  };
   tickets?: PlaybackTicketStore;
   sync?: {
     sync(accountId: string): Promise<SyncStatus>;
@@ -1025,6 +1036,13 @@ export class AccountAuthService {
       const path = request.url.split("?", 1)[0]!;
       if (!path.startsWith("/api/v1/")) return;
       if (path.startsWith("/api/v1/installation/")) return;
+      // The agent connector has no session; its handler checks a one-time ticket.
+      if (
+        LOOPBACK_ADDRESSES.includes(request.ip) &&
+        !request.headers.origin &&
+        isConnectorRoute(request.method, path)
+      )
+        return;
       if (
         !["GET", "HEAD", "OPTIONS"].includes(request.method) &&
         !this.allowedOrigin(request)
@@ -1074,6 +1092,40 @@ export class AccountAuthService {
           hash: "internal",
           session: null,
           internal: true,
+        };
+      }
+      const suppliedMcp = request.headers["x-streamer-mcp-token"];
+      if (typeof suppliedMcp === "string") {
+        if (
+          !this.options.mcpAccess ||
+          !LOOPBACK_ADDRESSES.includes(request.ip) ||
+          !isToolRoute(request.method, path)
+        )
+          return error(
+            reply,
+            403,
+            "MCP_ROUTE_DENIED",
+            "This request is not available to agent hosts.",
+          );
+        const access = await this.options.mcpAccess.verify(suppliedMcp);
+        const profile = access
+          ? this.options.database.profiles.get(access.profileId)
+          : null;
+        if (!profile)
+          return error(
+            reply,
+            401,
+            "MCP_TOKEN_INVALID",
+            "Reconnect StreamerAI in the agent host from StreamerAI Settings.",
+          );
+        context = {
+          account: this.options.database.accounts.getRequired(
+            profile.accountId,
+          ),
+          hash: "internal",
+          session: null,
+          internal: true,
+          mcpProfileId: profile.id,
         };
       }
       if (!context || !(await this.validateSession(context)))
@@ -1133,7 +1185,21 @@ export class AccountAuthService {
           body.profileId = defaultProfile.id;
         if (explicitIds.length === 0) explicitIds.push(defaultProfile.id);
       }
+      if (context.mcpProfileId && explicitIds.length === 0)
+        return error(
+          reply,
+          403,
+          "PROFILE_ACCESS_DENIED",
+          "Agent host requests must name their profile.",
+        );
       for (const id of explicitIds) {
+        if (context.mcpProfileId && id !== context.mcpProfileId)
+          return error(
+            reply,
+            403,
+            "PROFILE_ACCESS_DENIED",
+            "This agent host is connected to another profile.",
+          );
         const profile = this.options.database.profiles.get(id);
         if (!profile || profile.accountId !== context.account.id)
           return error(

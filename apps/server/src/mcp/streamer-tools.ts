@@ -99,6 +99,8 @@ export class StreamerToolService {
     private readonly fetcher: typeof fetch = fetch,
     private readonly boundProfileId?: string,
     private readonly internalToken?: string,
+    /** Per-host credential of the external stdio bridge (see McpAccessTokens). */
+    private readonly accessToken?: string,
   ) {
     const url = new URL(baseUrl);
     if (
@@ -139,6 +141,9 @@ export class StreamerToolService {
         ...(this.internalToken
           ? { "x-streamer-internal-token": this.internalToken }
           : {}),
+        ...(this.accessToken
+          ? { "x-streamer-mcp-token": this.accessToken }
+          : {}),
       },
       body: body ? JSON.stringify(body) : undefined,
       signal: AbortSignal.any([
@@ -157,6 +162,19 @@ export class StreamerToolService {
     }
     if (response.status === 204) return { ok: true };
     return record(await response.json());
+  }
+  /** Tells StreamerAI that an agent host loaded this bridge. */
+  async announce(signal?: AbortSignal): Promise<void> {
+    if (!this.accessToken || !this.boundProfileId) return;
+    await this.request(
+      "POST",
+      `/api/v1/profiles/${encodeURIComponent(this.boundProfileId)}/mcp/bridge`,
+      {},
+      AbortSignal.any([
+        signal ?? new AbortController().signal,
+        AbortSignal.timeout(10_000),
+      ]),
+    );
   }
   async call(name: string, args: Json, signal?: AbortSignal): Promise<Json> {
     if (name === "search_media") {

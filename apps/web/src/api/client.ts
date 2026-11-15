@@ -117,6 +117,50 @@ export interface AgentSelection {
   message: string;
 }
 
+export type McpHostId = "claude-code" | "codex" | "claude-desktop" | "cursor";
+export interface McpHostStatus {
+  id: McpHostId;
+  name: string;
+  state:
+    "not-detected" | "available" | "installed" | "outdated" | "other-profile";
+  configPath: string;
+  restartHint: string;
+  message?: string;
+  /** For a connected host: when it was connected and when its bridge last started. */
+  connection?: { issuedAt: string; seenAt?: string };
+}
+export interface McpHostsOverview {
+  canManage: boolean;
+  bridge: { available: boolean; message?: string };
+  /** The server runs as a service; agents are connected by the user-side connector. */
+  serviceAccount: boolean;
+  connector?: { available: boolean };
+  hosts: McpHostStatus[];
+  failures?: { id: McpHostId; message: string }[];
+}
+export interface McpConnectorLaunch {
+  ticket: string;
+  /** A streamerai-agent: link that starts the connector as the signed-in person. */
+  url: string;
+  /** The same connector as a command for a terminal. */
+  command: string;
+  expiresAt: string;
+}
+export interface McpConnectorStatus {
+  state: "waiting" | "connecting" | "done" | "expired";
+  expiresAt: string;
+  detected: McpHostId[];
+  results: { id: McpHostId; ok: boolean; message?: string }[];
+}
+export interface McpManualSetup {
+  command: string;
+  args: string[];
+  env: Record<string, string>;
+  claudeCommand: string;
+  codexCommand: string;
+  json: string;
+}
+
 export interface LocalAgentCapability {
   provider: "ollama" | "custom" | "codex" | "claude";
   detected: boolean;
@@ -524,6 +568,20 @@ export interface StreamerApi {
     profileId?: string;
     provider: AgentBackend;
   }): Promise<{ provider: AgentBackend; configured: boolean }>;
+  getMcpHosts(profileId: string): Promise<McpHostsOverview>;
+  /** Installs StreamerAI into the given hosts, or every detected host. */
+  connectMcpHosts(
+    profileId: string,
+    hosts?: McpHostId[],
+  ): Promise<McpHostsOverview>;
+  removeMcpHost(profileId: string, host: McpHostId): Promise<McpHostsOverview>;
+  createMcpManualSetup(profileId: string): Promise<McpManualSetup>;
+  /** Creates a one-time link for the user-side agent connector. */
+  startMcpConnector(profileId: string): Promise<McpConnectorLaunch>;
+  getMcpConnector(
+    profileId: string,
+    ticket: string,
+  ): Promise<McpConnectorStatus>;
   connectLocalAgent(input: {
     baseUrl: string;
     model: string;
@@ -735,6 +793,11 @@ const domainErrorMessages: Record<string, string> = {
   FOLDER_PICKER_LOCAL_ONLY:
     "Open StreamerAI on the home server to use Select folder, or enter the server path manually.",
   FOLDER_PICKER_BUSY: "A folder picker is already open on the home server.",
+  MCP_HOST_CONFIG_FAILED:
+    "The agent's configuration file could not be changed. Check that it is valid and not read-only.",
+  MCP_HOST_FAILED: "The agent's configuration could not be changed.",
+  MCP_BRIDGE_MISSING:
+    "The StreamerAI MCP bridge is missing from this server build. Rebuild or reinstall the server.",
   FOLDER_PICKER_FAILED:
     "The folder picker is unavailable. Enter the folder path manually.",
   LOCAL_FOLDER_INVALID:
@@ -1380,6 +1443,34 @@ export const apiClient: StreamerApi = {
     request<{ provider: AgentBackend; configured: boolean }>(
       "/inference/api-credential",
       { method: "DELETE", body: JSON.stringify(input) },
+    ),
+  getMcpHosts: (profileId) =>
+    request<McpHostsOverview>(
+      `/profiles/${encodeURIComponent(profileId)}/mcp/hosts`,
+    ),
+  connectMcpHosts: (profileId, hosts) =>
+    request<McpHostsOverview>(
+      `/profiles/${encodeURIComponent(profileId)}/mcp/hosts`,
+      { method: "POST", body: JSON.stringify(hosts ? { hosts } : {}) },
+    ),
+  removeMcpHost: (profileId, host) =>
+    request<McpHostsOverview>(
+      `/profiles/${encodeURIComponent(profileId)}/mcp/hosts/${encodeURIComponent(host)}`,
+      { method: "DELETE" },
+    ),
+  createMcpManualSetup: (profileId) =>
+    request<McpManualSetup>(
+      `/profiles/${encodeURIComponent(profileId)}/mcp/manual`,
+      { method: "POST", body: "{}" },
+    ),
+  startMcpConnector: (profileId) =>
+    request<McpConnectorLaunch>(
+      `/profiles/${encodeURIComponent(profileId)}/mcp/connector`,
+      { method: "POST", body: "{}" },
+    ),
+  getMcpConnector: (profileId, ticket) =>
+    request<McpConnectorStatus>(
+      `/profiles/${encodeURIComponent(profileId)}/mcp/connector/${encodeURIComponent(ticket)}`,
     ),
   connectLocalAgent: (input) =>
     request<LocalAgentConnectResult>("/inference/agent/connect", {
