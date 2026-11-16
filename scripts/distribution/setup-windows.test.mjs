@@ -291,11 +291,10 @@ test(
       "& $env:STREAMERAI_SCRIPT_TO_CHECK",
       "$xmlAssignment=$tree.Find({param($node) $node -is [System.Management.Automation.Language.AssignmentStatementAst] -and $node.Left -is [System.Management.Automation.Language.VariableExpressionAst] -and $node.Left.VariablePath.UserPath -eq 'xml'},$true)",
       "if(-not $xmlAssignment){throw 'Missing generated service XML'}",
-      "$service='Server';$executable='C:/fixture/node.exe';$arguments='C:/fixture/start.mjs';$state='C:/fixture/state';$target='C:/fixture/release'",
       "function Escape-Xml([string]$Value){[System.Security.SecurityElement]::Escape($Value)}",
-      "Invoke-Expression $xmlAssignment.Extent.Text",
-      "$configuration=[xml]$xml;$account=$configuration.service.serviceaccount",
-      "if($account.username -or $account.domain -cne 'NT AUTHORITY' -or $account.user -cne 'LocalService'){throw 'WinSW 2 account would not resolve to LocalService'}",
+      "function Render([string]$Name){$script:service=$Name;$script:executable='C:/fixture/node.exe';$script:arguments='C:/fixture/start.mjs';$script:state='C:/fixture/state';$script:target='C:/fixture/release';foreach($variable in @('account','failure','description')){$assignment=$tree.Find({param($node) $node -is [System.Management.Automation.Language.AssignmentStatementAst] -and $node.Left -is [System.Management.Automation.Language.VariableExpressionAst] -and $node.Left.VariablePath.UserPath -eq $variable},$true);if(-not $assignment){throw \"Missing $variable\"};Invoke-Expression $assignment.Extent.Text};Invoke-Expression $xmlAssignment.Extent.Text;return [xml]$xml}",
+      "foreach($name in @('Server','Gateway')){$account=(Render $name).service.serviceaccount;if($account.username -or $account.domain -cne 'NT AUTHORITY' -or $account.user -cne 'LocalService'){throw 'WinSW 2 account would not resolve to LocalService'}}",
+      "$updater=(Render 'Updater').service;if($updater.serviceaccount){throw 'Updater must run as LocalSystem'};if($updater.onfailure.action -cne 'restart'){throw 'Updater must restart after self-update'}",
       "Write-Output 'winsw-2-localservice-contract-passed'",
     ].join(";");
     const checked = spawnSync(
@@ -318,5 +317,76 @@ test(
     assert.equal(checked.status, 0, checked.stderr);
     assert.match(checked.stdout, /Dry run/);
     assert.match(checked.stdout, /winsw-2-localservice-contract-passed/);
+  },
+);
+
+test(
+  "combined setup embeds a verified desktop app installer of the same version",
+  { skip: !isWindows },
+  () => {
+    const item = fixture();
+    try {
+      const wrongName = path.join(item.temporary, "client.exe");
+      writeFileSync(wrongName, "MZ fake");
+      assert.throws(
+        () =>
+          buildWindowsSetup({
+            bundle: item.bundle,
+            output: path.join(item.temporary, "not-created"),
+            review: true,
+            client: wrongName,
+          }),
+        /StreamerAI-Client-0\.1\.0-win-x64-setup\.exe/,
+      );
+      const client = path.join(
+        item.temporary,
+        "StreamerAI-Client-0.1.0-win-x64-setup.exe",
+      );
+      writeFileSync(
+        client,
+        Buffer.concat([Buffer.from("MZ"), Buffer.alloc(4096, 7)]),
+      );
+      const result = buildWindowsSetup({
+        bundle: item.bundle,
+        output: path.join(item.temporary, "combined"),
+        review: true,
+        client,
+      });
+      assert.equal(result.clientIncluded, true);
+      assert.match(
+        path.basename(result.executable),
+        /^StreamerAI-0\.1\.0-win-x64-setup-review\.exe$/,
+      );
+      const report = JSON.parse(result.selfTest);
+      assert.equal(report.clientIncluded, true);
+      assert.equal(report.versionOrderingVerified, true);
+      const executable = readFileSync(result.executable);
+      const offset = executable.indexOf(readFileSync(client));
+      assert.ok(offset > 0, "the desktop app installer is embedded");
+      const modified = Buffer.from(executable);
+      modified[offset + 100] ^= 1;
+      const tampered = path.join(item.temporary, "tampered-combined.exe");
+      writeFileSync(tampered, modified);
+      const checked = spawnSync(tampered, ["--self-test"], {
+        windowsHide: true,
+        encoding: "utf8",
+        timeout: 10000,
+      });
+      assert.equal(checked.status, 1);
+      assert.match(checked.stderr, /app installer is damaged/);
+      const image = path.join(item.temporary, "combined.png");
+      const rendered = spawnSync(
+        result.executable,
+        ["--preview-image", image],
+        {
+          windowsHide: true,
+          encoding: "utf8",
+          timeout: 10000,
+        },
+      );
+      assert.equal(rendered.status, 0, rendered.stderr);
+    } finally {
+      item.cleanup();
+    }
   },
 );

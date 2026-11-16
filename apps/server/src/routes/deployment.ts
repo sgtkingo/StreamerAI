@@ -1,7 +1,9 @@
 import type { FastifyInstance } from "fastify";
 import { arch, platform } from "node:os";
 
-export const SERVER_VERSION = "0.1.0";
+import { SERVER_VERSION } from "../version.js";
+
+export { SERVER_VERSION };
 /** Explicit allowlist: never return environment variables, paths, logs or account data. */
 export function deploymentDiagnostics() {
   return {

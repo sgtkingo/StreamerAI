@@ -33,6 +33,7 @@ import java.util.concurrent.Executors
 class MainActivity : Activity() {
     private val worker = Executors.newSingleThreadExecutor()
     private val preferences by lazy { getSharedPreferences("streamerai-client", MODE_PRIVATE) }
+    private val updates by lazy { Updates(this, worker) }
     private lateinit var clientId: String
     private var selected: HomeServer? = null
     private var web: WebView? = null
@@ -58,8 +59,10 @@ class MainActivity : Activity() {
         val link = intent?.dataString
         if (link?.startsWith("streamerai://") == true) connect(link)
         else selected?.let { connect(it.url, it.serverId) } ?: discover()
+        intent?.let { updates.handleInstallResult(it) }
+        updates.checkDaily()
     }
-    override fun onNewIntent(intent: Intent) { super.onNewIntent(intent); setIntent(intent); intent.dataString?.takeIf { it.startsWith("streamerai://") }?.let { connect(it) } }
+    override fun onNewIntent(intent: Intent) { super.onNewIntent(intent); setIntent(intent); if (updates.handleInstallResult(intent)) return; intent.dataString?.takeIf { it.startsWith("streamerai://") }?.let { connect(it) } }
     private fun px(value: Int) = (value * resources.displayMetrics.density).toInt()
     private fun text(value: String, size: Float = 15f) = TextView(this).apply { text = value; textSize = size; setTextColor(Color.rgb(225, 220, 216)); setPadding(0, px(6), 0, px(10)) }
     private fun button(value: String, action: () -> Unit) = Button(this).apply { text = value; isAllCaps = false; isFocusable = true; minHeight = px(48); setOnClickListener { action() }; setOnFocusChangeListener { view, focused -> view.alpha = if (focused) 1f else 0.85f } }
@@ -79,7 +82,8 @@ class MainActivity : Activity() {
         body.addView(button("Connect") { connect(address.text.toString().trim()) })
         body.addView(text("If network discovery is blocked by a router, VPN or Docker, enter the address shown by the server owner. A QR connection link can also open this app from your camera."))
         selected?.let { saved -> body.addView(text("Saved server: ${saved.name}\n${saved.url}")); body.addView(button("Open saved server") { connect(saved.url, saved.serverId) }); body.addView(button("Forget server and pairing") { forget() }) }
-        body.addView(text("Client ID: $clientId", 12f))
+        body.addView(button("Check for app updates") { updates.checkDaily(force = true) })
+        body.addView(text("App version ${BuildConfig.VERSION_NAME} · Client ID: $clientId", 12f))
         chooser.addView(body); root.addView(chooser, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         search.requestFocus()
     }

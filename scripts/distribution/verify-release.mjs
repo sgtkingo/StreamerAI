@@ -19,6 +19,8 @@ import { fileURLToPath } from "node:url";
 
 const FORMAT = "streamerai-signed-release/v1";
 const MAX_METADATA = 256 * 1024;
+const PLATFORMS = ["win-x64", "linux-x64", "android"];
+const COMPONENTS = ["server", "client"];
 
 function fail(message) {
   throw new Error(message);
@@ -65,6 +67,7 @@ export function verifyRelease({
   state = {},
   currentVersion,
   platform,
+  component = "server",
   channel = "stable",
   now = Date.now(),
 }) {
@@ -172,10 +175,17 @@ export function verifyRelease({
     fail("Release metadata replay or equivocation refused.");
   if (!Array.isArray(metadata.artifacts) || metadata.artifacts.length > 16)
     fail("Invalid artifacts.");
+  // Metadata before components existed described only server archives.
   const artifacts = metadata.artifacts.filter(
-    (artifact) => artifact.platform === platform,
+    (artifact) =>
+      artifact?.platform === platform &&
+      (artifact.component ?? "server") === component,
   );
-  if (artifacts.length !== 1 || !["win-x64", "linux-x64"].includes(platform))
+  if (
+    artifacts.length !== 1 ||
+    !PLATFORMS.includes(platform) ||
+    !COMPONENTS.includes(component)
+  )
     fail("Release does not contain exactly one matching platform artifact.");
   const artifact = artifacts[0];
   if (
@@ -236,6 +246,7 @@ export function stageRelease({
   stageDirectory,
   currentVersion,
   platform,
+  component = "server",
   channel = "stable",
   commit = false,
 }) {
@@ -252,6 +263,7 @@ export function stageRelease({
       state: existsSync(stateFile) ? load(stateFile) : {},
       currentVersion,
       platform,
+      component,
       channel,
     });
   let verified = check();
@@ -302,8 +314,10 @@ export function stageRelease({
   }
 }
 
+// import.meta.url is empty when bundled into the desktop app (CommonJS).
 if (
   process.argv[1] &&
+  import.meta.url &&
   path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
 ) {
   const { values } = parseArgs({
@@ -315,6 +329,7 @@ if (
       staging: { type: "string" },
       "current-version": { type: "string" },
       platform: { type: "string" },
+      component: { type: "string", default: "server" },
       channel: { type: "string", default: "stable" },
       commit: { type: "boolean", default: false },
     },
@@ -343,6 +358,7 @@ if (
         stageDirectory: values.staging,
         currentVersion: values["current-version"],
         platform: values.platform,
+        component: values.component,
         channel: values.channel,
         commit: values.commit,
       }),

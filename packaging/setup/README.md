@@ -1,10 +1,18 @@
 # Server installation application
 
-The distributed product is the **server installation application**; clients use
-an ordinary browser. Windows setup is a .NET Framework WinForms executable.
-It carries a verified server ZIP, so the user supplies no Node, pnpm, FFmpeg,
-Caddy or WinSW files. Those complete, pinned components are supplied by the
-release build, not by the end user.
+The Windows setup is a .NET Framework WinForms executable. It carries a verified
+server ZIP and, in release builds, the StreamerAI desktop app installer, so the
+user supplies no Node, pnpm, FFmpeg, Caddy or WinSW files. Those complete,
+pinned components are supplied by the release build, not by the end user.
+
+The first screen lets the person install the **server**, the **app for this PC**,
+or both. The app installs for the signed-in Windows user without an
+administrator prompt; on a server PC it opens the local server automatically.
+When an older server is installed, the server choice becomes **Upgrade**: setup
+places the new release beside the old one and runs the shared update activation
+(`service/updater.mjs activate`), which keeps the household, keys and HTTPS CA
+and rolls back if the new version does not start. A newer installed server is
+never downgraded. After installation, updates arrive through `/admin` → Updates.
 
 The installer opens without elevation. Clicking Install requests Windows UAC
 for server services, protected program/state directories, local HTTPS trust and
@@ -19,8 +27,14 @@ or tests, and no user data is changed by `--self-test` or `--preview-image`.
 node scripts/distribution/setup-windows.mjs \
   --bundle dist/installer-build/win-bundle \
   --output dist/installer-build/windows-setup \
-  --ollama-descriptor packaging/setup/ollama-windows.pinned.json
+  --ollama-descriptor packaging/setup/ollama-windows.pinned.json \
+  --client-installer apps/client/release/StreamerAI-Client-<version>-win-x64-setup.exe
 ```
+
+With `--client-installer` the output is `StreamerAI-<version>-win-x64-setup.exe`
+(server + app); without it, `StreamerAI-Server-<version>-win-x64-setup.exe`. The
+app installer must have the same version; its SHA-256 is embedded and checked by
+`--self-test` and before installation.
 
 Build this on Windows with its .NET Framework compiler. The input must be a
 complete Windows bundle matching `bundle.json`. The builder verifies every

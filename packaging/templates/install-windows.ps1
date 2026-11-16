@@ -3,7 +3,7 @@ param([switch]$Apply, [switch]$AllowPrototype)
 $ErrorActionPreference = 'Stop'
 $release = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 if (-not $Apply) {
-  Write-Output "Dry run: validate complete bundle; install immutable release in Program Files\StreamerAI; create ProgramData\StreamerAI\{data,keys,logs,gateway}; register LocalService services via bundled WinSW. Pass -Apply in elevated PowerShell to install."
+  Write-Output "Dry run: validate complete bundle; install immutable release in Program Files\StreamerAI; create ProgramData\StreamerAI\{data,keys,logs,gateway}; register LocalService server/gateway and the LocalSystem updater via bundled WinSW. Pass -Apply in elevated PowerShell to install. Existing installations are upgraded by StreamerAI Setup or the updater service."
   return
 }
 if (-not $AllowPrototype) { throw 'Service installer is a prototype; use -AllowPrototype for controlled acceptance testing.' }
@@ -75,7 +75,7 @@ function Assert-ManagedStatePath([string]$StatePath) {
   }
 }
 foreach ($managedPath in @($state, (Join-Path $state 'data'), (Join-Path $state 'keys'), (Join-Path $state 'logs'), (Join-Path $state 'gateway'), (Join-Path $state 'keys/master.key'), (Join-Path $state 'data/secrets.vault'), (Join-Path $state 'data/streamer-ai.db'))) { Assert-ManagedStatePath $managedPath }
-if ((Test-Path -LiteralPath $programRoot) -or (Get-Service -Name 'StreamerAIServer' -ErrorAction SilentlyContinue) -or (Get-Service -Name 'StreamerAIGateway' -ErrorAction SilentlyContinue)) { throw 'Existing installation detected; upgrades require the supervised update procedure.' }
+if ((Test-Path -LiteralPath $programRoot) -or (Get-Service -Name 'StreamerAIServer' -ErrorAction SilentlyContinue) -or (Get-Service -Name 'StreamerAIGateway' -ErrorAction SilentlyContinue)) { throw 'Existing installation detected; upgrade it with the new StreamerAI Setup, which keeps your data.' }
 if (-not $PSCmdlet.ShouldProcess($target, 'Install StreamerAI services')) { return }
 $installationMutex = [System.Threading.Mutex]::new($false, 'Global\StreamerAI-Fresh-Install')
 $ownsInstallationMutex = $false
@@ -85,7 +85,7 @@ $attemptedWrappers = [System.Collections.Generic.List[string]]::new()
 $programRootCreated = $false
 $managedStateReady = $false
 try {
-if (Test-Path -LiteralPath $programRoot) { throw 'Existing installation detected; upgrades require the supervised update procedure.' }
+if (Test-Path -LiteralPath $programRoot) { throw 'Existing installation detected; upgrade it with the new StreamerAI Setup, which keeps your data.' }
 [System.IO.Directory]::CreateDirectory($programRoot, $protectedProgramAcl) | Out-Null
 # New program files use protected ACLs at creation, including their owner. Do not
 # rely on the machine's elevated-token default owner or CREATOR OWNER inheritance.
@@ -109,24 +109,29 @@ foreach ($subdirectory in @('data','keys','logs','gateway')) {
 $masterKey = Join-Path $state 'keys/master.key'
 Initialize-ProtectedMasterKey $masterKey
 function Escape-Xml([string]$Value) { return [System.Security.SecurityElement]::Escape($Value) }
-foreach ($service in @('Server','Gateway')) {
+foreach ($service in @('Server','Gateway','Updater')) {
   $serviceDirectory = Join-Path $programRoot "services/$service"
   [System.IO.Directory]::CreateDirectory((Join-Path $programRoot 'services'), $protectedProgramAcl) | Out-Null
   [System.IO.Directory]::CreateDirectory($serviceDirectory, $protectedProgramAcl) | Out-Null
   $wrapper = Join-Path $serviceDirectory "StreamerAI$service.exe"
   Copy-ProtectedFile (Join-Path $target 'bin/streamerai-service.exe') $wrapper
-  $executable = if ($service -eq 'Server') { Join-Path $target 'runtime/node.exe' } else { Join-Path $target 'bin/caddy.exe' }
-  $arguments = if ($service -eq 'Server') { '"' + (Join-Path $target 'service/start.mjs') + '"' } else { 'run --config "' + (Join-Path $target 'service/Caddyfile') + '" --adapter caddyfile' }
+  $executable = if ($service -eq 'Gateway') { Join-Path $target 'bin/caddy.exe' } else { Join-Path $target 'runtime/node.exe' }
+  $arguments = if ($service -eq 'Server') { '"' + (Join-Path $target 'service/start.mjs') + '"' } elseif ($service -eq 'Updater') { '"' + (Join-Path $target 'service/updater.mjs') + '" service' } else { 'run --config "' + (Join-Path $target 'service/Caddyfile') + '" --adapter caddyfile' }
+  # The updater runs as LocalSystem (no serviceaccount element) so it can replace
+  # administrator-owned program files; the server and gateway stay LocalService.
+  $account = if ($service -eq 'Updater') { '' } else { '<serviceaccount><domain>NT AUTHORITY</domain><user>LocalService</user></serviceaccount>' }
+  $failure = if ($service -eq 'Updater') { '<onfailure action="restart" delay="10 sec"/><resetfailure>1 hour</resetfailure>' } else { '' }
+  $description = @{ Server = 'StreamerAI home server'; Gateway = 'StreamerAI local HTTPS gateway'; Updater = 'Installs StreamerAI server updates approved by the household owner' }[$service]
   $xml = @"
 <service>
   <id>StreamerAI$service</id><name>StreamerAI $service</name>
-  <description>StreamerAI local server distribution prototype</description>
+  <description>$description</description>
   <executable>$(Escape-Xml $executable)</executable><arguments>$(Escape-Xml $arguments)</arguments>
   <workingdirectory>$(Escape-Xml $state)</workingdirectory>
   <env name="STREAMERAI_STATE_ROOT" value="$(Escape-Xml $state)"/>
   <env name="STREAMERAI_RELEASE_ROOT" value="$(Escape-Xml $target)"/>
-  <serviceaccount><domain>NT AUTHORITY</domain><user>LocalService</user></serviceaccount>
-  <startmode>Automatic</startmode><stoptimeout>60sec</stoptimeout>
+  $account
+  <startmode>Automatic</startmode><stoptimeout>60sec</stoptimeout>$failure
   <logpath>$(Escape-Xml (Join-Path $state 'logs'))</logpath><log mode="roll-by-size"><sizeThreshold>10240</sizeThreshold><keepFiles>3</keepFiles></log>
 </service>
 "@
@@ -137,10 +142,12 @@ foreach ($service in @('Server','Gateway')) {
   $installedService = Get-CimInstance -ClassName Win32_Service -Filter "Name='StreamerAI$service'" -ErrorAction Stop
   if (-not $installedService) { throw "Service $service account could not be verified before start." }
   $installedServiceSid = [System.Security.Principal.NTAccount]::new($installedService.StartName).Translate([System.Security.Principal.SecurityIdentifier]).Value
-  if ($installedServiceSid -ne 'S-1-5-19') { throw "Service $service did not register as LocalService; refusing to start it." }
+  $expectedServiceSid = if ($service -eq 'Updater') { 'S-1-5-18' } else { 'S-1-5-19' }
+  if ($installedServiceSid -ne $expectedServiceSid) { throw "Service $service did not register with its expected account; refusing to start it." }
   & $wrapper start
   if ($LASTEXITCODE -ne 0) { throw "Service $service start failed." }
 }
+Write-ProtectedText (Join-Path $programRoot 'current.json') (@{ version = $manifest.version; previous = $null; activatedAt = [DateTime]::UtcNow.ToString('o') } | ConvertTo-Json) $false
 Write-Output 'Installed locally: https://localhost:8443. Trust the instance CA before use. User data is retained on service removal.'
 } catch {
   $installationFailure = $_

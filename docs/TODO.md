@@ -187,7 +187,7 @@ No reasoning" a "High reasoning", v Setting ale posuvník umožnuje u téhož mo
 - Streamio AI login
 - Jednorázový sync kod (např. pro TV variantu)
 
-- Připravit deploy: zatím ve formě server-client app, pro Windows/Linux, zajistit automatické aktualizace, report bug systém a webovku (na github io?)
+- PARTLY DONE: Připravit deploy: zatím ve formě server-client app, pro Windows/Linux, zajistit automatické aktualizace, report bug systém a webovku (na github io?) — hotovo: Windows setup (server + aplikace pro PC / jen jedno, upgrade), Android APK, release workflow na GitHub, automatické aktualizace serveru (nabídka, připomínky, noční instalace, rollback), aplikace pro Windows i Androidu (viz docs/RELEASING.md). Zbývá: podpis Authenticode, akceptace na čistém Windows, aktualizace Linuxu, Google Play.
 
 -  DONE: Onbording by se měl nakonci zeptat zda uživatel nechce zadat PIN k profilu - tento PIN by se měl dát kdykoliv změnit přes Settings, případně odstranit ve správě učtu - pokud klient používá Cloud sync. 
 

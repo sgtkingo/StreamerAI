@@ -3,8 +3,10 @@
 The distributed product is a **server setup application** that prepares its
 runtime, services, protected storage and local HTTPS. It detects existing Ollama
 installations and local models, reuses them, and offers missing AI installation
-or model download after explicit user selection. Clients use an ordinary web
-browser and do not install Node, FFmpeg, Ollama or a separate desktop client.
+or model download after explicit user selection. The Windows setup can also
+install the StreamerAI desktop app (server, app, or both). Other devices use the
+Android app or an ordinary web browser; none of them install Node, FFmpeg or
+Ollama.
 
 Windows has a .NET WinForms setup executable with local AI configuration and
 browser onboarding. Linux has a `.deb` builder and desktop setup/helper sources
@@ -16,8 +18,9 @@ The current installers are **unsigned previews for controlled acceptance**.
 Complete bundled components do not establish clean-machine, reboot, upgrade,
 GPU or browser acceptance, and the Windows development host does not establish
 Linux installation support. Builds and tests do not install services on the
-development machine, publish releases, enable LAN access or automatically
-activate server updates. The distribution target is `sgtkingo/StreamerAI`.
+development machine, publish releases or enable LAN access. Server updates are
+installed only after the owner approves them (or enables the nightly window).
+The distribution target is `sgtkingo/StreamerAI`.
 
 ## Installer candidates and build inputs
 
@@ -173,29 +176,62 @@ pnpm distribution:verify --root /protected/update-trust.json \
   --current-version 0.1.0 --platform win-x64 --channel stable
 ```
 
-Without `--commit` this is read-only. On Linux use `--platform linux-x64`.
-`packaging/update-trust.example.json` intentionally has no trusted keys and an
-expired validity: it cannot authorize a release. Supply independent public keys,
-a future validity period, and a threshold through a trusted installation step.
+Without `--commit` this is read-only. On Linux use `--platform linux-x64`; pass
+`--component client` for the desktop app installer.
+
+`packaging/update-trust.json` pins the release public key(s). It ships with no
+key and an expired validity, so nothing is authorized until
+`pnpm release:key --private-key <file outside the repo>` pins a real key (see
+[docs/RELEASING.md](../docs/RELEASING.md)). The trust file is copied into every
+server release (`service/update-trust.json`) and compiled into the desktop app.
 Private keys never belong in the runtime, repository, or untrusted PR jobs.
 
-An offline release operator can create a signed envelope for complete archives:
+The [release workflow](../.github/workflows/release.yml) signs one envelope for
+the server archive, the Windows desktop app and the Android APK (each artifact
+has a `platform` and `component`). A key can come from the environment, so CI
+never writes it to disk:
 
 ```sh
-pnpm distribution:sign --version 0.2.0 --sequence 1 --channel beta \
-  --expires <ISO-date-within-31-days> \
+pnpm distribution:sign --version 0.2.0 \
   --base-url https://github.com/sgtkingo/StreamerAI/releases/download/v0.2.0/ \
-  --key release-1=/offline/key-1.pem --key release-2=/offline/key-2.pem \
-  --output beta.json streamerai-server-0.2.0-win-x64.zip \
-  streamerai-server-0.2.0-linux-x64.tar.gz
+  --key release-1=env:STREAMERAI_UPDATE_SIGNING_KEY --output stable.json \
+  streamerai-server-0.2.0-win-x64.zip StreamerAI-Client-0.2.0-win-x64-setup.exe \
+  StreamerAI-Client-0.2.0-android.apk
+# Re-sign before the 31-day validity ends (same artifacts, higher sequence):
+pnpm distribution:sign --refresh stable.json \
+  --key release-1=env:STREAMERAI_UPDATE_SIGNING_KEY --output refreshed.json
 ```
 
-The envelope signs exact UTF-8 payload bytes encoded in base64. This small
-prototype is **not a TUF implementation**. It has no delegated roles, automatic
-root rotation, online polling/downloading, freeze detection beyond expiration,
-quiescing, snapshots, migration rehearsal, activation, or rollback supervisor.
-Use a maintained TUF client before enabling unattended production activation;
-evaluate its trust migration rather than claiming this prototype supplies TUF.
+The [refresh workflow](../.github/workflows/refresh-update-metadata.yml) does
+the re-signing weekly. The envelope signs exact UTF-8 payload bytes encoded in
+base64. This is **not a TUF implementation**: there are no delegated roles or
+automatic root rotation, and freshness relies on the expiry plus the refresh.
+
+## Windows update supervisor
+
+`service/updater.mjs` runs as the `StreamerAIUpdater` service (LocalSystem). The
+LocalService server checks `releases/latest/download/stable.json`, downloads and
+verifies the server archive into `ProgramData\StreamerAI\updates\download` and,
+after the owner approves it in `/admin` (or the optional nightly window allows
+it: 02:00–05:00, only when nobody is watching), writes `updates\request.json`.
+The updater then:
+
+1. re-verifies the metadata with the trust and replay state of the
+   administrator-only release and copies the archive to administrator-only
+   staging;
+2. extracts it into `releases\<version>` beside the running release and checks
+   every file against `bundle.json`;
+3. backs up the database and vault to `updates\rollback`, repoints the Server
+   and Gateway services and starts them;
+4. waits for `/api/v1/server/version` to report the new version as ready, and
+   otherwise restores the previous service definitions and database;
+5. records `current.json` and `updates\status.json`, keeps the previous release,
+   removes older ones and restarts itself from the new release.
+
+StreamerAI Setup uses the same activation (`updater.mjs activate --source`) to
+upgrade an existing installation in place. Linux packages are updated manually
+for now (`/admin` explains this).
+
 For equal numeric beta versions the verifier conservatively refuses transitions
 between different prerelease labels; increment the numeric version for now.
 

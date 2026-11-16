@@ -1,21 +1,22 @@
 # Stav implementace distribuce
 
-Aktualizováno 2026-11-07. Cíl popisuje [deploy plán](DEPLOY_PLAN.md).
+Aktualizováno 2026-11-15. Cíl popisuje [deploy plán](DEPLOY_PLAN.md).
 Změny jsou připravené v pracovním stromu; neprovádějí deployment Workeru,
 publikování Pages/Releases ani změnu běžící instalace.
 
 Upřesněný produktový cíl: server se dodává jako aplikace s jednoduchým
 instalátorem, který připraví závislosti, služby, lokální přístup a nabídne
 instalaci chybějící Ollamy/modelu. Archiv runtime je podklad pro sestavení
-instalátoru, nikoli cílový postup pro běžného uživatele. Klientem je nyní jen
-webový prohlížeč; instalace PWA nebo desktopového klienta není podmínkou.
+instalátoru, nikoli cílový postup pro běžného uživatele. Windows setup instaluje
+server, aplikaci pro PC, nebo obojí; další zařízení používají aplikaci pro Android
+nebo prohlížeč. Postup vydání popisuje [RELEASING.md](RELEASING.md).
 
 | Oblast | Implementovaný výstup | Co ještě zbývá před stabilním vydáním |
 | --- | --- | --- |
 | Produkční runtime | Zkompilovaný JS server a web, produkční závislosti, Node 24.22.2 LTS, ověřené Caddy/FFmpeg/WinSW; bez pnpm/tsx za běhu. Windows sestavení ověřuje také skutečný Node ABI 137 a SQLite binding. | Veřejná distribuce FFmpeg vyžaduje dokončení kontroly licence a odpovídajících zdrojů; podpisy a čisté instalace zůstávají podmínkou vydání. |
-| Distribuce | Skutečný grafický Windows `setup.exe` s vloženým úplným serverem, službami, lokálním HTTPS, zástupci a předáním vlastníka do prohlížeče. Linux má builder `.deb`, GTK průvodce a omezený systémový helper; ruční CI sestavuje obě platformy. | Windows je nepodepsaný Preview. Linuxový `.deb` se na této Windows stanici nesestavoval ani neinstaloval; viz [Windows](../packaging/setup/README.md) a [Linux](../packaging/setup/linux/README.md). |
+| Distribuce | Grafický Windows setup s volbou server / aplikace pro PC / obojí, upgrade existující instalace, vložený ověřený instalátor aplikace. Release workflow (tag `v*`) sestaví a publikuje setup, aplikaci pro Windows, podepsané APK, serverový balíček a `stable.json`. Linux má builder `.deb`, GTK průvodce a omezený systémový helper. | Windows je nepodepsaný (SmartScreen). Linuxový `.deb` se na této Windows stanici nesestavoval ani neinstaloval; viz [Windows](../packaging/setup/README.md) a [Linux](../packaging/setup/linux/README.md). |
 | Lokální AI | Průvodce zjistí existující Ollamu a modely, nabídne chybějící runtime a doporučený model, zobrazí velikost a průběh. Stahuje jen po výběru uživatele, kontroluje pinned runtime a zachovává existující konfiguraci. Nastavení serveru umí nabídnout a sledovat stažení modelu. | Skutečná instalace Ollamy, ověření GPU a běh bez přihlášeného uživatele vyžadují acceptance na cílovém systému. Ovladače GPU se automaticky neinstalují. |
-| Aktualizace serveru | Podepsaná metadata, prahové ověření Ed25519, expirace, platforma a ochrana proti replayi; staging | Supervizor s koordinací zálohy, nečinnosti, migrace a rollbacku; automatická aktivace není hotová. Nejde o plnou implementaci TUF. |
+| Aktualizace serveru | Podepsaná metadata (Ed25519, komponenty server/klient/Android, týdenní přepodepsání), kontrola a stažení serverem, nabídka a připomínky v `/admin`, volitelná noční instalace, služba `StreamerAIUpdater` (LocalSystem) s instalací vedle běžící verze, zálohou databáze a rollbackem; upgrade přes Setup | Akceptace na čistém Windows (0.1.0 → upgrade → auto-update → rollback). Linux zatím ručně. Nejde o plnou implementaci TUF. |
 | Přístup zařízení | Volitelný režim `paired`, jednorázové převzetí správce, kód, schválení, cookie, odvolání, uzavření streamu | LAN HTTPS a CA bootstrap na skutečných klientech; mDNS, úplná rotace session a samostatné ověření bezpečnosti. |
 | Offline server backup | Šifrovaný soubor, kontrola, obnova obou režimů identity a zotavení po přerušené obnově | Zatím CLI na zastaveném serveru a limit 256 MiB; grafický průvodce a velké streamované archivy. Viz [návod](OFFLINE_BACKUP.md). |
 | Šifrovaná domácnost | UI/API aktivace, náhled, export/import a výměna recovery klíče; profily a povolené credentials | V1 má explicitní omezení; průběžné slučování více serverů a schválení přes `/account` nejsou dokončené. Viz [formát a rozsah](ENCRYPTED_HOUSEHOLD.md). |

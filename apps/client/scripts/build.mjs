@@ -1,9 +1,13 @@
 import { build } from "esbuild";
-import { mkdir, copyFile } from "node:fs/promises";
+import { mkdir, copyFile, readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 await mkdir(resolve(root, "dist"), { recursive: true });
+// Update signing keys are pinned into the app at build time.
+const trust = JSON.parse(
+  await readFile(resolve(root, "../../packaging/update-trust.json"), "utf8"),
+);
 await build({
   entryPoints: [resolve(root, "src/main.ts")],
   outfile: resolve(root, "dist/main.cjs"),
@@ -12,6 +16,11 @@ await build({
   format: "cjs",
   target: "node22",
   external: ["electron"],
+  define: {
+    __STREAMERAI_UPDATE_TRUST__: JSON.stringify(JSON.stringify(trust)),
+  },
+  // verify-release.mjs guards its CLI entry against the empty import.meta.
+  logOverride: { "empty-import-meta": "silent" },
 });
 await build({
   entryPoints: [resolve(root, "src/preload.ts")],

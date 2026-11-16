@@ -1,7 +1,7 @@
 {
   "name": "@streamer-ai/client",
   "productName": "StreamerAI Client",
-  "version": "0.1.0",
+  "version": "0.10.0",
   "private": true,
   "type": "module",
   "description": "A paired thin client for a StreamerAI home server.",
@@ -57,6 +57,7 @@
       "signExecutable": false
     },
     "nsis": {
+      "artifactName": "StreamerAI-Client-${version}-win-x64-setup.${ext}",
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,

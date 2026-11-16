@@ -122,6 +122,9 @@ import { householdPendingKey } from "./services/household-state.js";
 import { startHouseholdDiscovery } from "./services/server-discovery.js";
 import { registerEncryptedHouseholdRoutes } from "./routes/encrypted-household.js";
 import { registerServerAiSetupRoutes } from "./routes/ollama-setup.js";
+import { registerServerUpdateRoutes } from "./routes/server-updates.js";
+import { ServerUpdateService } from "./services/server-updates.js";
+import { SERVER_VERSION } from "./version.js";
 import { ServerAiSetupService } from "./services/ollama-setup.js";
 
 export interface CreateAppOptions {
@@ -154,6 +157,8 @@ export interface CreateAppOptions {
   subtitleProviders?: ProviderRegistry<SubtitleProvider>;
   runtimeConfig?: RuntimeConfig;
   playbackTicketStore?: PlaybackTicketStore;
+  /** Server self-update offer; defaults to the installed release environment. */
+  serverUpdates?: ServerUpdateService;
   playbackMediaEngine?: PlaybackMediaEngine;
   externalSubtitleSource?: ExternalSubtitleSource;
   /** Replace the native folder dialog in tests or a desktop host. */
@@ -677,6 +682,29 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
       return false;
     },
   });
+  const serverUpdates =
+    options.serverUpdates ??
+    new ServerUpdateService({
+      currentVersion: SERVER_VERSION,
+      stateRoot: process.env.STREAMERAI_STATE_ROOT,
+      releaseRoot: process.env.STREAMERAI_RELEASE_ROOT,
+      isPlaybackActive: () => playbackTicketStore.hasActive?.() ?? false,
+      log: (message) => app.log.info(message),
+    });
+  registerServerUpdateRoutes(app, {
+    service: serverUpdates,
+    requireOwner: (request, reply) => {
+      if (!localAccess.enabled || localAccess.isOwner(request)) return true;
+      reply.code(403).send({
+        error: {
+          code: "INSTALLATION_OWNER_REQUIRED",
+          message: "Only the household owner can manage server updates.",
+        },
+      });
+      return false;
+    },
+  });
+  serverUpdates.start();
   const encryptedHousehold = new EncryptedHouseholdService(
     database,
     stores.secretStore,

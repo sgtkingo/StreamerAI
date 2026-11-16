@@ -27,6 +27,8 @@ export interface PlaybackTicketStore {
   markStarted(grantId: string): boolean;
   revoke(grantId: string): boolean;
   revokeActive(): void;
+  /** True while a playback ticket is live (someone is watching). */
+  hasActive?(): boolean;
   onRevoke?(listener: () => void): () => void;
 }
 
@@ -125,6 +127,13 @@ export class InMemoryPlaybackTicketStore implements PlaybackTicketStore {
     this.#active = null;
     for (const listener of this.revokeListeners) listener();
     return true;
+  }
+
+  hasActive(): boolean {
+    return (
+      this.#active !== null &&
+      Date.parse(this.#active.expiresAt) > this.now().getTime()
+    );
   }
 
   revokeActive(): void {

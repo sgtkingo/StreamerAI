@@ -1,0 +1,48 @@
+name: Refresh update metadata
+
+# Signed release metadata is valid for at most 31 days so a stale or frozen
+# mirror cannot hide newer releases. This re-signs stable.json of the latest
+# release (same artifacts, higher sequence) before it expires.
+on:
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: refresh-update-metadata
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.22.2
+      - name: Re-sign metadata that expires within 14 days
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STREAMERAI_UPDATE_SIGNING_KEY: ${{ secrets.STREAMERAI_UPDATE_SIGNING_KEY }}
+        run: |
+          tag="$(gh release view --json tagName --jq .tagName 2>/dev/null || true)"
+          if [ -z "$tag" ]; then echo "No published release yet."; exit 0; fi
+          mkdir -p "$RUNNER_TEMP/metadata" && cd "$RUNNER_TEMP/metadata"
+          gh release download "$tag" --repo "${{ github.repository }}" --pattern stable.json
+          expires="$(node -p "JSON.parse(Buffer.from(require('./stable.json').payload,'base64')).expiresAt")"
+          if node -e "process.exit(Date.parse('$expires') - Date.now() > 14*864e5 ? 0 : 1)"; then
+            echo "stable.json for $tag is valid until $expires; nothing to do."; exit 0
+          fi
+          key_id="$(node -p "Object.keys(require('$GITHUB_WORKSPACE/packaging/update-trust.json').keys)[0]")"
+          mkdir refreshed
+          node "$GITHUB_WORKSPACE/scripts/distribution/create-release.mjs" \
+            --refresh stable.json --key "$key_id=env:STREAMERAI_UPDATE_SIGNING_KEY" --output refreshed/stable.json
+          gh release upload "$tag" --repo "${{ github.repository }}" --clobber refreshed/stable.json
+          echo "Re-signed stable.json for $tag."

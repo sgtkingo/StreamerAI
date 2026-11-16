@@ -1,5 +1,6 @@
 import { createInterface } from "node:readline";
 import { STREAMER_TOOLS, StreamerToolService } from "./streamer-tools.js";
+import { SERVER_VERSION } from "../version.js";
 
 type Message = {
   jsonrpc?: string;
@@ -76,7 +77,7 @@ input.on("line", (line) => {
         ? message.params!.protocolVersion
         : "2024-11-05",
       capabilities: { tools: { listChanged: false } },
-      serverInfo: { name: "streamer-ai", version: "0.1.0" },
+      serverInfo: { name: "streamer-ai", version: SERVER_VERSION },
     });
     return;
   }

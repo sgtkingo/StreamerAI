@@ -8,6 +8,7 @@ import {
 } from "./api/client";
 import { AppShell } from "./components/AppShell";
 import { DownloadProvider } from "./components/DownloadManager";
+import { ServerUpdateReminder } from "./components/ServerUpdates";
 import { Brand } from "./components/Brand";
 import { ProfileChooser } from "./components/ProfileChooser";
 import { Onboarding } from "./components/onboarding/Onboarding";
@@ -400,6 +401,7 @@ export function App({ api = apiClient, forceOnboarding = false }: AppProps) {
           }}
           playbackEnabled={playbackEnabled}
         />
+        {installation?.role === "owner" && <ServerUpdateReminder />}
       </DownloadProvider>
     );
   };

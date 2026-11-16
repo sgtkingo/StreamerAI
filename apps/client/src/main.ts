@@ -24,6 +24,11 @@ import {
 } from "./security.js";
 import { loadClientState, saveClientState } from "./settings.js";
 import type { ClientState } from "./types.js";
+import { ClientUpdater } from "./updates.js";
+import type { ServerAnnouncement } from "@streamer-ai/discovery";
+
+/** A server installed on this PC by StreamerAI Setup (local HTTPS gateway). */
+const LOCAL_SERVER = "https://localhost:8443";
 
 const directory = __dirname;
 const shellUrl = pathToFileURL(join(directory, "renderer.html")).href;
@@ -39,7 +44,26 @@ let settingsFile = "";
 let pendingLink = process.argv.find((value) =>
   value.startsWith("streamerai://"),
 );
-let scanning: ReturnType<typeof discoverServers> | null = null;
+let scanning: Promise<ServerAnnouncement[]> | null = null;
+let updater: ClientUpdater | null = null;
+
+/** LAN discovery plus the local server, which multicast does not announce. */
+async function findServers(): Promise<ServerAnnouncement[]> {
+  const [lan, local] = await Promise.allSettled([
+    discoverServers(),
+    verifyDiscoveredServer(LOCAL_SERVER, {
+      fetch: net.fetch as typeof fetch,
+      timeoutMs: 2500,
+    }),
+  ]);
+  const found = lan.status === "fulfilled" ? lan.value : [];
+  if (
+    local.status === "fulfilled" &&
+    !found.some((item) => item.serverId === local.value.serverId)
+  )
+    found.unshift(local.value);
+  return found;
+}
 let connecting: Promise<void> | null = null;
 app.enableSandbox();
 if (!app.requestSingleInstanceLock()) app.quit();
@@ -206,7 +230,7 @@ app
     });
     ipcMain.handle("client:discover", async (event) => {
       trusted(event);
-      scanning ??= discoverServers();
+      scanning ??= findServers();
       try {
         return await scanning;
       } finally {
@@ -296,6 +320,28 @@ app
       app.exit(0);
       return;
     }
+    if (app.isPackaged && process.platform === "win32") {
+      updater = new ClientUpdater({
+        currentVersion: app.getVersion(),
+        directory: join(app.getPath("userData"), "updates"),
+        fetch: net.fetch as typeof fetch,
+        confirm: async (version) =>
+          (
+            await dialog.showMessageBox({
+              type: "info",
+              title: "StreamerAI update",
+              message: `StreamerAI app ${version} is ready.`,
+              detail:
+                "Restart now to finish updating, or keep watching and it installs when you close the app.",
+              buttons: ["Restart now", "Later"],
+              defaultId: 0,
+              cancelId: 1,
+            })
+          ).response === 0,
+        quit: () => app.quit(),
+      });
+      updater.start();
+    }
     if (pendingLink) {
       const link = pendingLink;
       pendingLink = undefined;
@@ -304,8 +350,21 @@ app
       await connect(state.selected.url, state.selected.serverId).catch(
         showError,
       );
+    else {
+      // First start on the server PC: open the local server without a search.
+      const local = await verifyDiscoveredServer(LOCAL_SERVER, {
+        fetch: net.fetch as typeof fetch,
+        timeoutMs: 2500,
+      }).catch(() => null);
+      if (local && !state.selected)
+        await connect(local.url, local.serverId).catch(showError);
+    }
   })
   .catch(showError);
+app.on("will-quit", () => {
+  updater?.stop();
+  updater?.installOnQuit();
+});
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });

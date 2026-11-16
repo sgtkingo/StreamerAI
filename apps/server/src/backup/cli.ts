@@ -9,6 +9,7 @@ import {
   recoverInterruptedServerRestore,
   type BackupExtraFile,
 } from "./server-backup.js";
+import { SERVER_VERSION } from "../version.js";
 
 const usage = `Offline encrypted StreamerAI server backup (Node >=24.7).
 Stop the StreamerAI service first. No command contacts the network.
@@ -172,7 +173,7 @@ async function main(): Promise<void> {
       vaultFile,
       keyFile,
       outputFile,
-      appVersion: "0.1.0",
+      appVersion: SERVER_VERSION,
       extraFiles: extras,
     });
     process.stderr.write(`${JSON.stringify(preview, null, 2)}\n`);
@@ -196,7 +197,7 @@ async function main(): Promise<void> {
       keyFile,
       outputFile,
       accountId,
-      appVersion: "0.1.0",
+      appVersion: SERVER_VERSION,
       extraFiles: extras,
     });
     process.stdout.write(

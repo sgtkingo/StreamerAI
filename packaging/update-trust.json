@@ -1,0 +1,12 @@
+{
+  "format": "streamerai-update-trust/v1",
+  "epoch": 1,
+  "expiresAt": "2029-11-16T15:36:38.242Z",
+  "threshold": 1,
+  "keys": {
+    "release-1": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAoX5uTd8dbYV/q4GV7gcQsF+/zyP266tTFzEax6OIDMo=\n-----END PUBLIC KEY-----\n"
+  },
+  "allowedDownloadOrigins": [
+    "https://github.com"
+  ]
+}

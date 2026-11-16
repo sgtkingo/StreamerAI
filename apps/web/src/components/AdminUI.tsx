@@ -17,6 +17,8 @@ const paths = {
   devices: "M3 4h18v13H3zM8 21h8m-4-4v4",
   services: "M8 3v5m8-5v5M6 8h12v3a6 6 0 0 1-12 0V8Zm6 9v4",
   backups: "M3 11a9 9 0 1 1 2.6 7M3 4v7h7m2-4v5l3 2",
+  updates:
+    "M20 11a8 8 0 0 0-14.3-4.9M4 13a8 8 0 0 0 14.3 4.9M5 3v4h4m10 14v-4h-4",
   security: "m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6l8-3Zm-4 9 3 3 5-6",
   support:
     "M9 9a3 3 0 1 1 5 2c-2 1-2 2-2 3m0 3h.01M22 12a10 10 0 1 1-20 0 10 10 0 0 1 20 0Z",

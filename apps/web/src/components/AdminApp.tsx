@@ -27,6 +27,7 @@ import { useToasts } from "./ToastProvider";
 import { HouseholdMerges } from "./HouseholdMerges";
 import { AdminHelp as InfoTip } from "./AdminUI";
 import { SupportFaq } from "./SupportFaq";
+import { ServerUpdateReminder, ServerUpdatesPanel } from "./ServerUpdates";
 import { AdminIcon, AdminNote, AdminStatus } from "./AdminUI";
 import { useUpdatePending, useUpdateSave, UpdateSaveError } from "./updateSave";
 
@@ -37,6 +38,7 @@ type AdminSection =
   | "devices"
   | "services"
   | "backups"
+  | "updates"
   | "security"
   | "support";
 
@@ -49,6 +51,8 @@ const sectionCopy: Record<AdminSection, string> = {
   services: "",
   backups:
     "Keep an encrypted copy of your household and choose when it is saved.",
+  updates:
+    "Keep this server current. Releases are signed and verified, and a failed update is rolled back automatically.",
   security:
     "Protect administration, profile access and your household backups.",
   support: "Find an answer, collect diagnostics or report a problem.",
@@ -58,7 +62,10 @@ const navGroups: { label: string; items: AdminSection[] }[] = [
     label: "Your household",
     items: ["household", "cloud", "profiles", "devices"],
   },
-  { label: "Configuration", items: ["services", "backups", "security"] },
+  {
+    label: "Configuration",
+    items: ["services", "backups", "updates", "security"],
+  },
   { label: "Help", items: ["support"] },
 ];
 
@@ -395,6 +402,10 @@ export function AdminApp({ api = apiClient }: { api?: StreamerApi }) {
             <h1>{section[0]!.toUpperCase() + section.slice(1)}</h1>
             {sectionCopy[section] && <p>{sectionCopy[section]}</p>}
           </div>
+          {section !== "updates" && (
+            <ServerUpdateReminder onReview={() => selectSection("updates")} />
+          )}
+          {section === "updates" && <ServerUpdatesPanel />}
           {section === "household" && (
             <>
               <div className="admin-overview" aria-label="Household overview">

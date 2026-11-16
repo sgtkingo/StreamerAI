@@ -26,10 +26,10 @@ const keypairs = [
 const bytes = Buffer.from("offline runtime test artifact");
 const artifact = {
   platform: "win-x64",
-  filename: "server-1.2.0-win-x64.zip",
+  filename: "streamerai-server-1.2.0-win-x64.zip",
   bytes: bytes.length,
   sha256: createHash("sha256").update(bytes).digest("hex"),
-  url: "https://github.com/sgtkingo/StreamerAI/releases/download/v1.2.0/server-1.2.0-win-x64.zip",
+  url: "https://github.com/sgtkingo/StreamerAI/releases/download/v1.2.0/streamerai-server-1.2.0-win-x64.zip",
 };
 const root = {
   format: "streamerai-update-trust/v1",
@@ -277,6 +277,85 @@ test("offline signing CLI produces an envelope accepted by independent verificat
     assert.ok(
       path.resolve(directory).startsWith(path.resolve(tmpdir()) + path.sep),
     );
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("components select the server archive, desktop client or Android APK", () => {
+  const client = {
+    ...artifact,
+    component: "client",
+    filename: "StreamerAI-Client-1.2.0-win-x64-setup.exe",
+  };
+  const android = { ...artifact, platform: "android", component: "client" };
+  const value = { ...metadata, artifacts: [artifact, client, android] };
+  const options = { envelope: envelope(value) };
+  assert.equal(check(options).artifact.filename, artifact.filename);
+  assert.equal(
+    check({ ...options, component: "client" }).artifact.filename,
+    client.filename,
+  );
+  assert.equal(
+    check({ ...options, platform: "android", component: "client" }).artifact
+      .platform,
+    "android",
+  );
+  assert.throws(
+    () => check({ ...options, platform: "android" }),
+    /exactly one matching/,
+  );
+  assert.throws(
+    () => check({ ...options, component: "setup" }),
+    /exactly one matching/,
+  );
+});
+
+test("signing classifies artifacts and refresh keeps them with a higher sequence", async () => {
+  const { classifyArtifact, createEnvelope, refreshEnvelope } =
+    await import("./create-release.mjs");
+  assert.deepEqual(
+    classifyArtifact("StreamerAI-Client-1.2.0-android.apk", "1.2.0"),
+    { platform: "android", component: "client" },
+  );
+  assert.throws(
+    () => classifyArtifact("StreamerAI-1.2.0-win-x64-setup.exe", "1.2.0"),
+    /not a complete/,
+  );
+  assert.throws(
+    () => classifyArtifact("streamerai-server-1.1.0-win-x64.zip", "1.2.0"),
+    /not a complete/,
+  );
+  const directory = mkdtempSync(path.join(tmpdir(), "streamerai-refresh-"));
+  try {
+    const archive = path.join(directory, artifact.filename);
+    writeFileSync(archive, bytes);
+    const keys = keypairs.map((pair, index) => ({
+      keyId: `key-${index}`,
+      key: pair.privateKey,
+    }));
+    const created = createEnvelope({
+      version: "1.2.0",
+      sequence: 2,
+      baseUrl:
+        "https://github.com/sgtkingo/StreamerAI/releases/download/v1.2.0/",
+      keys,
+      files: [archive],
+    });
+    const first = check({ envelope: created });
+    assert.equal(first.artifact.component, "server");
+    assert.throws(
+      () => refreshEnvelope({ envelope: created, keys, sequence: 2 }),
+      /higher sequence/,
+    );
+    const refreshed = refreshEnvelope({ envelope: created, keys, sequence: 3 });
+    const second = check({ envelope: refreshed, state: first.state });
+    assert.equal(second.metadata.sequence, 3);
+    assert.deepEqual(second.artifact, first.artifact);
+    assert.throws(
+      () => check({ envelope: created, state: second.state }),
+      /replay/,
+    );
+  } finally {
     rmSync(directory, { recursive: true, force: true });
   }
 });

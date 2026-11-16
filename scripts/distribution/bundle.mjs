@@ -144,6 +144,16 @@ cpSync(
   path.join(output, "service"),
   { recursive: true },
 );
+// The updater and the server verify signed release metadata with the same
+// implementation and the public keys pinned at build time.
+copyFileSync(
+  path.join(repository, "scripts/distribution/verify-release.mjs"),
+  path.join(output, "service/verify-release.mjs"),
+);
+copyFileSync(
+  path.join(repository, "packaging/update-trust.json"),
+  path.join(output, "service/update-trust.json"),
+);
 copyFileSync(
   path.join(repository, "packaging/README.md"),
   path.join(output, "README.md"),

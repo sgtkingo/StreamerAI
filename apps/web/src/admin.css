@@ -1281,3 +1281,82 @@
     transition: none !important;
   }
 }
+
+/* Server updates */
+.server-updates__versions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+  margin: 16px 0;
+}
+.server-updates__versions div {
+  padding: 12px 14px;
+  border: 1px solid var(--border, #ffffff1a);
+  border-radius: 10px;
+}
+.server-updates__versions dt {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted, #a9a9a9);
+}
+.server-updates__versions dd {
+  margin: 4px 0 0;
+  font-weight: 600;
+}
+.server-updates__versions a {
+  font-weight: 400;
+  font-size: 0.85rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.server-updates__versions a .admin-icon {
+  width: 14px;
+  height: 14px;
+}
+.server-updates__progress {
+  width: 100%;
+  height: 8px;
+  accent-color: #e50914;
+}
+.server-update-reminder {
+  position: relative;
+  z-index: 30;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 16px;
+  margin: 0 0 20px;
+  padding: 12px 16px;
+  border: 1px solid #e5b56740;
+  border-radius: 12px;
+  background: #e5b5670f;
+  color: #ead7b8;
+}
+.server-update-reminder > .admin-icon {
+  flex: none;
+  width: 22px;
+  height: 22px;
+}
+.server-update-reminder p {
+  flex: 1 1 260px;
+  margin: 0;
+}
+.server-update-reminder > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+/* In the player the reminder floats above the catalogue. */
+:not(.admin-content) > .server-update-reminder {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  left: 16px;
+  max-width: 720px;
+  margin: 0 auto;
+  background: #2a2216f2;
+  backdrop-filter: blur(8px);
+  box-shadow: 0 12px 40px #0008;
+}

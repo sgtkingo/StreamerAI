@@ -1,6 +1,6 @@
 {
   "name": "streamer-ai",
-  "version": "0.1.0",
+  "version": "0.10.0",
   "private": true,
   "description": "A local-first, conversational film and series discovery app with guided provider integrations.",
   "type": "module",
@@ -34,6 +34,8 @@
     "distribution:test": "node --test scripts/distribution/*.test.mjs",
     "distribution:sign": "node scripts/distribution/create-release.mjs",
     "distribution:verify": "node scripts/distribution/verify-release.mjs",
+    "release:version": "node scripts/distribution/set-version.mjs",
+    "release:key": "node scripts/distribution/generate-update-key.mjs",
     "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build"
   },
   "devDependencies": {

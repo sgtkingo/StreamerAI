@@ -1,0 +1,270 @@
+name: Release
+
+# Automatic releases from main. Put (major), (minor) or (patch) in a commit
+# message pushed to main; the highest marker in the push wins. The workflow:
+#   1. bumps the version in every manifest, moves the "Unreleased" section of
+#      RELEASE_NOTES.md under the new version, commits "Release X.Y.Z [skip ci]"
+#      and tags vX.Y.Z,
+#   2. builds Windows (setup, app, server update) and the signed Android APK,
+#   3. signs stable.json and publishes the GitHub release with those notes.
+# Manual run: Actions -> Release -> Run workflow (choose the bump level, or
+# rebuild an existing tag).
+# Secrets (environment "release"):
+#   STREAMERAI_UPDATE_SIGNING_KEY        Ed25519 private key (PEM) matching packaging/update-trust.json
+#   STREAMERAI_ANDROID_KEYSTORE_BASE64   release keystore (base64); every APK update must use it
+#   STREAMERAI_ANDROID_KEYSTORE_PASSWORD, STREAMERAI_ANDROID_KEY_ALIAS, STREAMERAI_ANDROID_KEY_PASSWORD
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Version bump (ignored when a tag is given)
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+      tag:
+        description: Rebuild and publish an existing tag instead, e.g. v0.2.0
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    # Push events are filtered here; [skip ci] in the bump commit prevents loops.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      contains(toJSON(github.event.commits.*.message), '(major)') ||
+      contains(toJSON(github.event.commits.*.message), '(minor)') ||
+      contains(toJSON(github.event.commits.*.message), '(patch)')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.22.2
+      - name: Bump version, stamp release notes and tag
+        id: release
+        env:
+          # Commit messages are passed as data, never interpolated into the script.
+          COMMITS: ${{ toJSON(github.event.commits.*.message) }}
+          MANUAL_BUMP: ${{ github.event.inputs.bump }}
+          MANUAL_TAG: ${{ github.event.inputs.tag }}
+        run: |
+          if [ -n "$MANUAL_TAG" ]; then
+            git rev-parse -q --verify "refs/tags/$MANUAL_TAG" > /dev/null || { echo "::error::Tag $MANUAL_TAG does not exist"; exit 1; }
+            echo "tag=$MANUAL_TAG" >> "$GITHUB_OUTPUT"
+            echo "version=${MANUAL_TAG#v}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          level="$(node --input-type=module -e "
+            import {bumpLevel} from './scripts/distribution/release-notes.mjs';
+            const manual = process.env.MANUAL_BUMP;
+            console.log(manual || bumpLevel(JSON.parse(process.env.COMMITS || '[]')) || '');
+          ")"
+          [ -n "$level" ] || { echo "No release marker."; exit 1; }
+          current="$(node scripts/distribution/set-version.mjs --check)"
+          version="$(node --input-type=module -e "import {nextVersion} from './scripts/distribution/release-notes.mjs'; console.log(nextVersion('$current', '$level'))")"
+          if git rev-parse -q --verify "refs/tags/v$version" > /dev/null; then echo "::error::Tag v$version already exists"; exit 1; fi
+          node scripts/distribution/set-version.mjs "$version"
+          node scripts/distribution/release-notes.mjs --stamp "$version"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A package.json apps packages RELEASE_NOTES.md
+          git commit -m "Release $version ($level) [skip ci]"
+          git tag -a "v$version" -m "StreamerAI $version"
+          git push origin HEAD:${{ github.ref_name }} "v$version"
+          echo "Released $current -> $version ($level)"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  windows:
+    needs: bump
+    env:
+      TAG: ${{ needs.bump.outputs.tag }}
+    runs-on: windows-2022
+    timeout-minutes: 75
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ env.TAG }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.22.2
+      - name: Install pinned build tooling
+        run: npm install --global pnpm@10.17.1
+      - name: Check release version and pinned update key
+        id: version
+        shell: bash
+        run: |
+          version="$(node scripts/distribution/set-version.mjs --check)"
+          if [ "v$version" != "$TAG" ]; then echo "::error::Tag $TAG does not match manifest version $version"; exit 1; fi
+          node -e "const t=require('./packaging/update-trust.json'); if(!Object.keys(t.keys).length||Date.parse(t.expiresAt)<Date.now()+90*864e5) {console.error('packaging/update-trust.json has no valid release key (run scripts/distribution/generate-update-key.mjs)'); process.exit(1)}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Verify workspace
+        run: pnpm check
+      - name: Verify distribution tooling
+        run: pnpm distribution:test
+      - name: Prepare pinned runtime components
+        run: node scripts/distribution/components.mjs --output dist/installer-components
+      - name: Prepare Windows server release
+        run: node scripts/distribution/bundle.mjs --output dist/installer-bundle --ffmpeg dist/installer-components/bin/ffmpeg.exe --ffprobe dist/installer-components/bin/ffprobe.exe --gateway dist/installer-components/bin/caddy.exe --service-wrapper dist/installer-components/bin/streamerai-service.exe --notices dist/installer-components/notices
+      - name: Archive the server update
+        shell: bash
+        run: |
+          mkdir -p dist/release
+          node --input-type=module -e "import {archiveBundle} from './scripts/distribution/archive.mjs'; archiveBundle('dist/installer-bundle', 'dist/release/streamerai-server-${{ steps.version.outputs.version }}-win-x64.zip')"
+      - name: Build the Windows desktop app
+        run: pnpm --filter @streamer-ai/client package:win
+      - name: Build the combined Windows setup (server + app)
+        run: node scripts/distribution/setup-windows.mjs --bundle dist/installer-bundle --output dist/installers --ollama-descriptor packaging/setup/ollama-windows.pinned.json --client-installer apps/client/release/StreamerAI-Client-${{ steps.version.outputs.version }}-win-x64-setup.exe
+      - name: Collect Windows artifacts
+        shell: bash
+        run: |
+          cp "dist/installers/StreamerAI-${{ steps.version.outputs.version }}-win-x64-setup.exe" dist/release/
+          cp "apps/client/release/StreamerAI-Client-${{ steps.version.outputs.version }}-win-x64-setup.exe" dist/release/
+          ls -l dist/release
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-windows
+          path: dist/release/*
+          if-no-files-found: error
+
+  android:
+    needs: bump
+    env:
+      TAG: ${{ needs.bump.outputs.tag }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: release
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ env.TAG }}
+      - name: Prepare JDK 17 and Android SDK 36
+        run: |
+          echo "JAVA_HOME=$JAVA_HOME_17_X64" >> "$GITHUB_ENV"
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;35.0.0" > /dev/null
+      - name: Restore the release keystore
+        env:
+          KEYSTORE: ${{ secrets.STREAMERAI_ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$KEYSTORE" ]; then echo "::error::STREAMERAI_ANDROID_KEYSTORE_BASE64 is not configured"; exit 1; fi
+          echo "$KEYSTORE" | base64 -d > "$RUNNER_TEMP/streamerai-release.jks"
+          echo "STREAMERAI_ANDROID_KEYSTORE=$RUNNER_TEMP/streamerai-release.jks" >> "$GITHUB_ENV"
+      - name: Build, test and sign the APK
+        working-directory: apps/client/android
+        env:
+          STREAMERAI_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.STREAMERAI_ANDROID_KEYSTORE_PASSWORD }}
+          STREAMERAI_ANDROID_KEY_ALIAS: ${{ secrets.STREAMERAI_ANDROID_KEY_ALIAS }}
+          STREAMERAI_ANDROID_KEY_PASSWORD: ${{ secrets.STREAMERAI_ANDROID_KEY_PASSWORD }}
+        run: ./gradlew assembleRelease testDebugUnitTest --no-daemon
+      - name: Verify signature and name the APK
+        run: |
+          version="${{ needs.bump.outputs.version }}"
+          apk=apps/client/android/app/build/outputs/apk/release/app-release.apk
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs "$apk"
+          mkdir -p dist/release
+          cp "$apk" "dist/release/StreamerAI-Client-$version-android.apk"
+          rm -f "$RUNNER_TEMP/streamerai-release.jks"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-android
+          path: dist/release/*
+          if-no-files-found: error
+
+  publish:
+    needs: [bump, windows, android]
+    env:
+      TAG: ${{ needs.bump.outputs.tag }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ env.TAG }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.22.2
+      # Pin to a commit SHA like the other actions once reviewed.
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: dist/release
+          merge-multiple: true
+      - name: Sign update metadata
+        env:
+          STREAMERAI_UPDATE_SIGNING_KEY: ${{ secrets.STREAMERAI_UPDATE_SIGNING_KEY }}
+          VERSION: ${{ needs.windows.outputs.version }}
+        run: |
+          if [ -z "$STREAMERAI_UPDATE_SIGNING_KEY" ]; then echo "::error::STREAMERAI_UPDATE_SIGNING_KEY is not configured"; exit 1; fi
+          key_id="$(node -p "Object.keys(require('./packaging/update-trust.json').keys)[0]")"
+          channel=stable; case "$VERSION" in *-*) channel=beta;; esac
+          cd dist/release
+          node ../../scripts/distribution/create-release.mjs \
+            --version "$VERSION" --channel "$channel" \
+            --base-url "https://github.com/${{ github.repository }}/releases/download/v$VERSION/" \
+            --key "$key_id=env:STREAMERAI_UPDATE_SIGNING_KEY" \
+            --output "$channel.json" \
+            "streamerai-server-$VERSION-win-x64.zip" \
+            "StreamerAI-Client-$VERSION-win-x64-setup.exe" \
+            "StreamerAI-Client-$VERSION-android.apk"
+          sha256sum ./* | sed 's#  \./#  #' > SHA256SUMS.txt
+      - name: Check metadata against the pinned trust
+        env:
+          VERSION: ${{ needs.windows.outputs.version }}
+        run: |
+          channel=stable; case "$VERSION" in *-*) channel=beta;; esac
+          node --input-type=module -e "
+            import {readFileSync} from 'node:fs';
+            import {verifyRelease} from './scripts/distribution/verify-release.mjs';
+            const root = JSON.parse(readFileSync('packaging/update-trust.json','utf8'));
+            const envelope = JSON.parse(readFileSync('dist/release/$channel.json','utf8'));
+            for (const [platform, component] of [['win-x64','server'],['win-x64','client'],['android','client']])
+              console.log(platform, component, verifyRelease({root, envelope, currentVersion:'0.0.0', platform, component, channel:'$channel'}).artifact.filename);
+          "
+      - name: Publish the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.windows.outputs.version }}
+        run: |
+          prerelease=""; case "$VERSION" in *-*) prerelease="--prerelease";; esac
+          # RELEASE_NOTES.md section of this version, then GitHub's generated changes.
+          notes="$RUNNER_TEMP/release-notes.md"
+          {
+            node scripts/distribution/release-notes.mjs --notes "$VERSION"
+            echo
+            echo "### Downloads"
+            echo
+            echo "- **Windows:** \`StreamerAI-$VERSION-win-x64-setup.exe\` (server, app for this PC, or both; upgrades keep your household)"
+            echo "- **Android / Android TV:** \`StreamerAI-Client-$VERSION-android.apk\`"
+            echo "- Installed servers and apps offer this update automatically."
+          } > "$notes"
+          cd dist/release
+          if gh release view "v$VERSION" > /dev/null 2>&1; then
+            gh release edit "v$VERSION" --notes-file "$notes"
+            gh release upload "v$VERSION" --clobber ./*
+          else
+            gh release create "v$VERSION" --title "StreamerAI $VERSION" --notes-file "$notes" --generate-notes --verify-tag $prerelease ./*
+          fi

@@ -37,6 +37,7 @@ export function buildWindowsSetup({
   compiler,
   review = false,
   ollama,
+  client,
 }) {
   if (process.platform !== "win32")
     throw new Error(
@@ -97,6 +98,18 @@ export function buildWindowsSetup({
       ollama.bytes > 8 * 1024 ** 3)
   )
     throw new Error("Invalid pinned official Ollama installer descriptor.");
+  let clientInstaller;
+  if (client) {
+    clientInstaller = path.resolve(client);
+    const name = path.basename(clientInstaller);
+    const expected = `StreamerAI-Client-${manifest.version}-win-x64-setup.exe`;
+    if (name !== expected)
+      throw new Error(
+        `The desktop app installer must be ${expected} (same version as the server).`,
+      );
+    if (readFileSync(clientInstaller).subarray(0, 2).toString("ascii") !== "MZ")
+      throw new Error("The desktop app installer is not a Windows executable.");
+  }
   mkdirSync(directory, { recursive: true });
   const payload = path.join(directory, "server.zip");
   archiveBundle(release, payload);
@@ -113,6 +126,9 @@ export function buildWindowsSetup({
     ollamaUrl: ollama?.url ?? "",
     ollamaSha256: ollama?.sha256 ?? "",
     ollamaBytes: ollama?.bytes ?? 0,
+    clientSha256: clientInstaller ? sha256(clientInstaller) : "",
+    clientBytes: clientInstaller ? statSync(clientInstaller).size : 0,
+    clientVersion: clientInstaller ? manifest.version : "",
   };
   const configFile = path.join(directory, "setup-config.json");
   writeFileSync(configFile, `${JSON.stringify(configuration, null, 2)}\n`);
@@ -148,7 +164,7 @@ export function buildWindowsSetup({
     );
   const executable = path.join(
     directory,
-    `StreamerAI-Server-${manifest.version}-win-x64-setup${configuration.reviewOnly ? "-review" : ""}.exe`,
+    `StreamerAI${clientInstaller ? "" : "-Server"}-${manifest.version}-win-x64-setup${configuration.reviewOnly ? "-review" : ""}.exe`,
   );
   const args = [
     "/nologo",
@@ -163,6 +179,9 @@ export function buildWindowsSetup({
     `/resource:${payload},server.zip`,
     `/resource:${configFile},setup-config.json`,
     `/resource:${gatewayRepair},gateway-repair.caddyfile`,
+    ...(clientInstaller
+      ? [`/resource:${clientInstaller},client-setup.exe`]
+      : []),
     "/reference:System.dll",
     "/reference:System.Core.dll",
     "/reference:System.Drawing.dll",
@@ -192,6 +211,7 @@ export function buildWindowsSetup({
     bytes: statSync(executable).size,
     iconSha256: sha256(iconFile),
     completeComponents: manifest.complete === true,
+    clientIncluded: !!clientInstaller,
     reviewOnly: configuration.reviewOnly,
     releaseReady: false,
     selfTest: checked.stdout.trim(),
@@ -219,11 +239,12 @@ if (
       compiler: { type: "string" },
       review: { type: "boolean", default: false },
       "ollama-descriptor": { type: "string" },
+      "client-installer": { type: "string" },
     },
   });
   if (!values.bundle || !values.output)
     throw new Error(
-      "Usage: node setup-windows.mjs --bundle VERIFIED_BUNDLE --output NEW_DIRECTORY [--review] [--ollama-descriptor JSON]",
+      "Usage: node setup-windows.mjs --bundle VERIFIED_BUNDLE --output NEW_DIRECTORY [--review] [--ollama-descriptor JSON] [--client-installer StreamerAI-Client-<version>-win-x64-setup.exe]",
     );
   console.log(
     JSON.stringify(
@@ -232,6 +253,7 @@ if (
         output: values.output,
         compiler: values.compiler,
         review: values.review,
+        client: values["client-installer"],
         ollama: values["ollama-descriptor"]
           ? JSON.parse(readFileSync(values["ollama-descriptor"], "utf8"))
           : undefined,

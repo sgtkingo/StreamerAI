@@ -34,6 +34,9 @@ internal sealed class SetupConfiguration {
     public string ollamaUrl { get; set; }
     public string ollamaSha256 { get; set; }
     public long ollamaBytes { get; set; }
+    public string clientSha256 { get; set; }
+    public long clientBytes { get; set; }
+    public string clientVersion { get; set; }
 }
 
 internal sealed class SetupFailure : Exception {
@@ -61,6 +64,8 @@ internal static class Program {
             if (args.Contains("--self-test")) {
                 VerifyPayload();
                 VerifyGatewayRepair();
+                VerifyClientPayload();
+                if (CompareVersions("0.10.0", "0.9.9") <= 0 || CompareVersions("1.0.0-beta.1", "1.0.0") >= 0 || CompareVersions("1.2.3", "1.2.3") != 0) throw new InvalidDataException("Version ordering check failed.");
                 var exact = Json.Deserialize<Dictionary<string, object>>("{\"models\":[{\"name\":\"qwen3.5:4b\"}]}");
                 var other = Json.Deserialize<Dictionary<string, object>>("{\"models\":[{\"name\":\"qwen3.5:4b-other\",\"description\":\"qwen3.5:4b\"}]}");
                 if (!HasModel(exact) || HasModel(other)) throw new InvalidDataException("Exact model matching check failed.");
@@ -73,7 +78,7 @@ internal static class Program {
                 }
                 if (!NeedsInitialAdministration(Json.Deserialize<Dictionary<string, object>>("{\"enabled\":true,\"claimed\":false}")) || NeedsInitialAdministration(Json.Deserialize<Dictionary<string, object>>("{\"enabled\":true,\"claimed\":true}")) || NeedsInitialAdministration(Json.Deserialize<Dictionary<string, object>>("{\"enabled\":false,\"claimed\":false}"))) throw new InvalidDataException("Owner handoff policy check failed.");
                 try { NeedsInitialAdministration(Json.Deserialize<Dictionary<string, object>>("{\"enabled\":\"false\",\"claimed\":false}")); throw new InvalidOperationException("Malformed owner status was accepted."); } catch (InvalidDataException) { }
-                Console.WriteLine(Json.Serialize(new { format = "streamerai-setup/v1", version = Configuration.version, reviewOnly = Configuration.reviewOnly, preview = Configuration.preview, payloadVerified = true, gatewayRepairVerified = true, exactModelMatchVerified = true, protectedCreationVerified = true, ownerHandoffVerified = true, serverUrl = ServerUrl, recommendedModel = Model }));
+                Console.WriteLine(Json.Serialize(new { format = "streamerai-setup/v1", version = Configuration.version, reviewOnly = Configuration.reviewOnly, preview = Configuration.preview, payloadVerified = true, gatewayRepairVerified = true, exactModelMatchVerified = true, protectedCreationVerified = true, ownerHandoffVerified = true, versionOrderingVerified = true, clientIncluded = ClientAvailable, clientVersion = Configuration.clientVersion ?? "", serverUrl = ServerUrl, recommendedModel = Model }));
                 return 0;
             }
             if (args.Contains("--render-preview") || args.Contains("--preview-image")) {
@@ -111,7 +116,8 @@ internal static class Program {
     /// It runs in the normal user process, never with administrator rights.
     /// </summary>
     internal static void RegisterAgentConnector() {
-        string release = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "StreamerAI", "releases", Configuration.version);
+        // After automatic updates the active release differs from this setup's version.
+        string release = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "StreamerAI", "releases", InstalledServerVersion() ?? Configuration.version);
         string node = Path.Combine(release, "runtime", "node.exe");
         string connector = Path.Combine(release, "app", "dist", "mcp", "connect.js");
         if (!File.Exists(node) || !File.Exists(connector)) return;
@@ -126,6 +132,54 @@ internal static class Program {
     internal static string Quote(string value) {
         // Windows process argument quoting; no shell interpolation.
         return "\"" + value.Replace("\"", "\\\"") + "\"";
+    }
+    internal static bool ClientAvailable { get { return Configuration.clientBytes > 0 && !String.IsNullOrEmpty(Configuration.clientSha256); } }
+    internal static string ClientExecutable() {
+        // electron-builder's per-user NSIS default location for productName "StreamerAI Client".
+        return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "StreamerAI Client", "StreamerAI Client.exe");
+    }
+    internal static void VerifyClientPayload() {
+        if (!ClientAvailable) return;
+        using (Stream payload = Assembly.GetExecutingAssembly().GetManifestResourceStream("client-setup.exe")) {
+            if (payload == null || payload.Length != Configuration.clientBytes || Hash(payload) != Configuration.clientSha256)
+                throw new InvalidDataException("The embedded StreamerAI app installer is damaged.");
+        }
+    }
+    /// <summary>Numeric MAJOR.MINOR.PATCH ordering; a prerelease sorts before its release.</summary>
+    internal static int CompareVersions(string left, string right) {
+        System.Text.RegularExpressions.Regex pattern = new System.Text.RegularExpressions.Regex(@"^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$");
+        System.Text.RegularExpressions.Match a = pattern.Match(left ?? ""), b = pattern.Match(right ?? "");
+        if (!a.Success || !b.Success) throw new InvalidDataException("Invalid version.");
+        for (int index = 1; index <= 3; index++) {
+            int difference = Int64.Parse(a.Groups[index].Value).CompareTo(Int64.Parse(b.Groups[index].Value));
+            if (difference != 0) return difference;
+        }
+        string pa = a.Groups[4].Value, pb = b.Groups[4].Value;
+        if (pa == pb) return 0;
+        if (pa.Length == 0) return 1;
+        if (pb.Length == 0) return -1;
+        return String.CompareOrdinal(pa, pb) < 0 ? -1 : 1;
+    }
+    /// <summary>The active installed server version (current.json, or the 0.1.x service definition); null when none.</summary>
+    internal static string InstalledServerVersion() {
+        try {
+            string program = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "StreamerAI");
+            string current = Path.Combine(program, "current.json");
+            if (File.Exists(current)) {
+                var saved = Json.Deserialize<Dictionary<string, object>>(File.ReadAllText(current));
+                object version;
+                if (saved != null && saved.TryGetValue("version", out version) && version is string) { CompareVersions((string)version, "0.0.0"); return (string)version; }
+            }
+            string serviceFile = Path.Combine(program, "services", "Server", "StreamerAIServer.xml");
+            if (!File.Exists(serviceFile)) return null;
+            XmlDocument xml = new XmlDocument { XmlResolver = null };
+            using (XmlReader reader = XmlReader.Create(serviceFile, new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null })) xml.Load(reader);
+            string release = NodeText(xml, "/service/env[@name='STREAMERAI_RELEASE_ROOT']/@value");
+            var manifest = Json.Deserialize<Dictionary<string, object>>(File.ReadAllText(Path.Combine(release, "bundle.json")));
+            object installed;
+            if (manifest != null && manifest.TryGetValue("version", out installed) && installed is string) { CompareVersions((string)installed, "0.0.0"); return (string)installed; }
+        } catch (Exception) { }
+        return null;
     }
     internal static string FailureCode(Exception error) {
         SetupFailure known = error as SetupFailure;
@@ -349,6 +403,12 @@ internal static class Program {
                         resume = saved.ContainsKey("version") && Convert.ToString(saved["version"]) == Configuration.version && saved.ContainsKey("phase") && Convert.ToString(saved["phase"]) == "services-installed";
                     }
                     string installedRelease = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "StreamerAI", "releases", Configuration.version);
+                    string installedVersion = InstalledServerVersion();
+                    if (installedVersion != null && CompareVersions(installedVersion, Configuration.version) > 0)
+                        throw new SetupFailure("NEWER_SERVER_INSTALLED", "StreamerAI " + installedVersion + " is already installed and is newer than this setup (" + Configuration.version + "). Nothing was changed.");
+                    // Same version installed: repair the remaining steps without reinstalling services.
+                    if (installedVersion == Configuration.version && Directory.Exists(installedRelease)) resume = true;
+                    bool upgrade = installedVersion != null && !resume;
                     if (resume) {
                         string program = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "StreamerAI");
                         foreach (string relative in new[] { "releases/" + Configuration.version + "/runtime/node.exe", "releases/" + Configuration.version + "/service/verify-bundle.mjs", "releases/" + Configuration.version + "/bundle.json", "setup/StreamerAI-Setup.exe" }) AssertManagedDescendant(program, relative, false);
@@ -356,7 +416,22 @@ internal static class Program {
                     release = resume ? installedRelease : ExtractPayload();
                     string node = Path.Combine(release, "runtime", "node.exe");
                     Run(node, Quote(Path.Combine(release, "service", "verify-bundle.mjs")) + " " + Quote(release) + " --complete", release, 120000);
-                    if (!resume) {
+                    if (upgrade) {
+                        progress("Upgrading the StreamerAI server from " + installedVersion + " to " + Configuration.version + ". Your household and settings are kept…");
+                        // Place the release first: Windows cannot move a folder whose node.exe is running.
+                        string program = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "StreamerAI");
+                        AssertManagedDescendant(program, "releases", false);
+                        if (Directory.Exists(installedRelease)) { AssertManagedDescendant(program, "releases/" + Configuration.version, false); Directory.Delete(installedRelease, true); }
+                        Directory.Move(release, installedRelease);
+                        release = installedRelease;
+                        node = Path.Combine(release, "runtime", "node.exe");
+                        try {
+                            Run(node, Quote(Path.Combine(release, "service", "updater.mjs")) + " activate --source " + Quote(release), program, 600000);
+                        } catch (InvalidOperationException error) {
+                            throw new SetupFailure(error.Message.Contains("restored") ? "UPGRADE_ROLLED_BACK" : "UPGRADE_FAILED", error.Message + " Your previous server and data were kept.");
+                        }
+                        WriteManagedText(receipt, Json.Serialize(new { version = Configuration.version, phase = "services-installed" }));
+                    } else if (!resume) {
                         progress("Installing the StreamerAI services and protected data directory…");
                         string powerShell = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "WindowsPowerShell", "v1.0", "powershell.exe");
                         Run(powerShell, "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File " + Quote(Path.Combine(release, "service", "install-windows.ps1")) + " -Apply -AllowPrototype", release, 180000);
@@ -390,7 +465,7 @@ internal static class Program {
                     if (!Path.GetFullPath(Assembly.GetExecutingAssembly().Location).Equals(Path.GetFullPath(retainedSetup), StringComparison.OrdinalIgnoreCase)) {
                         AssertManagedPath(retainedSetup, false);
                         using (FileStream source = File.OpenRead(Assembly.GetExecutingAssembly().Location))
-                        using (FileStream destination = CreateManagedFile(retainedSetup, false, resume ? FileMode.Create : FileMode.CreateNew)) source.CopyTo(destination);
+                        using (FileStream destination = CreateManagedFile(retainedSetup, false, resume || upgrade ? FileMode.Create : FileMode.CreateNew)) source.CopyTo(destination);
                     }
                     string menu = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonPrograms), "StreamerAI");
                     Directory.CreateDirectory(menu);
@@ -504,61 +579,96 @@ internal sealed class SetupWindow : Form {
     private readonly Label resultTitle = new Label();
     private readonly Label resultSummary = new Label();
     private readonly TextBox resultDetails = new TextBox();
-    private bool working, installed, aiAvailable, modelAvailable, aiFailed, skipRequested;
+    private readonly CheckBox installServer = new CheckBox();
+    private readonly CheckBox installClient = new CheckBox();
+    private readonly string installedServerVersion = Program.InstalledServerVersion();
+    private bool working, installed, clientInstalled, aiAvailable, modelAvailable, aiFailed, skipRequested;
     private CancellationTokenSource aiCancellation;
+    private bool serverAllowed = true;
+    private bool ServerSelected { get { return !configureOnly && serverAllowed && installServer.Checked; } }
+    private bool ClientSelected { get { return !configureOnly && Program.ClientAvailable && installClient.Checked; } }
 
     internal SetupWindow(bool configureOnly) {
         this.configureOnly = configureOnly;
-        Text = configureOnly ? "StreamerAI — Configure local AI" : "StreamerAI Server Setup" + (Program.Configuration.preview ? " — Preview" : "");
-        ClientSize = new Size(650, 520); MinimumSize = new Size(666, 559); StartPosition = FormStartPosition.CenterScreen;
+        Text = configureOnly ? "StreamerAI — Configure local AI" : "StreamerAI Setup" + (Program.Configuration.preview ? " — Preview" : "");
+        int offset = configureOnly ? 0 : 75;
+        ClientSize = new Size(650, 520 + offset); MinimumSize = new Size(666, 559 + offset); StartPosition = FormStartPosition.CenterScreen;
         BackColor = Color.FromArgb(20, 21, 29); ForeColor = Color.FromArgb(242, 238, 231); Font = new Font("Segoe UI", 10);
         Icon = Icon.ExtractAssociatedIcon(Assembly.GetExecutingAssembly().Location);
         Label brand = new Label { Text = "STREAMER", Font = new Font("Segoe UI", 13, FontStyle.Bold), ForeColor = Color.FromArgb(229, 9, 20), AutoSize = true, Location = new Point(30, 25) };
         Label brandAi = new Label { Text = "AI", Font = new Font("Segoe UI", 13, FontStyle.Bold), ForeColor = Color.White, AutoSize = true, Location = new Point(127, 25) };
         title.Text = configureOnly ? "Local AI, ready when you need it." : "Your home cinema starts here."; title.Font = new Font("Segoe UI", 23, FontStyle.Regular); title.AutoSize = true; title.Location = new Point(28, 60);
-        summary.Text = configureOnly ? "Existing Ollama installations and models will be reused. Downloads need your choice below." : "Setup prepares the server, its background services, protected storage and trusted local HTTPS. Your other devices only need a web browser."; summary.Location = new Point(30, 112); summary.Size = new Size(585, 58);
-        aiStatus.Location = new Point(30, 180); aiStatus.Size = new Size(585, 35); aiStatus.Text = "Checking local AI…";
-        installAi.Text = "Install Ollama if it is missing (optional download, about 1.7 GB)"; installAi.Location = new Point(30, 220); installAi.Size = new Size(585, 32);
-        downloadModel.Text = "Download the recommended Qwen 3.5 4B model if missing (about 3.4 GB)"; downloadModel.Location = new Point(30, 255); downloadModel.Size = new Size(585, 43);
+        summary.Text = configureOnly ? "Existing Ollama installations and models will be reused. Downloads need your choice below." : "Choose what this computer should do. The server keeps your household and runs in the background; other devices use the Android app or a web browser."; summary.Location = new Point(30, 112); summary.Size = new Size(585, 50);
+        // Component choice: the server, the app for this PC, or both.
+        string version = Program.Configuration.version;
+        bool newerServer = installedServerVersion != null && Program.CompareVersions(installedServerVersion, version) > 0;
+        installServer.Text = installedServerVersion == null ? "StreamerAI Server — your household's home server (runs in the background)"
+            : newerServer ? "StreamerAI Server " + installedServerVersion + " is already installed (newer than this setup)"
+            : installedServerVersion == version ? "StreamerAI Server " + version + " — already installed; repair it"
+            : "Upgrade StreamerAI Server " + installedServerVersion + " → " + version + " (keeps your household)";
+        serverAllowed = !newerServer;
+        installServer.Checked = !newerServer && installedServerVersion != version; installServer.Enabled = !newerServer;
+        installServer.Location = new Point(30, 168); installServer.Size = new Size(585, 30);
+        bool clientPresent = File.Exists(Program.ClientExecutable());
+        installClient.Text = (clientPresent ? "Update the StreamerAI app for this PC" : "StreamerAI app for this PC — watch in its own window") + (Program.ClientAvailable && !String.IsNullOrEmpty(Program.Configuration.clientVersion) ? " (" + Program.Configuration.clientVersion + ")" : "");
+        installClient.Checked = Program.ClientAvailable; installClient.Visible = Program.ClientAvailable;
+        installClient.Location = new Point(30, 200); installClient.Size = new Size(585, 30);
+        foreach (CheckBox option in new[] { installServer, installClient }) { option.ForeColor = ForeColor; option.BackColor = BackColor; option.Visible = option.Visible && !configureOnly; option.Font = new Font("Segoe UI", 10, FontStyle.Bold); option.CheckedChanged += (sender, args) => UpdateOptions(); }
+        aiStatus.Location = new Point(30, 180 + offset); aiStatus.Size = new Size(585, 35); aiStatus.Text = "Checking local AI…";
+        installAi.Text = "Install Ollama if it is missing (optional download, about 1.7 GB)"; installAi.Location = new Point(30, 220 + offset); installAi.Size = new Size(585, 32);
+        downloadModel.Text = "Download the recommended Qwen 3.5 4B model if missing (about 3.4 GB)"; downloadModel.Location = new Point(30, 255 + offset); downloadModel.Size = new Size(585, 43);
         foreach (CheckBox option in new[] { installAi, downloadModel }) { option.ForeColor = ForeColor; option.BackColor = BackColor; }
         runtimeNotice.Location = installAi.Location; runtimeNotice.Size = installAi.Size; runtimeNotice.ForeColor = Color.FromArgb(213, 219, 225);
         modelNotice.Location = downloadModel.Location; modelNotice.Size = downloadModel.Size; modelNotice.ForeColor = Color.FromArgb(213, 219, 225);
-        privacy.Text = "AI stays on this computer. You can continue without it and add it later. Downloads use the official Ollama distribution; service access is configured in the browser."; privacy.Location = new Point(30, 305); privacy.Size = new Size(585, 50); privacy.ForeColor = Color.FromArgb(190, 194, 204);
-        progress.Location = new Point(30, 370); progress.Size = new Size(585, 15); progress.Visible = false;
-        status.Location = new Point(30, 395); status.Size = new Size(585, 50);
-        install.Location = new Point(380, 460); install.Size = new Size(235, 35); install.Text = configureOnly ? "Prepare local AI" : Program.Configuration.preview ? "Install StreamerAI preview" : "Install StreamerAI";
+        privacy.Text = "AI stays on this computer. You can continue without it and add it later. Downloads use the official Ollama distribution; service access is configured in the browser."; privacy.Location = new Point(30, 305 + offset); privacy.Size = new Size(585, 50); privacy.ForeColor = Color.FromArgb(190, 194, 204);
+        progress.Location = new Point(30, 370 + offset); progress.Size = new Size(585, 15); progress.Visible = false;
+        status.Location = new Point(30, 395 + offset); status.Size = new Size(585, 50);
+        install.Location = new Point(380, 460 + offset); install.Size = new Size(235, 35);
         install.BackColor = Color.FromArgb(229, 9, 20); install.ForeColor = Color.White; install.FlatStyle = FlatStyle.Flat;
-        cancel.Location = new Point(250, 460); cancel.Size = new Size(115, 35); cancel.Text = "Close";
+        cancel.Location = new Point(250, 460 + offset); cancel.Size = new Size(115, 35); cancel.Text = "Close";
         cancel.Click += (sender, args) => { if (working && aiCancellation != null) { skipRequested = true; aiCancellation.Cancel(); } else { if (installed && aiFailed) OpenBrowser(); Close(); } }; install.Click += async (sender, args) => await InstallClicked();
-        result.Location = new Point(30, 95); result.Size = new Size(585, 340); result.BackColor = Color.FromArgb(28, 30, 39); result.Visible = false;
+        result.Location = new Point(30, 95); result.Size = new Size(585, 340 + offset); result.BackColor = Color.FromArgb(28, 30, 39); result.Visible = false;
         resultSymbol.Location = new Point(22, 20); resultSymbol.Size = new Size(55, 52); resultSymbol.Font = new Font("Segoe UI Symbol", 29, FontStyle.Bold);
         resultTitle.Location = new Point(83, 25); resultTitle.Size = new Size(475, 48); resultTitle.Font = new Font("Segoe UI", 20, FontStyle.Bold);
         resultSummary.Location = new Point(24, 93); resultSummary.Size = new Size(535, 78); resultSummary.Font = new Font("Segoe UI", 11);
         Label detailsTitle = new Label { Text = "INSTALLATION RESULT", Location = new Point(24, 190), Size = new Size(535, 24), Font = new Font("Segoe UI", 9, FontStyle.Bold), ForeColor = Color.FromArgb(190, 194, 204) };
         resultDetails.Location = new Point(24, 218); resultDetails.Size = new Size(535, 95); resultDetails.Multiline = true; resultDetails.ReadOnly = true; resultDetails.ScrollBars = ScrollBars.Vertical; resultDetails.BorderStyle = BorderStyle.FixedSingle; resultDetails.BackColor = Color.FromArgb(18, 20, 27); resultDetails.ForeColor = Color.FromArgb(230, 232, 237); resultDetails.Font = new Font("Consolas", 9);
         result.Controls.AddRange(new Control[] { resultSymbol, resultTitle, resultSummary, detailsTitle, resultDetails });
-        Controls.AddRange(new Control[] { brand, brandAi, title, summary, aiStatus, installAi, runtimeNotice, downloadModel, modelNotice, privacy, progress, status, result, install, cancel });
+        Controls.AddRange(new Control[] { brand, brandAi, title, summary, installServer, installClient, aiStatus, installAi, runtimeNotice, downloadModel, modelNotice, privacy, progress, status, result, install, cancel });
         installAi.CheckedChanged += (sender, args) => UpdateOptions();
         install.Enabled = false;
-        Shown += async (sender, args) => { await DetectAi(); if (!Program.Configuration.reviewOnly && !working) install.Enabled = true; };
+        Shown += async (sender, args) => { await DetectAi(); if (!Program.Configuration.reviewOnly && !working) UpdateOptions(); };
         FormClosing += (sender, args) => { if (working) { args.Cancel = true; SetStatus("Please wait for setup to finish before closing this window."); } };
         if (Program.Configuration.reviewOnly) {
-            install.Enabled = false; installAi.Enabled = false; downloadModel.Enabled = false;
+            install.Enabled = false; installAi.Enabled = false; downloadModel.Enabled = false; installServer.Enabled = false; installClient.Enabled = false;
             install.BackColor = Color.FromArgb(74, 77, 88);
             status.Text = "Review build: the embedded runtime is incomplete. Installation is disabled; no services or AI components can be installed by this build.";
         }
         UpdateOptions();
     }
     private void SetStatus(string message) { if (IsHandleCreated) BeginInvoke((Action)(() => status.Text = Program.Truncate(message, 350))); }
+    /// <summary>Local AI belongs to the server; it is offered with the server choice or an installed server.</summary>
+    private bool AiSection { get { return configureOnly || ServerSelected || installedServerVersion != null || installed; } }
     private void UpdateOptions() {
+        if (result.Visible) return;
+        bool aiSection = AiSection;
+        foreach (Control control in new Control[] { aiStatus, privacy }) control.Visible = aiSection;
         bool runtimeChoice = !Program.Configuration.reviewOnly && !aiAvailable && (File.Exists(ExistingOllama()) || !String.IsNullOrEmpty(Program.Configuration.ollamaSha256));
-        installAi.Visible = runtimeChoice;
-        runtimeNotice.Visible = !runtimeChoice;
+        installAi.Visible = aiSection && runtimeChoice;
+        runtimeNotice.Visible = aiSection && !runtimeChoice;
         runtimeNotice.Text = aiAvailable ? "✓ Ollama is already available — the existing installation will be used" : Program.Configuration.reviewOnly ? "Local AI options are unavailable in this review build" : "Automatic Ollama setup is unavailable in this build";
         bool modelChoice = !Program.Configuration.reviewOnly && !modelAvailable && (aiAvailable || installAi.Checked);
-        downloadModel.Visible = modelChoice;
-        modelNotice.Visible = !modelChoice;
+        downloadModel.Visible = aiSection && modelChoice;
+        modelNotice.Visible = aiSection && !modelChoice;
         modelNotice.Text = modelAvailable ? "✓ Recommended model is already installed — no download needed" : Program.Configuration.reviewOnly ? "Model download is unavailable in this review build" : "Select Ollama above to enable the model download";
+        if (!aiSection) { installAi.Checked = false; downloadModel.Checked = false; }
+        bool upgrading = ServerSelected && installedServerVersion != null && installedServerVersion != Program.Configuration.version;
+        install.Text = configureOnly ? "Prepare local AI"
+            : upgrading ? "Upgrade StreamerAI"
+            : !ServerSelected && ClientSelected ? "Install the app"
+            : Program.Configuration.preview ? "Install StreamerAI preview" : "Install StreamerAI";
+        bool anything = configureOnly || ServerSelected || ClientSelected || (aiSection && (installAi.Checked || downloadModel.Checked));
+        if (!Program.Configuration.reviewOnly && !working) install.Enabled = anything;
     }
     private static string HumanFailure(string code, bool serverReady) {
         if (serverReady) return "Your server is ready, but local AI setup needs another try. You can still open StreamerAI now; your existing models are safe.";
@@ -568,7 +678,7 @@ internal sealed class SetupWindow : Form {
         return "The server could not finish setup. Your existing data was preserved. You can retry without reinstalling everything.";
     }
     private void ShowResult(bool success, string code, string message, string detail) {
-        foreach (Control control in new Control[] { title, summary, aiStatus, installAi, runtimeNotice, downloadModel, modelNotice, privacy, progress, status }) control.Visible = false;
+        foreach (Control control in new Control[] { title, summary, installServer, installClient, aiStatus, installAi, runtimeNotice, downloadModel, modelNotice, privacy, progress, status }) control.Visible = false;
         resultSymbol.Text = success ? "✓" : "☹";
         resultSymbol.ForeColor = success ? Color.FromArgb(110, 226, 166) : Color.FromArgb(249, 119, 125);
         resultTitle.Text = success ? "Ready to watch." : "Setup needs another try.";
@@ -576,7 +686,7 @@ internal sealed class SetupWindow : Form {
         resultDetails.Text = "STATUS: " + (success ? "OK" : "ERROR") + "\r\nCODE: " + code + "\r\n" + Program.Truncate(detail.Replace('\r', ' ').Replace('\n', ' '), 600);
         resultDetails.ScrollBars = detail.Length > 180 ? ScrollBars.Vertical : ScrollBars.None;
         result.Visible = true;
-        install.Text = success ? "Open StreamerAI" : installed || configureOnly ? "Retry local AI setup" : "Retry installation";
+        install.Text = success ? (HasServer ? "Open StreamerAI" : "Open the app") : aiFailed ? "Retry local AI setup" : "Retry installation";
         cancel.Text = !success && installed ? "Open StreamerAI" : "Close";
     }
     private void ShowSetup() {
@@ -587,7 +697,7 @@ internal sealed class SetupWindow : Form {
     internal void ShowPreviewResult(string state) {
         install.Enabled = true;
         install.BackColor = Color.FromArgb(229, 9, 20);
-        if (state == "success") { installed = true; ShowResult(true, "SERVER_READY", "StreamerAI is installed and ready. Continue in your web browser; existing profiles and models were preserved.", "Local address: " + Program.ServerUrl); }
+        if (state == "success") { installed = true; finished = true; ShowResult(true, "SERVER_READY", "StreamerAI is installed and ready. Continue in your web browser; existing profiles and models were preserved.", "Local address: " + Program.ServerUrl); }
         else if (state == "error") ShowResult(false, "GATEWAY_CERTIFICATE_TIMEOUT", HumanFailure("GATEWAY_CERTIFICATE_TIMEOUT", false), "DETAIL: The HTTPS gateway did not create its certificate. Existing data was preserved.");
         else if (state == "options") {
             aiStatus.Text = "Ollama is not installed. Choose the local AI components you want.";
@@ -615,41 +725,83 @@ internal sealed class SetupWindow : Form {
         }
         UpdateOptions();
     }
+    private bool finished;
+    /// <summary>A server is on this computer after this run (installed now or before).</summary>
+    private bool HasServer { get { return installed || installedServerVersion != null; } }
     private async Task InstallClicked() {
         if (Program.Configuration.reviewOnly) return;
-        if (installed && !aiFailed) { OpenBrowser(); return; }
+        if (finished && !aiFailed) { OpenStreamerAI(); return; }
         if (!CheckSpace()) return;
+        bool server = ServerSelected, client = ClientSelected;
         ShowSetup();
-        foreach (Control control in new Control[] { installAi, runtimeNotice, downloadModel, modelNotice }) control.Visible = false;
+        foreach (Control control in new Control[] { installServer, installClient, installAi, runtimeNotice, downloadModel, modelNotice }) control.Visible = false;
         skipRequested = false;
+        string stage = "server";
         working = true; install.Enabled = false; cancel.Enabled = false; installAi.Enabled = false; downloadModel.Enabled = false; progress.Visible = true; progress.Style = ProgressBarStyle.Marquee;
         try {
-            if (!configureOnly && !installed) {
+            bool upgrading = server && installedServerVersion != null && installedServerVersion != Program.Configuration.version;
+            if (server && !installed) {
                 await InstallServer(); installed = true;
             }
-            try { Program.RegisterAgentConnector(); } catch { /* optional: StreamerAI Settings offers a copyable command */ }
+            stage = "client";
+            if (client && !clientInstalled) {
+                await InstallClient(); clientInstalled = true;
+            }
+            stage = "ai";
+            if (HasServer || configureOnly) try { Program.RegisterAgentConnector(); } catch { /* optional: StreamerAI Settings offers a copyable command */ }
             aiCancellation = new CancellationTokenSource(); aiCancellation.CancelAfter(TimeSpan.FromHours(3));
             cancel.Enabled = true; cancel.Text = "Skip AI setup";
             if (installAi.Checked) await PrepareOllama();
             if (downloadModel.Checked) await PullModel();
             aiFailed = false;
             if (configureOnly) installed = true;
-            ShowResult(true, configureOnly ? "AI_READY" : "SERVER_READY", configureOnly ? "Local AI is ready. Open StreamerAI to select the model." : "StreamerAI is installed and ready. Continue in your web browser; existing profiles and models were preserved.", "Local address: " + Program.ServerUrl);
+            finished = true;
+            string appNote = clientInstalled ? " The StreamerAI app is in your Start menu." : "";
+            if (configureOnly) ShowResult(true, "AI_READY", "Local AI is ready. Open StreamerAI to select the model.", "Local address: " + Program.ServerUrl);
+            else if (upgrading) ShowResult(true, "SERVER_UPGRADED", "StreamerAI was upgraded to " + Program.Configuration.version + ". Your household, profiles and settings were kept." + appNote, "Local address: " + Program.ServerUrl);
+            else if (server) ShowResult(true, "SERVER_READY", "StreamerAI is installed and ready. Continue in your web browser; existing profiles and models were preserved." + appNote, "Local address: " + Program.ServerUrl);
+            else ShowResult(true, "CLIENT_READY", "The StreamerAI app is installed. Open it and choose your home server; servers on your network are found automatically.", "App: " + Program.ClientExecutable());
         } catch (Exception exception) {
-            if (skipRequested) {
-                aiFailed = false;
+            if (skipRequested && stage == "ai") {
+                aiFailed = false; finished = true;
                 if (configureOnly) installed = true;
                 ShowResult(true, "AI_SKIPPED", "Local AI setup was skipped. Your server remains available and AI can be prepared later.", "Local address: " + Program.ServerUrl);
             } else {
-                aiFailed = installed || configureOnly;
-                string code = aiFailed ? "AI_SETUP_FAILED" : Program.FailureCode(exception);
-                ShowResult(false, code, HumanFailure(code, installed || configureOnly), "DETAIL: " + exception.Message);
+                aiFailed = stage == "ai";
+                string code = aiFailed ? "AI_SETUP_FAILED" : stage == "client" ? "CLIENT_SETUP_FAILED" : Program.FailureCode(exception);
+                string message = stage == "client"
+                    ? (installed ? "Your server is ready, but the StreamerAI app for this PC could not be installed. Retry to install the app." : "The StreamerAI app could not be installed. Nothing else was changed; you can retry.")
+                    : HumanFailure(code, installed || configureOnly);
+                ShowResult(false, code, message, "DETAIL: " + exception.Message);
             }
         } finally {
             if (aiCancellation != null) { aiCancellation.Dispose(); aiCancellation = null; }
             working = false; install.Enabled = true; cancel.Enabled = true; progress.Visible = false;
             installAi.Enabled = true; downloadModel.Enabled = true;
         }
+    }
+    /// <summary>Installs the desktop app for the signed-in Windows user; it never needs administrator rights.</summary>
+    private async Task InstallClient() {
+        SetStatus("Installing the StreamerAI app for this PC…");
+        await Task.Run(() => {
+            string temporary = Path.Combine(Path.GetTempPath(), "StreamerAI-App-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(temporary);
+            string installer = Path.Combine(temporary, "StreamerAI-Client-Setup.exe");
+            try {
+                using (Stream payload = Assembly.GetExecutingAssembly().GetManifestResourceStream("client-setup.exe"))
+                using (FileStream output = new FileStream(installer, FileMode.CreateNew, FileAccess.Write, FileShare.None)) payload.CopyTo(output);
+                using (FileStream file = new FileStream(installer, FileMode.Open, FileAccess.Read, FileShare.Read))
+                    if (file.Length != Program.Configuration.clientBytes || Program.Hash(file) != Program.Configuration.clientSha256) throw new InvalidDataException("The embedded StreamerAI app installer is damaged.");
+                Program.Run(installer, "/S", temporary, 300000);
+                Program.WaitForFile(Program.ClientExecutable(), 30000);
+            } finally {
+                if (Path.GetFullPath(temporary).StartsWith(Path.GetFullPath(Path.GetTempPath()) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)) try { Directory.Delete(temporary, true); } catch { }
+            }
+        });
+    }
+    private void OpenStreamerAI() {
+        if (HasServer || !File.Exists(Program.ClientExecutable())) OpenBrowser();
+        else Process.Start(new ProcessStartInfo(Program.ClientExecutable()) { UseShellExecute = true });
     }
     private async Task InstallServer() {
         SetStatus("Requesting permission to install the server services…");
@@ -815,7 +967,8 @@ internal sealed class SetupWindow : Form {
             long previous; needed.TryGetValue(root, out previous); needed[root] = previous + bytes;
         };
         try {
-            if (!configureOnly && !installed) add(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), Math.Max(1024L * 1024 * 1024, Program.Configuration.payloadUnpackedBytes * 2));
+            if (ServerSelected && !installed) add(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), Math.Max(1024L * 1024 * 1024, Program.Configuration.payloadUnpackedBytes * 2));
+            if (ClientSelected && !clientInstalled) add(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), 600L * 1024 * 1024);
             if (installAi.Checked && !aiAvailable && !File.Exists(ExistingOllama())) {
                 add(Path.GetTempPath(), Program.Configuration.ollamaBytes + 100L * 1024 * 1024);
                 add(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), 4L * 1024 * 1024 * 1024);
