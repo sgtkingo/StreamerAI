@@ -141,7 +141,9 @@ foreach ($service in @('Server','Gateway','Updater')) {
   if ($LASTEXITCODE -ne 0) { throw "Service $service install failed." }
   $installedService = Get-CimInstance -ClassName Win32_Service -Filter "Name='StreamerAI$service'" -ErrorAction Stop
   if (-not $installedService) { throw "Service $service account could not be verified before start." }
-  $installedServiceSid = [System.Security.Principal.NTAccount]::new($installedService.StartName).Translate([System.Security.Principal.SecurityIdentifier]).Value
+  # The service manager reports LocalSystem as the literal "LocalSystem", which is
+  # not a translatable account name.
+  $installedServiceSid = if ($installedService.StartName -ieq 'LocalSystem') { 'S-1-5-18' } else { [System.Security.Principal.NTAccount]::new($installedService.StartName).Translate([System.Security.Principal.SecurityIdentifier]).Value }
   $expectedServiceSid = if ($service -eq 'Updater') { 'S-1-5-18' } else { 'S-1-5-19' }
   if ($installedServiceSid -ne $expectedServiceSid) { throw "Service $service did not register with its expected account; refusing to start it." }
   & $wrapper start
