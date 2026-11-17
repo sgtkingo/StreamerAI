@@ -27,10 +27,17 @@ the new version and is copied into the GitHub release.
   through the system installer (release-signed APKs only).
 - **Release pipeline:** releases are published automatically from `main` with
   Ed25519-signed update metadata, which is re-signed weekly.
+- **Household setup:** after creating a household, the owner is guided through
+  the household name, shared services, the AI agent, backups and device pairing
+  in administration. _Finish later_ is always available, and the setup can be
+  run again from Administration → Household.
 
 ### Changed
 
 - One version for the server, web app, Windows app and Android app.
+- The AI agent is shared by the whole household like other services; an agent
+  configured earlier for one profile now applies to every profile.
+- Clearer first-run screens for creating a household and importing a backup.
 - The Android app shows its version and has a _Check for app updates_ button.
 - The "Configure local AI" shortcut and agent connector follow the active
   release after updates.

@@ -108,6 +108,10 @@ import {
 } from "./stores/secret-store.js";
 import { readRuntimeConfig, type RuntimeConfig } from "./runtime-config.js";
 import { AccountScopedSecretStore } from "./stores/account-integrations.js";
+import {
+  readHouseholdSetting,
+  writeHouseholdSetting,
+} from "./stores/household-settings.js";
 import { AccountAuthService } from "./services/account-auth.js";
 import { AccountSyncService } from "./services/account-sync.js";
 import { registerDeploymentRoutes } from "./routes/deployment.js";
@@ -249,8 +253,10 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
     const cached = profileInferenceConfigs.get(profileId);
     if (cached) return selectedOllamaConfig(profileId, cached);
     const config = { ...runtimeConfig.inference };
-    const stored = database.settings.get<unknown>(
-      manualAgentSettingKey(profileId),
+    const stored = readHouseholdSetting<unknown>(
+      database,
+      manualAgentSettingKey,
+      profileId,
     );
     if (stored !== null) {
       try {
@@ -276,7 +282,11 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
       : config;
   }
   const isManualAgent = (profileId: string) =>
-    database.settings.get<unknown>(manualAgentSettingKey(profileId)) !== null;
+    readHouseholdSetting<unknown>(
+      database,
+      manualAgentSettingKey,
+      profileId,
+    ) !== null;
   const stores = createStores(options, database, environment, runtimeConfig);
   const playbackTicketStore =
     options.playbackTicketStore ?? new InMemoryPlaybackTicketStore(now);
@@ -1007,7 +1017,8 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
     onDeleteProfile: async (profileId) => {
       sourcePreferences.delete(profileId);
       await agent.deleteProfile(profileId);
-      database.settings.delete(manualAgentSettingKey(profileId));
+      if (profileId !== "default")
+        database.settings.delete(manualAgentSettingKey(profileId));
       profileInferenceConfigs.delete(profileId);
     },
   });
@@ -1089,8 +1100,14 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
     now,
     isManualAgent,
     saveManualAgent: (selection: ManualAgentConfig, profileId: string) => {
-      database.settings.set(manualAgentSettingKey(profileId), selection);
-      profileInferenceConfigs.delete(profileId);
+      writeHouseholdSetting(
+        database,
+        manualAgentSettingKey,
+        profileId,
+        selection,
+      );
+      // The agent is shared, so every profile's cached config is stale.
+      profileInferenceConfigs.clear();
       Object.assign(configForProfile(profileId), selection);
     },
   });

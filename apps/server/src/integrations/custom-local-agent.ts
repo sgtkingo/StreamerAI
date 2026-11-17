@@ -10,6 +10,10 @@ import {
   type AgentModelCatalog,
 } from "./agent-model-catalog.js";
 import { localHost } from "./manual-agent-config.js";
+import {
+  readHouseholdSetting,
+  writeHouseholdSetting,
+} from "../stores/household-settings.js";
 
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 const MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$/;
@@ -84,7 +88,11 @@ export class CustomLocalAgent {
   ) {}
 
   config(profileId: string): CustomLocalAgentConfig | null {
-    const saved = this.database.settings.get<unknown>(settingKey(profileId));
+    const saved = readHouseholdSetting<unknown>(
+      this.database,
+      settingKey,
+      profileId,
+    );
     if (saved === null) return null;
     try {
       return parseCustomLocalAgentConfig(saved);
@@ -95,7 +103,7 @@ export class CustomLocalAgent {
 
   save(profileId: string, value: unknown): CustomLocalAgentConfig {
     const config = parseCustomLocalAgentConfig(value);
-    this.database.settings.set(settingKey(profileId), config);
+    writeHouseholdSetting(this.database, settingKey, profileId, config);
     return config;
   }
 

@@ -8,6 +8,8 @@ interface LocalAiStepProps {
   profileId?: string;
   enabled: boolean;
   onEnabledChange: (enabled: boolean) => void;
+  /** Household administration: the agent applies to every profile. */
+  household?: boolean;
 }
 
 /** The same agent preference editor serves first setup and later Settings. */
@@ -16,6 +18,7 @@ export function LocalAiStep({
   profileId = "default",
   enabled,
   onEnabledChange,
+  household = false,
 }: LocalAiStepProps) {
   const [configuredModel, setConfiguredModel] = useState<string>();
   useEffect(() => {
@@ -54,14 +57,14 @@ export function LocalAiStep({
     <div className="step-copy">
       <p className="eyebrow">Choose your agent</p>
       <h1 tabIndex={-1}>
-        An assistant for
+        {household ? "One assistant for" : "An assistant for"}
         <br />
-        your cinema.
+        {household ? "the whole household." : "your cinema."}
       </h1>
       <p className="step-lead">
-        Pick one AI connection, or continue without one. You can change this
-        later in Settings. Local tools keep their own sign-in. API providers
-        receive the discovery requests you send to StreamerAI.
+        {household
+          ? "Pick one AI connection for every profile, or continue without one. You can change it later in Administration → Services. Local tools keep their own sign-in. API providers receive the discovery requests profiles send to StreamerAI."
+          : "Pick one AI connection, or continue without one. You can change this later in Settings. Local tools keep their own sign-in. API providers receive the discovery requests you send to StreamerAI."}
       </p>
       <ServerAiSetup
         configuredModel={configuredModel}
@@ -90,7 +93,9 @@ export function LocalAiStep({
       />
       <p className="privacy-line" role="status">
         {enabled
-          ? "An agent is selected for this profile."
+          ? household
+            ? "An agent is selected for the household."
+            : "An agent is selected for this profile."
           : "Search still works without an AI agent."}
       </p>
     </div>

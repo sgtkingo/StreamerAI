@@ -41,6 +41,7 @@ import {
   householdIdKey,
   householdPendingKey,
   householdReadyKey,
+  adminOnboardingKey,
   type PendingHousehold,
 } from "./household-state.js";
 
@@ -862,6 +863,9 @@ export class AccountAuthService {
       masterPinEnabled: !!master,
       cloudConfigured: this.enabled,
       cloudLinked: !!account.cloudUserId,
+      adminOnboardingPending:
+        this.options.database.settings.get(adminOnboardingKey(account.id)) ===
+        "pending",
     };
   }
 
@@ -915,6 +919,16 @@ export class AccountAuthService {
       this.options.database.settings.get(householdReadyKey(accountId)) === true;
     this.bindHousehold(accountId);
     this.options.database.settings.set(householdReadyKey(accountId), true);
+    // Only newly created households start the administration onboarding;
+    // households that existed before it keep their configuration untouched.
+    if (
+      !alreadyReady &&
+      this.options.database.settings.get(adminOnboardingKey(accountId)) === null
+    )
+      this.options.database.settings.set(
+        adminOnboardingKey(accountId),
+        "pending",
+      );
     if (
       alreadyReady &&
       !this.options.database.settings.get(householdPendingKey(accountId))
@@ -2340,6 +2354,31 @@ export class AccountAuthService {
       )
         await this.completeHouseholdSetup(context.account.id);
       return reply.code(204).send();
+    });
+    // Owner-only like every /api/v1/admin route (enforced by the request hook).
+    app.put("/api/v1/admin/onboarding", async (request, reply) => {
+      const context = this.context(request)!;
+      const household = this.options.database.accounts.getHousehold();
+      if (context.account.id !== household.id)
+        return error(
+          reply,
+          403,
+          "INSTALLATION_OWNER_REQUIRED",
+          "Open household administration as its owner.",
+        );
+      const state = object(request.body).state;
+      if (state !== "pending" && state !== "complete")
+        return error(
+          reply,
+          400,
+          "INVALID_ONBOARDING_STATE",
+          "Choose whether household setup is pending or complete.",
+        );
+      this.options.database.settings.set(
+        adminOnboardingKey(household.id),
+        state,
+      );
+      return { adminOnboardingPending: state === "pending" };
     });
     app.put("/api/v1/account/master-pin", async (request, reply) => {
       const context = this.context(request)!;

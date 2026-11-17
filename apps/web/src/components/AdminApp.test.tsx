@@ -69,6 +69,33 @@ function apiWith(status = ready) {
   } as unknown as StreamerApi;
 }
 
+it("opens the household setup for a new household and administration after it", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockResolvedValue(Response.json({ devices: [] })),
+  );
+  const api = apiWith();
+  api.getInstallationStatus = vi
+    .fn()
+    .mockResolvedValue({ ...owner, adminOnboardingPending: true });
+  api.setAdminOnboarding = vi
+    .fn()
+    .mockResolvedValue({ adminOnboardingPending: false });
+  render(<AdminApp api={api} />);
+  expect(
+    await screen.findByRole("heading", { name: /Your home server/ }),
+  ).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Finish later" }));
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Go to administration" }),
+  );
+  expect(
+    await screen.findByRole("heading", { level: 1, name: "Household" }),
+  ).toBeVisible();
+  expect(api.setAdminOnboarding).toHaveBeenCalledWith("complete");
+  sessionStorage.clear();
+});
+
 it("autosaves the household name without reopening administration before an update", async () => {
   const api = apiWith();
   api.renameHousehold = vi

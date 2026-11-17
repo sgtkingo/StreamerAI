@@ -6,6 +6,9 @@ export const householdPendingKey = (accountId: string) =>
   `household.pending.${accountId}`;
 export const householdReadyKey = (accountId: string) =>
   `household.ready.${accountId}`;
+/** "pending" until the owner finishes or skips the administration onboarding. */
+export const adminOnboardingKey = (accountId: string) =>
+  `household.adminOnboarding.${accountId}`;
 export const householdIdKey = (accountId: string) =>
   `household.id.${accountId}`;
 export const householdCloudCredentialKey = (accountId: string) =>

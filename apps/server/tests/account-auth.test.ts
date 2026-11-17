@@ -1708,6 +1708,41 @@ describe("account authentication and profile boundaries", () => {
       ).statusCode,
     ).toBe(400);
   });
+  it("starts the administration onboarding for a new household until the owner completes it", async () => {
+    const { app } = cloud();
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/v1/auth/local",
+      payload: { masterPin: "01234567" },
+    });
+    const headers = { cookie: cookie(created) };
+    const status = async () =>
+      (await app.inject({ url: "/api/v1/installation/status", headers })).json()
+        .adminOnboardingPending;
+    expect(await status()).toBe(true);
+    const invalid = await app.inject({
+      method: "PUT",
+      url: "/api/v1/admin/onboarding",
+      headers,
+      payload: { state: "skipped" },
+    });
+    expect(invalid.statusCode).toBe(400);
+    const completed = await app.inject({
+      method: "PUT",
+      url: "/api/v1/admin/onboarding",
+      headers,
+      payload: { state: "complete" },
+    });
+    expect(completed.json()).toEqual({ adminOnboardingPending: false });
+    expect(await status()).toBe(false);
+    await app.inject({
+      method: "PUT",
+      url: "/api/v1/admin/onboarding",
+      headers,
+      payload: { state: "pending" },
+    });
+    expect(await status()).toBe(true);
+  });
   it("requires an initial eight-digit local Master PIN and rejects using setup to replace it", async () => {
     const { app } = cloud();
     const missing = await app.inject({

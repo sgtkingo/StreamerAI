@@ -12,6 +12,7 @@ import { AccountSettings } from "./AccountSettings";
 import { AccountSecurity } from "./AccountSecurity";
 import { EncryptedRecovery } from "./EncryptedRecovery";
 import { MasterPinSetup } from "./MasterPinSetup";
+import { AdminOnboarding } from "./onboarding/AdminOnboarding";
 import { DigitSlotsInput } from "./DigitSlotsInput";
 import {
   InstallationAccess,
@@ -48,7 +49,8 @@ const sectionCopy: Record<AdminSection, string> = {
     "Connect your household, check synchronization and manage your online account.",
   profiles: "Manage personal spaces, profile access and viewing data.",
   devices: "Approve new connections and manage who can use this home server.",
-  services: "",
+  services:
+    "Services and the AI agent are shared by every profile in the household.",
   backups:
     "Keep an encrypted copy of your household and choose when it is saved.",
   updates:
@@ -80,6 +82,7 @@ export function AdminApp({ api = apiClient }: { api?: StreamerApi }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [importing, setImporting] = useState(false);
+  const { showToast } = useToasts();
   const [pairingCode, setPairingCode] = useState(
     () => new URLSearchParams(window.location.search).get("code") ?? "",
   );
@@ -332,6 +335,35 @@ export function AdminApp({ api = apiClient }: { api?: StreamerApi }) {
       />
     );
   const first = profiles[0];
+  const householdName =
+    installation.householdName ?? auth.account?.name ?? "Your household";
+  if (installation.adminOnboardingPending)
+    return (
+      <AdminOnboarding
+        api={api}
+        profileId={first?.id ?? "default"}
+        householdName={householdName}
+        household={
+          <HouseholdName
+            api={api}
+            name={householdName}
+            onSaved={(name) =>
+              setInstallation({ ...installation, householdName: name })
+            }
+          />
+        }
+        backups={<AdminBackupSchedule api={api} />}
+        devices={<InstallationDevices />}
+        onComplete={(destination) => {
+          if (destination === "player") {
+            window.location.assign("/");
+            return;
+          }
+          setInstallation({ ...installation, adminOnboardingPending: false });
+          selectSection("household");
+        }}
+      />
+    );
   return (
     <div className="admin-shell">
       <header className="admin-header">
@@ -462,6 +494,34 @@ export function AdminApp({ api = apiClient }: { api?: StreamerApi }) {
               />
               <AccountSettings api={api} section="account" />
               <HouseholdMerges api={api} onCompleted={reload} />
+              {api.setAdminOnboarding && (
+                <section className="profile-page__section">
+                  <h2>Household setup</h2>
+                  <p>
+                    Walk through services, the AI agent, backups and devices
+                    again. Nothing changes until you save a step.
+                  </p>
+                  <div className="deployment-actions">
+                    <button
+                      className="button button--secondary"
+                      type="button"
+                      onClick={() =>
+                        void api.setAdminOnboarding!("pending").then(
+                          () =>
+                            setInstallation({
+                              ...installation,
+                              adminOnboardingPending: true,
+                            }),
+                          (reason) =>
+                            showToast(safeErrorMessage(reason), "error"),
+                        )
+                      }
+                    >
+                      Run household setup again
+                    </button>
+                  </div>
+                </section>
+              )}
               <AdminNote>
                 <strong>Your household lives here.</strong> Profiles, settings
                 and services stay on this server. Paired clients can keep using
@@ -534,7 +594,7 @@ function HouseholdName({
 }: {
   api: StreamerApi;
   name: string;
-  onSaved: () => void;
+  onSaved: (name: string) => void;
 }) {
   const [value, setValue] = useState(name);
   const [savedName, setSavedName] = useState(name);
@@ -550,7 +610,7 @@ function HouseholdName({
       await api.renameHousehold(value.trim());
       setSavedName(value.trim());
       showToast("Household renamed.", "success");
-      if (!forUpdate) onSaved();
+      if (!forUpdate) onSaved(value.trim());
     } catch (reason) {
       setError(safeErrorMessage(reason));
       throw reason;

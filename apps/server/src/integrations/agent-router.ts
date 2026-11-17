@@ -9,6 +9,10 @@ import type {
 } from "@streamer-ai/contracts";
 import type { StreamerDatabase } from "@streamer-ai/database";
 import type { RuntimeConfig } from "../runtime-config.js";
+import {
+  readHouseholdSetting,
+  writeHouseholdSetting,
+} from "../stores/household-settings.js";
 import { LocalAgentHost, type LocalAgentName } from "./local-agent-host.js";
 import type { OllamaAgentProvider } from "./ollama-agent-provider.js";
 import { effectiveOllamaEffort } from "./ollama-thinking.js";
@@ -180,8 +184,10 @@ export class AgentRouter implements AgentProvider {
     this.ollamaCatalogCache.delete(profileId);
   }
   selection(profileId: string): AgentSelection {
-    const saved = this.database.settings.get<unknown>(
-      agentSelectionKey(profileId),
+    const saved = readHouseholdSetting<unknown>(
+      this.database,
+      agentSelectionKey,
+      profileId,
     );
     if (saved === null) return this.defaults;
     try {
@@ -239,7 +245,7 @@ export class AgentRouter implements AgentProvider {
       }
     }
     await this.host.close();
-    this.database.settings.set(agentSelectionKey(profileId), parsed);
+    writeHouseholdSetting(this.database, agentSelectionKey, profileId, parsed);
   }
   async models(
     provider: AgentName,

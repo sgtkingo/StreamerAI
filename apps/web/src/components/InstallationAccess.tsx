@@ -20,6 +20,8 @@ export interface InstallationStatus {
   masterPinEnabled?: boolean;
   cloudConfigured?: boolean;
   cloudLinked?: boolean;
+  /** A new household has not finished the administration onboarding yet. */
+  adminOnboardingPending?: boolean;
   cloudRecoveryAuthorized?: boolean;
   setupAvailable?: boolean;
   setupAuthorized?: boolean;

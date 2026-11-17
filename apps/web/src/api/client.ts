@@ -412,6 +412,9 @@ export interface StreamerApi {
   renameHousehold?(
     name: string,
   ): Promise<{ householdId: string; name: string }>;
+  setAdminOnboarding?(
+    state: "pending" | "complete",
+  ): Promise<{ adminOnboardingPending: boolean }>;
   getHouseholdMerges?(): Promise<{ requests: HouseholdMergeRequest[] }>;
   previewHouseholdMerge?(
     requestId: string,
@@ -1167,6 +1170,11 @@ export const apiClient: StreamerApi = {
     request("/admin/household", {
       method: "PUT",
       body: JSON.stringify({ name }),
+    }),
+  setAdminOnboarding: (state) =>
+    request("/admin/onboarding", {
+      method: "PUT",
+      body: JSON.stringify({ state }),
     }),
   getHouseholdMerges: () => request("/admin/household-merges"),
   previewHouseholdMerge: (requestId, sourcePin) =>

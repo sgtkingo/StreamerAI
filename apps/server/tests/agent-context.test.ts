@@ -163,7 +163,7 @@ describe("agent context configuration", () => {
     database.close();
   });
 
-  it("keeps context budgets isolated between profiles and restores them after app recreation", async () => {
+  it("shares the agent selection across the household and restores it after app recreation", async () => {
     const database = openStreamerDatabase({ filename: ":memory:" });
     database.profiles.create({ id: "default", name: "Viewer", locale: "en" });
     database.profiles.create({
@@ -187,8 +187,8 @@ describe("agent context configuration", () => {
     expect(
       (
         await app.inject({ method: "GET", url: "/api/v1/inference/selection" })
-      ).json().effectiveContextTokens,
-    ).toBe(4096);
+      ).json(),
+    ).toMatchObject({ contextTokens: 8192, effectiveContextTokens: 8192 });
     await app.close();
     apps.splice(apps.indexOf(app), 1);
     const { app: reopened } = instance(database);
@@ -202,6 +202,29 @@ describe("agent context configuration", () => {
     ).toMatchObject({ contextTokens: 8192, effectiveContextTokens: 8192 });
     await reopened.close();
     apps.splice(apps.indexOf(reopened), 1);
+    database.close();
+  });
+
+  it("adopts a selection a profile saved before agent settings were shared", async () => {
+    const database = openStreamerDatabase({ filename: ":memory:" });
+    database.profiles.create({ id: "first", name: "Viewer", locale: "en" });
+    database.profiles.create({ id: "second", name: "Other", locale: "en" });
+    database.settings.set(agentSelectionKey("first"), {
+      mode: "disabled",
+      provider: "ollama",
+    });
+    const { app } = instance(database);
+    expect(
+      (
+        await app.inject({
+          method: "GET",
+          url: "/api/v1/inference/selection?profileId=second",
+        })
+      ).json(),
+    ).toMatchObject({ mode: "disabled" });
+    expect(database.settings.get(agentSelectionKey("default"))).toMatchObject({
+      mode: "disabled",
+    });
     database.close();
   });
 });
