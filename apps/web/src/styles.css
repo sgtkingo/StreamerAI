@@ -58,10 +58,11 @@
   opacity: 0.5;
   cursor: wait;
 }
-.account-login__local-note {
+.account-login__local-option .account-login__local-note {
+  flex-basis: 100%;
+  margin: 4px 0 0;
   color: var(--muted);
-  text-align: center;
-  font-size: 12px;
+  font-size: 13px;
 }
 .account-login__local:focus-visible,
 .account-login__card .button:focus-visible {
@@ -141,8 +142,67 @@
   margin: 8px 0 0;
 }
 .account-login__local-option {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
   margin-top: 32px;
+}
+/* Separates the local choices from the cloud sign-in above them. */
+.account-login__local-option--divided {
+  padding-top: 28px;
   border-top: 1px solid var(--border);
+}
+@media (max-width: 560px) {
+  .account-login__local-option > .button {
+    flex: 1 1 0;
+    min-width: 0;
+    width: auto;
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+}
+/* Household import: the form sits directly on the screen, like the setup choice. */
+.household-import {
+  max-width: 680px;
+}
+.household-import .profile-page__section {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  box-shadow: none;
+}
+.household-import .household-backup-restore {
+  margin-top: 32px;
+  padding-top: 28px;
+  border-top: 1px solid var(--border);
+}
+.household-import .household-backup-restore input[type="file"] {
+  padding: 8px;
+  color: var(--slate);
+  font-size: 14px;
+  line-height: 30px;
+  cursor: pointer;
+}
+.household-import input[type="file"]::file-selector-button {
+  margin-right: 14px;
+  padding: 6px 14px;
+  border: 1px solid #45454c;
+  border-radius: 5px;
+  background: #242428;
+  color: var(--white);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.household-import input[type="file"]::file-selector-button:hover {
+  background: #2e2e33;
+}
+.household-import > .household-import__back {
+  margin: 24px 0 0;
+  padding-left: 0;
+  padding-right: 0;
 }
 .account-login__local-option p {
   color: var(--slate);

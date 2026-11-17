@@ -1,4 +1,4 @@
-﻿import { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { getInstallationStatus } from "./InstallationAccess";
 import { useToasts } from "./ToastProvider";
 import { DigitSlotsInput } from "./DigitSlotsInput";
@@ -93,9 +93,12 @@ export function EncryptedRecovery({
   restoreOnly = false,
   autoLoadCloud = false,
   clientMasterPinDialog = false,
+  intro = true,
   onRestored,
 }: {
   restoreOnly?: boolean;
+  /** restoreOnly: false when the surrounding screen already explains the import. */
+  intro?: boolean;
   autoLoadCloud?: boolean;
   clientMasterPinDialog?: boolean;
   onRestored?: () => void | Promise<void>;
@@ -161,7 +164,7 @@ export function EncryptedRecovery({
   if (!status)
     return restoreOnly ? (
       <p role={error ? "alert" : "status"}>
-        {error || "Loading backup recoveryâ€¦"}
+        {error || "Loading backup recovery…"}
       </p>
     ) : null;
   const run = async (operation: () => Promise<void>) => {
@@ -248,7 +251,7 @@ export function EncryptedRecovery({
                 : status.cloudBackup?.status === "current"
                   ? `âś“ Encrypted backup is current. Last saved ${new Date(status.cloudBackup.lastSavedAt!).toLocaleString()}.`
                   : status.cloudBackup?.status === "saving"
-                    ? "Saving encrypted backup to cloudâ€¦"
+                    ? "Saving encrypted backup to cloud…"
                     : status.cloudBackup?.status === "error"
                       ? `Cloud backup needs attention: ${status.cloudBackup.error}`
                       : "Encrypted cloud backup is waiting for the next automatic save."}
@@ -297,14 +300,16 @@ export function EncryptedRecovery({
           className="household-backup-restore"
         >
           {restoreOnly ? (
-            <p>
-              Import your saved household using the Master PIN that protected
-              the backup.{" "}
-              <InfoTip label="What is a Master PIN?">
-                Your 8-digit code unlocks any profile and protects local
-                backups.
-              </InfoTip>
-            </p>
+            intro && (
+              <p>
+                Import your saved household using the Master PIN that protected
+                the backup.{" "}
+                <InfoTip label="What is a Master PIN?">
+                  Your 8-digit code unlocks any profile and protects local
+                  backups.
+                </InfoTip>
+              </p>
+            )
           ) : (
             <h3>Restore into an empty household</h3>
           )}

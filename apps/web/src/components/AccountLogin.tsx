@@ -363,9 +363,11 @@ export function AccountLogin({
           allowLocal &&
           api.startLocalSession &&
           !adoptLocalAccount && (
-            <div className="account-login__local-option">
+            <div
+              className={`account-login__local-option${allowCloud ? " account-login__local-option--divided" : ""}`}
+            >
               <button
-                className="button button--secondary"
+                className={`button ${allowCloud ? "button--secondary" : "button--primary"}`}
                 type="button"
                 disabled={startingLocal}
                 onClick={() => void local()}

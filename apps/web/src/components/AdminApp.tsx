@@ -273,32 +273,43 @@ export function AdminApp({ api = apiClient }: { api?: StreamerApi }) {
     );
   if (importing || auth.householdRestoreRequired)
     return (
-      <main className="installation-screen admin-state">
-        <h1>
-          {auth.householdRestoreRequired
-            ? "Restore your cloud household"
-            : "Import your household"}
-        </h1>
-        <p>
-          Enter the Master PIN that protects your backup. All profiles are
-          restored together.
-        </p>
-        <EncryptedRecovery
-          restoreOnly
-          autoLoadCloud={auth.householdRestoreRequired}
-          onRestored={() => {
-            setImporting(false);
-            reload();
-          }}
-        />
-        {!auth.householdRestoreRequired && (
-          <button
-            className="button button--ghost"
-            onClick={() => setImporting(false)}
-          >
-            Create a new household instead
-          </button>
-        )}
+      <main className="account-login">
+        <Brand />
+        <section
+          className="account-login__card household-import"
+          aria-labelledby="household-import-title"
+        >
+          <p className="eyebrow">Your cinema, together</p>
+          <h1 id="household-import-title">
+            {auth.householdRestoreRequired
+              ? "Restore your cloud household"
+              : "Import your household"}
+          </h1>
+          <p>
+            {auth.householdRestoreRequired
+              ? "Enter the Master PIN that protects your cloud backup."
+              : "Choose your encrypted household file and enter the Master PIN that protected it."}{" "}
+            All profiles are restored together.
+          </p>
+          <EncryptedRecovery
+            restoreOnly
+            intro={false}
+            autoLoadCloud={auth.householdRestoreRequired}
+            onRestored={() => {
+              setImporting(false);
+              reload();
+            }}
+          />
+          {!auth.householdRestoreRequired && (
+            <button
+              className="button button--ghost household-import__back"
+              type="button"
+              onClick={() => setImporting(false)}
+            >
+              Create a new household instead
+            </button>
+          )}
+        </section>
       </main>
     );
   if (auth.masterPinSetupRequired && api.setupMasterPin)
