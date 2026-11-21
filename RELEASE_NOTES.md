@@ -6,6 +6,10 @@ section moves under the new version and is copied into the GitHub release.
 
 ## Unreleased
 
+_Nothing yet._
+
+## v0.12.0 (2026-11-21)
+
 ### New
 
 - **Uninstall:** StreamerAI Server appears in Settings → Apps and can be removed
