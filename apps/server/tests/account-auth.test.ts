@@ -1708,6 +1708,15 @@ describe("account authentication and profile boundaries", () => {
       ).statusCode,
     ).toBe(400);
   });
+  it("answers the server version without a session for the updater's health check", async () => {
+    const { app } = cloud();
+    const version = await app.inject({ url: "/api/v1/server/version" });
+    expect(version.statusCode).toBe(200);
+    expect(version.json().serverVersion).toMatch(/^\d+\.\d+\.\d+/);
+    expect(
+      (await app.inject({ url: "/api/v1/server/diagnostics" })).statusCode,
+    ).toBe(401);
+  });
   it("starts the administration onboarding for a new household until the owner completes it", async () => {
     const { app } = cloud();
     const created = await app.inject({

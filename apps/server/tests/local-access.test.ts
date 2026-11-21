@@ -54,6 +54,17 @@ function fixture() {
   };
 }
 describe("installation access", () => {
+  it("lets the updater read the server version without a session while other server routes stay owner-only", async () => {
+    const { app } = fixture();
+    app.get("/api/v1/server/version", async () => ({ serverVersion: "1.2.3" }));
+    app.get("/api/v1/server/diagnostics", async () => ({ private: true }));
+    const version = await app.inject({ url: "/api/v1/server/version" });
+    expect(version.statusCode).toBe(200);
+    expect(version.json()).toEqual({ serverVersion: "1.2.3" });
+    expect(
+      (await app.inject({ url: "/api/v1/server/diagnostics" })).statusCode,
+    ).toBe(401);
+  });
   it("keeps an administrator session when pairing is approved in another tab of the same browser", async () => {
     const { app } = fixture();
     await app.inject({

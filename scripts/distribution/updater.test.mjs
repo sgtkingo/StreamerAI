@@ -251,6 +251,51 @@ test("a release that does not become ready is rolled back with its database", as
   }
 });
 
+test("a rollback still starts every service when a restore step keeps failing", async () => {
+  const { root, paths } = installation();
+  try {
+    const control = fakeControl();
+    let rollingBack = false;
+    let serverStarts = 0;
+    control.start = (service) => {
+      // During the rollback Server refuses twice, Gateway never starts.
+      if (rollingBack) {
+        if (service === "Gateway") throw new Error("gateway is locked");
+        if (++serverStarts <= 2) throw new Error("file in use");
+      }
+      control.calls.push(`start ${service}`);
+    };
+    const logs = [];
+    await assert.rejects(
+      activateRelease({
+        source: release(root, "0.2.0"),
+        paths,
+        control,
+        verifyBundle: () => {},
+        waitHealthy: async (version) => {
+          if (version === "0.2.0") rollingBack = true;
+          return version === "0.1.0";
+        },
+        mode: "service",
+        ownRelease: null,
+        log: (message) => logs.push(message),
+        retryDelayMs: 0,
+      }),
+      (error) => error.code === "UPDATE_ROLLED_BACK",
+    );
+    assert.equal(
+      control.calls.filter((call) => call === "start Server").length,
+      2,
+    );
+    assert.ok(
+      logs.some((line) => /Rollback step "start Gateway" failed/.test(line)),
+    );
+    assert.equal(currentRelease(paths).version, "0.1.0");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("server requests are re-verified and their outcome is reported", async () => {
   const { root, paths } = installation();
   try {

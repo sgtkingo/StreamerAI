@@ -1071,6 +1071,8 @@ export class AccountAuthService {
         /^\/api\/v1\/(?:health\/|environment\/|auth\/(?:status|local|device(?:\/poll)?))/.test(
           path,
         ) ||
+        // Version only; the updater checks it without a session after an update.
+        (request.method === "GET" && path === "/api/v1/server/version") ||
         path === "/api/v1/installation/discovery" ||
         path === "/api/v1/account/cloud/device" ||
         path === "/api/v1/account/cloud/device/poll"

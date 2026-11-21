@@ -8,10 +8,16 @@ section moves under the new version and is copied into the GitHub release.
 
 ### New
 
-- **Uninstall:** StreamerAI Server appears in Settings → Apps and can be removed
+- **Uninstall:** StreamerAI Server appears in Settings â†’ Apps and can be removed
   there. Household data is kept unless you choose to delete it, and the app for
   this PC can be removed in the same step. The local HTTPS certificate,
   services, shortcuts and program files are cleaned up.
+
+### Fixed
+
+- Automatic updates rolled back every new version: the updater's health check
+  could not read the server version without a session. A rollback now also
+  starts the services again even when one restore step fails.
 
 ### Changed
 
@@ -31,8 +37,8 @@ section moves under the new version and is copied into the GitHub release.
 - **Automatic server updates:** the server checks for signed releases every six
   hours, downloads and verifies them in the background and reminds the owner in
   administration and in the player. _Install now_, _Remind me tomorrow_, or
-  enable nightly installation (02:00–05:00, only when nobody is watching) in
-  Administration → Updates.
+  enable nightly installation (02:00â€“05:00, only when nobody is watching) in
+  Administration â†’ Updates.
 - **Safe installation:** the new `StreamerAIUpdater` service re-verifies the
   release, installs it beside the running version, backs up the database and
   rolls back services and data automatically when the update fails.
@@ -44,7 +50,7 @@ section moves under the new version and is copied into the GitHub release.
 - **Household setup:** after creating a household, the owner is guided through
   the household name, shared services, the AI agent, backups and device pairing
   in administration. _Finish later_ is always available, and the setup can be
-  run again from Administration → Household.
+  run again from Administration â†’ Household.
 
 ### Changed
 

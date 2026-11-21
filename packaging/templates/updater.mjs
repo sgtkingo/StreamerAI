@@ -442,6 +442,7 @@ export async function activateRelease({
   ownRelease,
   now = Date.now,
   log = () => {},
+  retryDelayMs = 2000,
 }) {
   const manifest = bundleManifest(source);
   verifyBundle(source);
@@ -493,9 +494,29 @@ export async function activateRelease({
       log("The new release did not become ready; rolling back.");
       for (const service of [...SERVICES].reverse()) control.stop(service);
       if (current) {
-        writeServiceDefinitions(paths, SERVICES, current.release);
-        if (backup) restoreDatabase(paths, backup);
-        for (const service of SERVICES) control.start(service);
+        // Every step is attempted: the household must come back online even if
+        // one restore step fails (each failure is logged).
+        const attempt = async (label, step) => {
+          for (let tries = 1; ; tries++) {
+            try {
+              return await step();
+            } catch (error) {
+              if (tries >= 5) {
+                log(`Rollback step "${label}" failed: ${error.message}`);
+                return undefined;
+              }
+              // Windows may still hold files of a just-stopped process.
+              await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+            }
+          }
+        };
+        await attempt("service definitions", () =>
+          writeServiceDefinitions(paths, SERVICES, current.release),
+        );
+        if (backup)
+          await attempt("database", () => restoreDatabase(paths, backup));
+        for (const service of SERVICES)
+          await attempt(`start ${service}`, () => control.start(service));
       }
       const rolledBack = current ? await waitHealthy(current.version) : false;
       throw Object.assign(

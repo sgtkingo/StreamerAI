@@ -435,6 +435,8 @@ export class LocalAccessService {
         "/api/v1/installation/poll",
         "/api/v1/health/live",
         "/api/v1/health/ready",
+        // The updater's health check reads it without a session.
+        "/api/v1/server/version",
       ]);
       const actor = this.actor(request);
       const setupRoute =
@@ -447,8 +449,9 @@ export class LocalAccessService {
       )
         return fail(reply, 401, "INSTALLATION_ACCESS_REQUIRED");
       if (
-        (path.startsWith("/api/v1/installation/") && !publicPaths.has(path)) ||
-        path.startsWith("/api/v1/server/")
+        (path.startsWith("/api/v1/installation/") ||
+          path.startsWith("/api/v1/server/")) &&
+        !publicPaths.has(path)
       ) {
         if (!this.isOwner(request))
           return fail(reply, 403, "INSTALLATION_OWNER_REQUIRED");
