@@ -29,7 +29,8 @@ is pinned, but systemd, glibc/shared-library and clean-machine acceptance requir
 actual target Linux testing.
 
 The core sources are Caddy's official release, WinSW's official release, and the
-FFmpeg project's linked BtbN build publisher. Caddy/BtbN hashes were read from
+FFmpeg release build from gyan.dev (linked from ffmpeg.org; immutable
+tagged releases in GyanD/codexffmpeg). Caddy/FFmpeg hashes were read from
 the official GitHub release asset metadata. WinSW 2.12.0 has no published asset
 digest in that API, so its lock records a hash observed after an official HTTPS
 download, with that provenance explicitly stated. Updating the lock requires
