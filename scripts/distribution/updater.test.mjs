@@ -20,7 +20,35 @@ import {
   layout,
   processRequest,
   serviceXml,
+  UNINSTALL_KEY,
+  winswControl,
 } from "../../packaging/templates/updater.mjs";
+
+test("updates the Installed apps version only when setup registered StreamerAI", () => {
+  const calls = [];
+  const control = (registered) =>
+    winswControl({ services: "C:/unused" }, (command, args) => {
+      calls.push([command, ...args]);
+      return { status: args[0] === "query" && !registered ? 1 : 0 };
+    });
+  assert.equal(control(false).recordVersion("0.12.0"), false);
+  assert.deepEqual(calls, [["reg.exe", "query", UNINSTALL_KEY, "/reg:64"]]);
+  calls.length = 0;
+  assert.equal(control(true).recordVersion("0.12.0"), true);
+  assert.deepEqual(calls[1], [
+    "reg.exe",
+    "add",
+    UNINSTALL_KEY,
+    "/v",
+    "DisplayVersion",
+    "/t",
+    "REG_SZ",
+    "/d",
+    "0.12.0",
+    "/f",
+    "/reg:64",
+  ]);
+});
 
 function release(root, version) {
   const directory = path.join(

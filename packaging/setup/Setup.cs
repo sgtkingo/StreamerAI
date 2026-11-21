@@ -78,7 +78,9 @@ internal static class Program {
                 }
                 if (!NeedsInitialAdministration(Json.Deserialize<Dictionary<string, object>>("{\"enabled\":true,\"claimed\":false}")) || NeedsInitialAdministration(Json.Deserialize<Dictionary<string, object>>("{\"enabled\":true,\"claimed\":true}")) || NeedsInitialAdministration(Json.Deserialize<Dictionary<string, object>>("{\"enabled\":false,\"claimed\":false}"))) throw new InvalidDataException("Owner handoff policy check failed.");
                 try { NeedsInitialAdministration(Json.Deserialize<Dictionary<string, object>>("{\"enabled\":\"false\",\"claimed\":false}")); throw new InvalidOperationException("Malformed owner status was accepted."); } catch (InvalidDataException) { }
-                Console.WriteLine(Json.Serialize(new { format = "streamerai-setup/v1", version = Configuration.version, reviewOnly = Configuration.reviewOnly, preview = Configuration.preview, payloadVerified = true, gatewayRepairVerified = true, exactModelMatchVerified = true, protectedCreationVerified = true, ownerHandoffVerified = true, versionOrderingVerified = true, clientIncluded = ClientAvailable, clientVersion = Configuration.clientVersion ?? "", serverUrl = ServerUrl, recommendedModel = Model }));
+                var entry = UninstallEntry("1.2.3", @"C:\Program Files\StreamerAI\setup\StreamerAI-Setup.exe", @"C:\Program Files\StreamerAI", 2048);
+                if ((string)entry["UninstallString"] != "\"C:\\Program Files\\StreamerAI\\setup\\StreamerAI-Setup.exe\" --uninstall" || (string)entry["QuietUninstallString"] != (string)entry["UninstallString"] + " --quiet" || !(entry["EstimatedSize"] is int) || (string)entry["DisplayVersion"] != "1.2.3") throw new InvalidDataException("Installed apps entry check failed.");
+                Console.WriteLine(Json.Serialize(new { format = "streamerai-setup/v1", version = Configuration.version, reviewOnly = Configuration.reviewOnly, preview = Configuration.preview, payloadVerified = true, gatewayRepairVerified = true, exactModelMatchVerified = true, protectedCreationVerified = true, ownerHandoffVerified = true, versionOrderingVerified = true, uninstallEntryVerified = true, clientIncluded = ClientAvailable, clientVersion = Configuration.clientVersion ?? "", serverUrl = ServerUrl, recommendedModel = Model }));
                 return 0;
             }
             if (args.Contains("--render-preview") || args.Contains("--preview-image")) {
@@ -92,11 +94,24 @@ internal static class Program {
                 }
                 return 0;
             }
+            if (args.Contains("--uninstall-preview")) {
+                // Renders the uninstall window without removing anything.
+                Application.EnableVisualStyles();
+                using (UninstallWindow window = new UninstallWindow())
+                using (Bitmap bitmap = new Bitmap(window.Width, window.Height)) {
+                    PreparePreviewHandles(window);
+                    window.DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size));
+                    bitmap.Save(Argument(args, "--uninstall-preview"), System.Drawing.Imaging.ImageFormat.Png);
+                }
+                return 0;
+            }
             if (args.Contains("--check-managed-state")) {
                 AssertManagedState(Argument(args, "--check-managed-state"));
                 Console.WriteLine("Managed state access checks passed.");
                 return 0;
             }
+            if (args.Contains("--uninstall-elevated")) return UninstallElevated(args);
+            if (args.Contains("--uninstall")) return StartUninstall(args);
             if (args.Contains("--elevated")) return Elevated(args);
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
@@ -378,17 +393,24 @@ internal static class Program {
         if (index < 0 || index + 1 >= args.Length) throw new ArgumentException("A setup control argument is missing.");
         return args[index + 1];
     }
-    private static int Elevated(string[] args) {
-        if (Configuration.reviewOnly) throw new InvalidOperationException("This review build cannot install services.");
+    /// <summary>Connects an elevated child to the setup window that started it, after verifying that process.</summary>
+    private static StreamWriter ConnectToParent(string[] args) {
         string pipeName = Argument(args, "--pipe");
         int parentId;
         Guid parsedPipe;
         if (!Guid.TryParseExact(pipeName, "N", out parsedPipe) || !Int32.TryParse(Argument(args, "--parent"), out parentId)) throw new ArgumentException("Invalid setup process identity.");
-        using (NamedPipeClientStream pipe = new NamedPipeClientStream(".", pipeName, PipeDirection.Out, PipeOptions.None)) {
+        NamedPipeClientStream pipe = new NamedPipeClientStream(".", pipeName, PipeDirection.Out, PipeOptions.None);
+        try {
             pipe.Connect(30000);
             uint actualParent;
             if (!GetNamedPipeServerProcessId(pipe.SafePipeHandle, out actualParent) || actualParent != (uint)parentId) throw new InvalidOperationException("Setup process identity could not be verified.");
-            using (StreamWriter writer = new StreamWriter(pipe, new UTF8Encoding(false)) { AutoFlush = true }) {
+            return new StreamWriter(pipe, new UTF8Encoding(false)) { AutoFlush = true };
+        } catch { pipe.Dispose(); throw; }
+    }
+    private static int Elevated(string[] args) {
+        if (Configuration.reviewOnly) throw new InvalidOperationException("This review build cannot install services.");
+        {
+            using (StreamWriter writer = ConnectToParent(args)) {
                 Action<string> progress = value => writer.WriteLine(Json.Serialize(new { kind = "progress", message = value }));
                 string release = null;
                 try {
@@ -476,6 +498,8 @@ internal static class Program {
                     shortcut.GetType().InvokeMember("TargetPath", BindingFlags.SetProperty, null, shortcut, new object[] { retainedSetup });
                     shortcut.GetType().InvokeMember("Arguments", BindingFlags.SetProperty, null, shortcut, new object[] { "--configure-ai" });
                     shortcut.GetType().InvokeMember("Save", BindingFlags.InvokeMethod, null, shortcut, new object[0]);
+                    progress("Registering StreamerAI in Installed apps…");
+                    RegisterUninstallEntry(InstalledServerVersion() ?? Configuration.version, retainedSetup);
                     WriteManagedText(receipt, Json.Serialize(new { version = Configuration.version, phase = "complete" }));
                     writer.WriteLine(Json.Serialize(new { kind = "installed" }));
                     return 0;
@@ -488,6 +512,218 @@ internal static class Program {
             }
         }
     }
+    // ------------------------------------------------------------------ uninstall
+    internal const string UninstallKey = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\StreamerAIServer";
+    internal static string ProgramRoot { get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "StreamerAI"); } }
+    internal static string StateRoot { get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "StreamerAI"); } }
+    private static readonly string[] ServiceNames = { "Updater", "Gateway", "Server" };
+
+    /// <summary>The Installed apps entry; uninstalling runs the setup retained in Program Files.</summary>
+    internal static Dictionary<string, object> UninstallEntry(string version, string setup, string program, long kilobytes) {
+        return new Dictionary<string, object> {
+            { "DisplayName", "StreamerAI Server" },
+            { "DisplayVersion", version },
+            { "Publisher", "StreamerAI" },
+            { "DisplayIcon", setup + ",0" },
+            { "InstallLocation", program },
+            { "UninstallString", Quote(setup) + " --uninstall" },
+            { "QuietUninstallString", Quote(setup) + " --uninstall --quiet" },
+            { "URLInfoAbout", "https://github.com/sgtkingo/StreamerAI" },
+            { "InstallDate", DateTime.Now.ToString("yyyyMMdd") },
+            { "NoModify", 1 },
+            { "NoRepair", 1 },
+            { "EstimatedSize", (int)Math.Min(Int32.MaxValue, Math.Max(0, kilobytes)) },
+        };
+    }
+    private static void RegisterUninstallEntry(string version, string setup) {
+        long bytes = 0;
+        try { bytes = new DirectoryInfo(ProgramRoot).EnumerateFiles("*", SearchOption.AllDirectories).Sum(file => file.Length); } catch { /* size is informational */ }
+        using (RegistryKey machine = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64))
+        using (RegistryKey key = machine.CreateSubKey(UninstallKey)) {
+            foreach (KeyValuePair<string, object> value in UninstallEntry(version, setup, ProgramRoot, bytes / 1024))
+                key.SetValue(value.Key, value.Value, value.Value is int ? RegistryValueKind.DWord : RegistryValueKind.String);
+        }
+    }
+
+    /// <summary>
+    /// Entry point for --uninstall. The retained setup lives inside the folder it
+    /// removes, so it first re-runs itself from a temporary copy.
+    /// </summary>
+    private static int StartUninstall(string[] args) {
+        string self = Assembly.GetExecutingAssembly().Location;
+        bool quiet = args.Contains("--quiet");
+        if (!args.Contains("--relocated")) {
+            string temporary = Path.Combine(Path.GetTempPath(), "StreamerAI-Uninstall-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(temporary);
+            string copy = Path.Combine(temporary, "StreamerAI-Setup.exe");
+            File.Copy(self, copy);
+            string forwarded = String.Join(" ", args.Where(arg => arg == "--uninstall" || arg == "--quiet" || arg == "--delete-data")) + " --relocated";
+            using (Process child = Process.Start(new ProcessStartInfo(copy, forwarded) { UseShellExecute = false })) {
+                if (!quiet) return 0;
+                child.WaitForExit();
+                return child.ExitCode;
+            }
+        }
+        try {
+            if (!quiet) {
+                Application.EnableVisualStyles();
+                Application.SetCompatibleTextRenderingDefault(false);
+                Application.Run(new UninstallWindow());
+                return 0;
+            }
+            if (!IsAdministrator()) {
+                // Quiet removal from a standard account asks for elevation once.
+                using (Process child = Process.Start(new ProcessStartInfo(self, String.Join(" ", args)) { UseShellExecute = true, Verb = "runas" })) {
+                    child.WaitForExit();
+                    return child.ExitCode;
+                }
+            }
+            UninstallServer(args.Contains("--delete-data"), Console.WriteLine);
+            return 0;
+        } catch (Exception exception) {
+            if (quiet) Console.Error.WriteLine(FailureCode(exception) + ": " + exception.Message);
+            else MessageBox.Show("StreamerAI could not be removed. " + exception.Message, "Remove StreamerAI", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            return 1;
+        } finally {
+            ScheduleTemporaryCleanup(self);
+        }
+    }
+    internal static bool IsAdministrator() {
+        using (WindowsIdentity identity = WindowsIdentity.GetCurrent()) return new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator);
+    }
+    /// <summary>Removes the temporary uninstaller copy after this process exits.</summary>
+    private static void ScheduleTemporaryCleanup(string self) {
+        try {
+            string directory = Path.GetDirectoryName(Path.GetFullPath(self));
+            string temporary = Path.GetFullPath(Path.GetTempPath()).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            if (!directory.StartsWith(temporary, StringComparison.OrdinalIgnoreCase) || !Path.GetFileName(directory).StartsWith("StreamerAI-Uninstall-", StringComparison.Ordinal)) return;
+            string shell = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "cmd.exe");
+            Process.Start(new ProcessStartInfo(shell, "/d /c ping -n 6 127.0.0.1 >nul & rd /s /q " + Quote(directory)) { UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = Path.GetTempPath() });
+        } catch { /* the OS temp directory is cleaned later */ }
+    }
+    private static int UninstallElevated(string[] args) {
+        using (StreamWriter writer = ConnectToParent(args)) {
+            try {
+                if (!IsAdministrator()) throw new InvalidOperationException("Administrator permission was not granted.");
+                UninstallServer(args.Contains("--delete-data"), message => writer.WriteLine(Json.Serialize(new { kind = "progress", message = message })));
+                writer.WriteLine(Json.Serialize(new { kind = "uninstalled" }));
+                return 0;
+            } catch (Exception exception) {
+                writer.WriteLine(Json.Serialize(new { kind = "error", code = FailureCode(exception), message = exception.Message }));
+                return 1;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Removes the server: services, trusted local HTTPS root, shortcuts, program
+    /// files and the Installed apps entry (last, so a failed removal can be retried).
+    /// Household data stays unless the owner explicitly asked to delete it.
+    /// </summary>
+    internal static void UninstallServer(bool deleteData, Action<string> progress) {
+        string program = ProgramRoot, state = StateRoot;
+        AssertRemovableRoot(program);
+        AssertRemovableRoot(state);
+        progress("Stopping and removing the StreamerAI services…");
+        foreach (string service in ServiceNames) RemoveService(program, service);
+        progress("Removing the local HTTPS certificate from this computer…");
+        RemoveTrustedRoot(state);
+        progress("Removing Start menu shortcuts…");
+        string menu = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonPrograms), "StreamerAI");
+        foreach (string name in new[] { "Open StreamerAI.url", "Configure local AI.lnk" }) {
+            string shortcut = Path.Combine(menu, name);
+            if (File.Exists(shortcut)) File.Delete(shortcut);
+        }
+        try { if (Directory.Exists(menu) && !Directory.EnumerateFileSystemEntries(menu).Any()) Directory.Delete(menu); } catch (IOException) { }
+        progress("Removing the program files…");
+        DeleteTree(program);
+        if (deleteData) {
+            progress("Deleting household data…");
+            DeleteTree(state);
+        } else {
+            // The receipt describes this installation, not the household.
+            string receipt = Path.Combine(state, "setup-receipt.json");
+            if (File.Exists(receipt)) File.Delete(receipt);
+        }
+        using (RegistryKey machine = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64)) machine.DeleteSubKeyTree(UninstallKey, false);
+        progress("StreamerAI Server was removed.");
+    }
+    private static void AssertRemovableRoot(string root) {
+        string expected = Path.GetFullPath(root);
+        if (!expected.Equals(Path.GetFullPath(ProgramRoot), StringComparison.OrdinalIgnoreCase) && !expected.Equals(Path.GetFullPath(StateRoot), StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("Refusing to remove an unexpected directory.");
+        if (Directory.Exists(expected) && (File.GetAttributes(expected) & FileAttributes.ReparsePoint) != 0)
+            throw new InvalidDataException("Refusing to remove a StreamerAI directory that is a link.");
+    }
+    private static bool ServiceExists(string name) {
+        return ServiceController.GetServices().Any(service => service.ServiceName.Equals(name, StringComparison.OrdinalIgnoreCase));
+    }
+    private static void RemoveService(string program, string service) {
+        string name = "StreamerAI" + service;
+        if (!ServiceExists(name)) return;
+        string wrapper = Path.Combine(program, "services", service, name + ".exe");
+        try {
+            using (ServiceController controller = new ServiceController(name)) {
+                if (controller.Status != ServiceControllerStatus.Stopped) {
+                    controller.Stop();
+                    controller.WaitForStatus(ServiceControllerStatus.Stopped, TimeSpan.FromSeconds(90));
+                }
+            }
+        } catch (Exception) { /* removal below still marks it for deletion */ }
+        bool removed = false;
+        if (File.Exists(wrapper)) {
+            try { Run(wrapper, "uninstall", Path.GetDirectoryName(wrapper), 120000); removed = true; } catch (Exception) { }
+        }
+        if (!removed) Run(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "sc.exe"), "delete " + name, Path.GetTempPath(), 60000);
+        // Windows finishes deleting a service once no tool holds it open.
+        DateTime until = DateTime.UtcNow.AddSeconds(30);
+        while (ServiceExists(name) && DateTime.UtcNow < until) Thread.Sleep(500);
+    }
+    private static void RemoveTrustedRoot(string state) {
+        string file = Path.Combine(state, "gateway", "pki", "authorities", "local", "root.crt");
+        if (!File.Exists(file)) return;
+        using (X509Certificate2 certificate = new X509Certificate2(file))
+        using (X509Store store = new X509Store(StoreName.Root, StoreLocation.LocalMachine)) {
+            store.Open(OpenFlags.ReadWrite);
+            foreach (X509Certificate2 match in store.Certificates.Find(X509FindType.FindByThumbprint, certificate.Thumbprint, false)) store.Remove(match);
+        }
+    }
+    /// <summary>Deletes a directory tree without following links; retries while stopped services release files.</summary>
+    private static void DeleteTree(string root) {
+        if (!Directory.Exists(root)) return;
+        for (int attempt = 1; ; attempt++) {
+            try { DeleteEntries(new DirectoryInfo(root)); return; }
+            catch (Exception error) {
+                if (!(error is IOException || error is UnauthorizedAccessException)) throw;
+                if (attempt >= 20) throw new SetupFailure("FILES_IN_USE", "Some StreamerAI files are still in use (" + root + "). Restart Windows and remove StreamerAI again; nothing else needs to be done first.");
+                Thread.Sleep(1000);
+            }
+        }
+    }
+    private static void DeleteEntries(DirectoryInfo directory) {
+        if ((directory.Attributes & FileAttributes.ReparsePoint) == 0) {
+            foreach (FileSystemInfo entry in directory.EnumerateFileSystemInfos()) {
+                if (entry is DirectoryInfo) DeleteEntries((DirectoryInfo)entry);
+                else { entry.Attributes = FileAttributes.Normal; entry.Delete(); }
+            }
+        }
+        directory.Attributes = FileAttributes.Directory;
+        directory.Delete(false);
+    }
+    /// <summary>The per-user parts: the desktop app (if chosen) and the agent connector link.</summary>
+    internal static void UninstallUserParts(bool removeClient) {
+        try { Registry.CurrentUser.DeleteSubKeyTree(@"Software\Classes\streamerai-agent", false); } catch (Exception) { }
+        if (!removeClient) return;
+        string executable = ClientExecutable();
+        string uninstaller = Path.Combine(Path.GetDirectoryName(executable), "Uninstall StreamerAI Client.exe");
+        if (!File.Exists(uninstaller)) return;
+        Run(uninstaller, "/currentuser /S", Path.GetTempPath(), 300000);
+        // The NSIS uninstaller continues from a temporary copy after it returns.
+        DateTime until = DateTime.UtcNow.AddSeconds(90);
+        while (File.Exists(executable) && DateTime.UtcNow < until) Thread.Sleep(500);
+        if (File.Exists(executable)) throw new SetupFailure("CLIENT_REMOVAL_FAILED", "The StreamerAI app for this PC is still installed. Close it and remove it in Settings → Apps.");
+    }
+
     internal static void Run(string executable, string arguments, string directory, int timeout) {
         using (Process process = Process.Start(new ProcessStartInfo(executable, arguments) { WorkingDirectory = directory, UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true })) {
             Task<string> output = process.StandardOutput.ReadToEndAsync();
@@ -560,7 +796,7 @@ internal static class Program {
     }
 }
 
-internal sealed class SetupWindow : Form {
+internal sealed partial class SetupWindow : Form {
     private readonly bool configureOnly;
     private readonly Label title = new Label();
     private readonly Label summary = new Label();
@@ -805,6 +1041,16 @@ internal sealed class SetupWindow : Form {
     }
     private async Task InstallServer() {
         SetStatus("Requesting permission to install the server services…");
+        await ElevatedChild.Run("--elevated", "installed", SetStatus);
+    }
+}
+
+internal static class ElevatedChild {
+    /// <summary>
+    /// Runs this executable elevated with <paramref name="mode"/> and relays its
+    /// progress over a pipe that only this user and administrators can open.
+    /// </summary>
+    internal static async Task Run(string mode, string completionKind, Action<string> status) {
         string pipeName = Guid.NewGuid().ToString("N");
         PipeSecurity security = new PipeSecurity();
         security.SetAccessRuleProtection(true, false);
@@ -812,7 +1058,7 @@ internal sealed class SetupWindow : Form {
         security.AddAccessRule(new PipeAccessRule(new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null), PipeAccessRights.ReadWrite, AccessControlType.Allow));
         using (NamedPipeServerStream pipe = new NamedPipeServerStream(pipeName, PipeDirection.In, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous, 4096, 4096, security)) {
             bool confirmed = false;
-            Process child = Process.Start(new ProcessStartInfo(Assembly.GetExecutingAssembly().Location, "--elevated --pipe " + pipeName + " --parent " + Process.GetCurrentProcess().Id) { UseShellExecute = true, Verb = "runas" });
+            Process child = Process.Start(new ProcessStartInfo(Assembly.GetExecutingAssembly().Location, mode + " --pipe " + pipeName + " --parent " + Process.GetCurrentProcess().Id) { UseShellExecute = true, Verb = "runas" });
             Task receive = Task.Run(() => {
                 pipe.WaitForConnection();
                 using (StreamReader reader = new StreamReader(pipe)) {
@@ -821,14 +1067,14 @@ internal sealed class SetupWindow : Form {
                         if (line.Length > 4096) throw new InvalidDataException("Invalid setup control message.");
                         var message = Program.Json.Deserialize<Dictionary<string, object>>(line);
                         string kind = Convert.ToString(message["kind"]);
-                        if (kind == "progress") SetStatus(Convert.ToString(message["message"]));
+                        if (kind == "progress") status(Convert.ToString(message["message"]));
                         else if (kind == "error") {
                             object rawCode;
                             string code = message.TryGetValue("code", out rawCode) ? Convert.ToString(rawCode) : "SERVER_SETUP_FAILED";
                             if (!System.Text.RegularExpressions.Regex.IsMatch(code, "^[A-Z][A-Z0-9_]{0,63}$")) code = "SERVER_SETUP_FAILED";
                             throw new SetupFailure(code, Convert.ToString(message["message"]));
                         }
-                        else if (kind == "installed") { confirmed = true; }
+                        else if (kind == completionKind) { confirmed = true; }
                     }
                 }
             });
@@ -836,9 +1082,12 @@ internal sealed class SetupWindow : Form {
             await Task.WhenAny(receive, exited);
             if (!pipe.IsConnected && !receive.IsCompleted) { pipe.Dispose(); throw new InvalidOperationException("The elevated setup process did not connect."); }
             await receive; await exited;
-            if (child.ExitCode != 0 || !confirmed) throw new InvalidOperationException("Server setup did not confirm completion.");
+            if (child.ExitCode != 0 || !confirmed) throw new InvalidOperationException("The elevated step did not confirm completion.");
         }
     }
+}
+
+internal sealed partial class SetupWindow {
     private async Task PrepareOllama() {
         try { if (await Task.Run(() => Program.OllamaReady())) { aiAvailable = true; return; } } catch { }
         aiCancellation.Token.ThrowIfCancellationRequested();
@@ -1008,5 +1257,80 @@ internal sealed class SetupWindow : Form {
             } catch (ArgumentException) { } catch (NotSupportedException) { }
         }
         return Path.Combine(roots[0], "ollama app.exe");
+    }
+}
+
+/// <summary>Removes StreamerAI Server (and optionally its data and the app for this PC).</summary>
+internal sealed class UninstallWindow : Form {
+    private readonly Label title = new Label();
+    private readonly Label summary = new Label();
+    private readonly CheckBox deleteData = new CheckBox();
+    private readonly Label dataWarning = new Label();
+    private readonly CheckBox removeClient = new CheckBox();
+    private readonly ProgressBar progress = new ProgressBar();
+    private readonly Label status = new Label();
+    private readonly Button remove = new Button();
+    private readonly Button close = new Button();
+    private bool working, done;
+
+    internal UninstallWindow() {
+        Text = "Remove StreamerAI";
+        ClientSize = new Size(650, 470); MinimumSize = new Size(666, 509); StartPosition = FormStartPosition.CenterScreen;
+        BackColor = Color.FromArgb(20, 21, 29); ForeColor = Color.FromArgb(242, 238, 231); Font = new Font("Segoe UI", 10);
+        Icon = Icon.ExtractAssociatedIcon(Assembly.GetExecutingAssembly().Location);
+        Label brand = new Label { Text = "STREAMER", Font = new Font("Segoe UI", 13, FontStyle.Bold), ForeColor = Color.FromArgb(229, 9, 20), AutoSize = true, Location = new Point(30, 25) };
+        Label brandAi = new Label { Text = "AI", Font = new Font("Segoe UI", 13, FontStyle.Bold), ForeColor = Color.White, AutoSize = true, Location = new Point(127, 25) };
+        string version = Program.InstalledServerVersion();
+        title.Text = "Remove StreamerAI Server."; title.Font = new Font("Segoe UI", 23); title.AutoSize = true; title.Location = new Point(28, 60);
+        summary.Text = (version != null ? "StreamerAI Server " + version + " will be stopped and removed from this computer." : "StreamerAI Server will be removed from this computer.")
+            + " Paired TVs, phones and computers will no longer reach it. Your household data is kept unless you choose otherwise.";
+        summary.Location = new Point(30, 112); summary.Size = new Size(585, 70);
+        deleteData.Text = "Also delete household data (profiles, viewing history, service connections, keys and backups)";
+        deleteData.Location = new Point(30, 190); deleteData.Size = new Size(585, 44); deleteData.Font = new Font("Segoe UI", 10, FontStyle.Bold);
+        dataWarning.Text = "Stored in " + Program.StateRoot + ". Without a saved backup file and its Master PIN the household cannot be restored.";
+        dataWarning.Location = new Point(48, 236); dataWarning.Size = new Size(567, 40); dataWarning.ForeColor = Color.FromArgb(190, 194, 204);
+        removeClient.Text = "Also remove the StreamerAI app for this PC";
+        removeClient.Location = new Point(30, 282); removeClient.Size = new Size(585, 30); removeClient.Font = new Font("Segoe UI", 10, FontStyle.Bold);
+        removeClient.Visible = File.Exists(Program.ClientExecutable());
+        foreach (CheckBox option in new[] { deleteData, removeClient }) { option.ForeColor = ForeColor; option.BackColor = BackColor; }
+        deleteData.CheckedChanged += (sender, args) => dataWarning.ForeColor = deleteData.Checked ? Color.FromArgb(249, 119, 125) : Color.FromArgb(190, 194, 204);
+        progress.Location = new Point(30, 330); progress.Size = new Size(585, 15); progress.Visible = false; progress.Style = ProgressBarStyle.Marquee;
+        status.Location = new Point(30, 352); status.Size = new Size(585, 50);
+        remove.Text = "Remove StreamerAI"; remove.Location = new Point(380, 415); remove.Size = new Size(235, 35);
+        remove.BackColor = Color.FromArgb(229, 9, 20); remove.ForeColor = Color.White; remove.FlatStyle = FlatStyle.Flat;
+        close.Text = "Cancel"; close.Location = new Point(250, 415); close.Size = new Size(115, 35);
+        close.Click += (sender, args) => Close();
+        remove.Click += async (sender, args) => await RemoveClicked();
+        FormClosing += (sender, args) => { if (working) { args.Cancel = true; SetStatus("Please wait until StreamerAI is removed."); } };
+        Controls.AddRange(new Control[] { brand, brandAi, title, summary, deleteData, dataWarning, removeClient, progress, status, remove, close });
+    }
+    private void SetStatus(string message) { if (IsHandleCreated) BeginInvoke((Action)(() => status.Text = Program.Truncate(message, 300))); else status.Text = message; }
+    private async Task RemoveClicked() {
+        if (done) { Close(); return; }
+        if (deleteData.Checked && MessageBox.Show("Delete all household data on this computer? Profiles, viewing history, service connections and backups stored here cannot be recovered.", "Delete household data", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) != DialogResult.Yes) return;
+        bool wipe = deleteData.Checked, client = removeClient.Visible && removeClient.Checked;
+        working = true; remove.Enabled = false; close.Enabled = false; deleteData.Enabled = false; removeClient.Enabled = false; progress.Visible = true;
+        string stage = "server";
+        try {
+            SetStatus("Requesting permission to remove the server services…");
+            await ElevatedChild.Run("--uninstall-elevated" + (wipe ? " --delete-data" : ""), "uninstalled", SetStatus);
+            stage = "client";
+            if (client) SetStatus("Removing the StreamerAI app for this PC…");
+            await Task.Run(() => Program.UninstallUserParts(client));
+            done = true;
+            title.Text = "StreamerAI was removed.";
+            summary.Text = wipe ? "The server and all household data on this computer were deleted." : "The server was removed. Your household data was kept in " + Program.StateRoot + "; installing StreamerAI again restores it.";
+            if (client) summary.Text += " The app for this PC was removed too.";
+            status.Text = "";
+            remove.Text = "Close";
+        } catch (Exception exception) {
+            title.Text = stage == "client" ? "The server was removed." : "StreamerAI was not removed.";
+            status.Text = (stage == "client" ? "" : "Nothing more needs to be done before you retry. ") + exception.Message;
+            remove.Text = stage == "client" ? "Close" : "Retry";
+            done = stage == "client";
+        } finally {
+            working = false; remove.Enabled = true; close.Enabled = !done; progress.Visible = false;
+            deleteData.Enabled = !done; removeClient.Enabled = !done;
+        }
     }
 }

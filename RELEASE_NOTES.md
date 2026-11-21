@@ -1,12 +1,22 @@
 # StreamerAI release notes
 
-Write upcoming changes under **Unreleased**. A commit to `main` whose message
-contains `(major)`, `(minor)` or `(patch)` releases them: the section moves under
-the new version and is copied into the GitHub release.
+Write upcoming changes under **Unreleased**. A commit to `main` whose subject
+(first line) contains `(major)`, `(minor)` or `(patch)` releases them: the
+section moves under the new version and is copied into the GitHub release.
 
 ## Unreleased
 
-_Nothing yet._
+### New
+
+- **Uninstall:** StreamerAI Server appears in Settings → Apps and can be removed
+  there. Household data is kept unless you choose to delete it, and the app for
+  this PC can be removed in the same step. The local HTTPS certificate,
+  services, shortcuts and program files are cleaned up.
+
+### Changed
+
+- The bundled FFmpeg is the gyan.dev 8.1.2 release build (smaller download;
+  the previous build was withdrawn by its publisher).
 
 ## v0.11.0 (2026-11-21)
 

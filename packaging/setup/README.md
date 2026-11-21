@@ -141,6 +141,36 @@ and `OLLAMA_MODELS` are retained. An always-on server with no signed-in desktop
 may need a separately managed inference service; the installer does not silently
 convert a user's existing Ollama into a service or migrate their models.
 
+## Uninstall
+
+Setup registers **StreamerAI Server** in Settings → Apps → Installed apps
+(`HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\StreamerAIServer`)
+after every install, repair or upgrade. The updater service keeps its
+`DisplayVersion` on the active release after automatic updates.
+
+The entry runs the setup retained in `Program Files\StreamerAI\setup` with
+`--uninstall`. Because that file lives in the folder being removed, setup first
+re-runs itself from a temporary copy, which is deleted afterwards. The window
+offers two choices, both off by default:
+
+- **Also delete household data** removes `ProgramData\StreamerAI` (profiles,
+  history, service connections, keys and backups) after a second confirmation.
+  Otherwise the data stays, and installing StreamerAI again picks it up.
+- **Also remove the StreamerAI app for this PC** runs the app's own uninstaller
+  for the signed-in user.
+
+After an administrator prompt the elevated step stops and removes the
+Updater, Gateway and Server services, removes this installation's local HTTPS
+CA from the machine's trusted roots (matched by thumbprint), deletes the Start
+menu shortcuts and the program folder without following links, and removes the
+Installed apps entry last, so a failed removal can simply be retried. The
+per-user agent connector link is removed as well. Ollama and its models are
+never touched.
+
+Unattended removal: `StreamerAI-Setup.exe --uninstall --quiet [--delete-data]`
+(the `QuietUninstallString`). It asks for elevation when started from a
+standard account and returns a non-zero exit code on failure.
+
 Official behavior references:
 [Ollama Windows installation](https://docs.ollama.com/windows),
 [official Windows installer source](https://github.com/ollama/ollama/blob/main/app/ollama.iss).

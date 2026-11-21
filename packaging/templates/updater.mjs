@@ -332,8 +332,37 @@ export function winswControl(paths, run = spawnSync) {
     },
     stop: (service) => call(service, "stop", true),
     start: (service) => call(service, "start"),
+    /** Keeps the Installed apps entry (written by setup) on the active version. */
+    recordVersion(version) {
+      const options = { encoding: "utf8", windowsHide: true, timeout: 30_000 };
+      if (
+        run("reg.exe", ["query", UNINSTALL_KEY, "/reg:64"], options).status !==
+        0
+      )
+        return false;
+      return (
+        run(
+          "reg.exe",
+          [
+            "add",
+            UNINSTALL_KEY,
+            "/v",
+            "DisplayVersion",
+            "/t",
+            "REG_SZ",
+            "/d",
+            version,
+            "/f",
+            "/reg:64",
+          ],
+          options,
+        ).status === 0
+      );
+    },
   };
 }
+export const UNINSTALL_KEY =
+  "HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\StreamerAIServer";
 
 /** Polls the loopback API until the expected version is ready. */
 export async function waitForServer(
@@ -483,6 +512,11 @@ export async function activateRelease({
     });
     if (mode === "service")
       writeJsonAtomic(paths.receipt, { version, phase: "complete" });
+    try {
+      control.recordVersion?.(version);
+    } catch {
+      /* informational only; setup rewrites the entry on its next run */
+    }
     // The updater itself moves to the new release; the running copy restarts.
     const updaterExists = control.exists("Updater");
     writeServiceDefinitions(paths, ["Updater"], target);

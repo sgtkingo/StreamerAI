@@ -114,7 +114,20 @@ test(
       assert.equal(report.exactModelMatchVerified, true);
       assert.equal(report.protectedCreationVerified, true);
       assert.equal(report.ownerHandoffVerified, true);
+      assert.equal(report.uninstallEntryVerified, true);
       assert.equal(report.preview, true);
+      // Only renders the uninstall window; it never removes anything.
+      const uninstallImage = path.join(item.temporary, "uninstall.png");
+      const uninstallPreview = spawnSync(
+        result.executable,
+        ["--uninstall-preview", uninstallImage],
+        { windowsHide: true, encoding: "utf8", timeout: 10000 },
+      );
+      assert.equal(uninstallPreview.status, 0, uninstallPreview.stderr);
+      assert.deepEqual(
+        readFileSync(uninstallImage).subarray(0, 8),
+        Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+      );
       const icon = readFileSync(path.join(output, "StreamerAI.ico"));
       assert.deepEqual(icon.subarray(0, 4), Buffer.from([0, 0, 1, 0]));
       assert.equal(icon.readUInt16LE(4), 6);
