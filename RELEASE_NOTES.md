@@ -6,6 +6,10 @@ section moves under the new version and is copied into the GitHub release.
 
 ## Unreleased
 
+_Nothing yet._
+
+## v0.13.0 (2026-11-21)
+
 ### New
 
 - **Fast search:** a new page next to Download searches file names directly in
