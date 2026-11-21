@@ -6,10 +6,6 @@ the new version and is copied into the GitHub release.
 
 ## Unreleased
 
-_Nothing yet._
-
-## v1.0.0 (2026-11-21)
-
 ### New
 
 - **One Windows setup:** install the server, the StreamerAI app for this PC, or
