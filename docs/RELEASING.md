@@ -1,7 +1,7 @@
 # Vydání nové verze
 
-Vydání je automatické. Stačí pushnout do `main` commit, jehož zpráva obsahuje
-`(patch)`, `(minor)` nebo `(major)`. [Release workflow](../.github/workflows/release.yml)
+Vydání je automatické. Stačí pushnout do `main` commit, jehož předmět (první
+řádek zprávy) obsahuje `(patch)`, `(minor)` nebo `(major)`. [Release workflow](../.github/workflows/release.yml)
 pak zvedne verzi, otaguje `vX.Y.Z` a publikuje GitHub Release s:
 
 | Soubor | K čemu |
@@ -24,8 +24,9 @@ Server, aplikace pro Windows i Android čtou
 | `(minor)` | `Add Windows app updates (minor)` | 0.3.0 |
 | `(major)` | `New household model (major)` | 1.0.0 |
 
-- Rozhodují všechny commity v jednom pushi do `main` a vyhrává nejvyšší značka.
-  Push bez značky nic nevydá (běží jen CI).
+- Rozhodují předměty všech commitů v jednom pushi do `main` a vyhrává nejvyšší
+  značka. Značka zmíněná jen v těle zprávy se nepočítá a commity `Revert …` nic
+  nevydají. Push bez značky nic nevydá (běží jen CI).
 - Workflow nastaví verzi ve všech manifestech (server, web, aplikace, Android).
   Sekci `## Unreleased` v [RELEASE_NOTES.md](../RELEASE_NOTES.md) přesune pod
   `## vX.Y.Z (datum)` a založí novou prázdnou. Pak commitne

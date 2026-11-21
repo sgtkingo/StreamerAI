@@ -24,6 +24,15 @@ test("bump level comes from the highest commit marker", () => {
   assert.equal(bumpLevel(["Fix player (patch)", "Add app (MINOR)"]), "minor");
   assert.equal(bumpLevel(["Rework (major)", "x (patch)"]), "major");
   assert.equal(bumpLevel(["Regular commit"]), null);
+  assert.equal(
+    bumpLevel([
+      "Add release pipeline\n\n- bump from (major)/(minor)/(patch)",
+      "Ship household setup (minor)",
+    ]),
+    "minor",
+  );
+  assert.equal(bumpLevel(["Docs\n\nMention (major) here"]), null);
+  assert.equal(bumpLevel(['Revert "Release 1.0.0 (major)"']), null);
   assert.equal(nextVersion("0.1.9", "patch"), "0.1.10");
   assert.equal(nextVersion("0.1.9", "minor"), "0.2.0");
   assert.equal(nextVersion("0.1.9", "major"), "1.0.0");

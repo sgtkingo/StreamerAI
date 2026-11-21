@@ -9,6 +9,11 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { realpathSync } from "node:fs";
+
+// CI runners report tmpdir() as an 8.3 short path (C:\\Users\\RUNNER~1); the
+// library resolves folders to their long form, so compare against that.
+const tempRoot = realpathSync.native(tmpdir());
 import { join, resolve } from "node:path";
 import { openStreamerDatabase } from "@streamer-ai/database";
 import { LocalMediaLibrary } from "../src/services/local-media-library.js";
@@ -38,7 +43,7 @@ afterEach(async () => {
 
 describe("local folder connector", () => {
   it("indexes equal-content local copies once while keeping different files of the same size", async () => {
-    const folder = await mkdtemp(join(tmpdir(), "streamer-local-duplicates-"));
+    const folder = await mkdtemp(join(tempRoot, "streamer-local-duplicates-"));
     temporary.push(folder);
     const first = join(folder, "Example.Show.S01E01.A.mkv");
     const copy = join(folder, "Example.Show.S01E01.B.mkv");
@@ -84,7 +89,7 @@ describe("local folder connector", () => {
   });
 
   it("keeps distinct local files with the same name and size", async () => {
-    const folder = await mkdtemp(join(tmpdir(), "streamer-local-same-name-"));
+    const folder = await mkdtemp(join(tempRoot, "streamer-local-same-name-"));
     temporary.push(folder);
     const other = join(folder, "other");
     await mkdir(other);
@@ -107,7 +112,7 @@ describe("local folder connector", () => {
   });
 
   it("keeps Season 0 playable without counting its episodes in series coverage", async () => {
-    const folder = await mkdtemp(join(tmpdir(), "streamer-local-specials-"));
+    const folder = await mkdtemp(join(tempRoot, "streamer-local-specials-"));
     temporary.push(folder);
     await writeFile(join(folder, "Example.Show.S00E01.mkv"), "bonus");
     await writeFile(join(folder, "Example.Show.S01E01.mkv"), "episode");
@@ -148,7 +153,7 @@ describe("local folder connector", () => {
   });
 
   it("creates the managed library on first start and respects a later disconnect", async () => {
-    const folder = await mkdtemp(join(tmpdir(), "streamer-default-local-"));
+    const folder = await mkdtemp(join(tempRoot, "streamer-default-local-"));
     temporary.push(folder);
     const runtimeConfig = readRuntimeConfig({
       NODE_ENV: "development",
@@ -206,7 +211,7 @@ describe("local folder connector", () => {
   });
 
   it("opens the server folder picker and connects the selected folder", async () => {
-    const folder = await mkdtemp(join(tmpdir(), "streamer-picked-local-"));
+    const folder = await mkdtemp(join(tempRoot, "streamer-picked-local-"));
     temporary.push(folder);
     const picker = vi.fn().mockResolvedValue(folder);
     const app = createApp({
@@ -235,7 +240,7 @@ describe("local folder connector", () => {
   });
 
   it("indexes episodes beyond the former 24-source title limit", async () => {
-    const folder = await mkdtemp(join(tmpdir(), "streamer-local-series-"));
+    const folder = await mkdtemp(join(tempRoot, "streamer-local-series-"));
     temporary.push(folder);
     for (let episode = 1; episode <= 30; episode += 1)
       await writeFile(
@@ -285,7 +290,7 @@ describe("local folder connector", () => {
   });
 
   it("scans multiple roots, filters formats, enriches Library, and removes stale files", async () => {
-    const folder = await mkdtemp(join(tmpdir(), "streamer-local-"));
+    const folder = await mkdtemp(join(tempRoot, "streamer-local-"));
     temporary.push(folder);
     const first = join(folder, "first");
     const second = join(folder, "second");
@@ -345,7 +350,7 @@ describe("local folder connector", () => {
   });
 
   it("keeps the absolute local path behind a playback grant", async () => {
-    const folder = await mkdtemp(join(tmpdir(), "streamer-local-"));
+    const folder = await mkdtemp(join(tempRoot, "streamer-local-"));
     temporary.push(folder);
     const path = resolve(folder, "Dune.2021.mkv");
     await writeFile(path, "movie");
@@ -406,7 +411,7 @@ describe("local folder connector", () => {
   });
 
   it("opens a local-only episode through the regular title and playback flow", async () => {
-    const folder = await mkdtemp(join(tmpdir(), "streamer-local-playback-"));
+    const folder = await mkdtemp(join(tempRoot, "streamer-local-playback-"));
     temporary.push(folder);
     await writeFile(join(folder, "Example.Show.S01E03.mkv"), "episode");
     await writeFile(join(folder, "Example.Show.S01E03.avi"), "alternate");
@@ -479,7 +484,7 @@ describe("local folder connector", () => {
   });
 
   it("exposes folder and format management through the integration API", async () => {
-    const folder = await mkdtemp(join(tmpdir(), "streamer-local-"));
+    const folder = await mkdtemp(join(tempRoot, "streamer-local-"));
     temporary.push(folder);
     await writeFile(join(folder, "Solaris.1972.mkv"), "movie");
     const app = createApp({ environment: "test", logger: false });
@@ -530,7 +535,7 @@ describe("local folder connector", () => {
   });
 
   it("downloads a verified Webshare source into the chosen root and indexes it", async () => {
-    const folder = await mkdtemp(join(tmpdir(), "streamer-local-"));
+    const folder = await mkdtemp(join(tempRoot, "streamer-local-"));
     temporary.push(folder);
     const db = openStreamerDatabase({ filename: ":memory:" });
     db.profiles.create({ id: "default", name: "Viewer", locale: "en" });

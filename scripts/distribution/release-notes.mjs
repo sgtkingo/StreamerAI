@@ -77,10 +77,17 @@ export function nextVersion(current, level) {
 }
 
 /** Highest (major) / (minor) / (patch) marker in the given commit messages. */
+/**
+ * Only the subject (first line) of a commit asks for a release, so a body that
+ * merely mentions the markers does not. Reverts never release.
+ */
 export function bumpLevel(messages) {
-  const text = messages.join("\n");
+  const subjects = messages
+    .map((message) => String(message).split(/\r?\n/, 1)[0])
+    .filter((subject) => !/^revert\b/i.test(subject))
+    .join("\n");
   for (const level of ["major", "minor", "patch"])
-    if (new RegExp(`\\(${level}\\)`, "i").test(text)) return level;
+    if (new RegExp(`\\(${level}\\)`, "i").test(subjects)) return level;
   return null;
 }
 

@@ -1,7 +1,8 @@
 name: Release
 
-# Automatic releases from main. Put (major), (minor) or (patch) in a commit
-# message pushed to main; the highest marker in the push wins. The workflow:
+# Automatic releases from main. Put (major), (minor) or (patch) in the subject
+# (first line) of a commit pushed to main; the highest marker in the push wins.
+# Markers mentioned only in a commit body are ignored. The workflow:
 #   1. bumps the version in every manifest, moves the "Unreleased" section of
 #      RELEASE_NOTES.md under the new version, commits "Release X.Y.Z [skip ci]"
 #      and tags vX.Y.Z,
@@ -75,7 +76,8 @@ jobs:
             const manual = process.env.MANUAL_BUMP;
             console.log(manual || bumpLevel(JSON.parse(process.env.COMMITS || '[]')) || '');
           ")"
-          [ -n "$level" ] || { echo "No release marker."; exit 1; }
+          # A marker mentioned only in a commit body is not a release request.
+          [ -n "$level" ] || { echo "No release marker in a commit subject; nothing to release."; exit 0; }
           current="$(node scripts/distribution/set-version.mjs --check)"
           version="$(node --input-type=module -e "import {nextVersion} from './scripts/distribution/release-notes.mjs'; console.log(nextVersion('$current', '$level'))")"
           if git rev-parse -q --verify "refs/tags/v$version" > /dev/null; then echo "::error::Tag v$version already exists"; exit 1; fi
@@ -93,6 +95,7 @@ jobs:
 
   windows:
     needs: bump
+    if: needs.bump.outputs.tag != ''
     env:
       TAG: ${{ needs.bump.outputs.tag }}
     runs-on: windows-2022
@@ -149,6 +152,7 @@ jobs:
 
   android:
     needs: bump
+    if: needs.bump.outputs.tag != ''
     env:
       TAG: ${{ needs.bump.outputs.tag }}
     runs-on: ubuntu-24.04
