@@ -68,15 +68,13 @@ it("resumes the same pending request after a refresh and clears it after approva
 });
 
 it("does not resume a request belonging to another home server", async () => {
-  const fetcher = vi
-    .fn()
-    .mockResolvedValue(
-      Response.json({
-        requestId: "request-1",
-        code: "123456",
-        expiresAt: new Date(Date.now() + 300000).toISOString(),
-      }),
-    );
+  const fetcher = vi.fn().mockResolvedValue(
+    Response.json({
+      requestId: "request-1",
+      code: "123456",
+      expiresAt: new Date(Date.now() + 300000).toISOString(),
+    }),
+  );
   vi.stubGlobal("fetch", fetcher);
   const base = {
     enabled: true,

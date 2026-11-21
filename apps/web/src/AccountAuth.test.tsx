@@ -190,7 +190,7 @@ describe("account access and profile PIN", () => {
     expect(api.getSetupStatus).not.toHaveBeenCalledWith("default");
   });
 
-  it("shows an empty account's chooser without reading another account's default setup", async () => {
+  it("lets an empty account add its first profile without reading another account's default setup", async () => {
     const api = makeApi();
     vi.mocked(api.getProfiles).mockResolvedValue({ items: [], limit: 5 });
     vi.mocked(api.getSetupStatus).mockRejectedValue(
@@ -200,10 +200,7 @@ describe("account access and profile PIN", () => {
     await screen.findByRole("heading", { name: "Who's watching?" });
     expect(api.getSetupStatus).not.toHaveBeenCalled();
     expect(
-      screen.queryByRole("button", { name: /add profile/i }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.getByRole("link", { name: "Open household administration" }),
-    ).toHaveAttribute("href", "/admin");
+      screen.getByRole("button", { name: /add profile/i }),
+    ).toBeInTheDocument();
   });
 });

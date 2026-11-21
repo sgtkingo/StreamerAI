@@ -247,13 +247,11 @@ describe("profile PIN controls", () => {
     const unlocked = vi.fn();
     const api = {
       getAuthStatus: vi.fn().mockResolvedValue({ ownerResetAvailable: true }),
-      requestProfilePinReset: vi
-        .fn()
-        .mockResolvedValue({
-          id: "denied",
-          manageUrl: "/admin",
-          expiresAt: new Date(Date.now() + 300000).toISOString(),
-        }),
+      requestProfilePinReset: vi.fn().mockResolvedValue({
+        id: "denied",
+        manageUrl: "/admin",
+        expiresAt: new Date(Date.now() + 300000).toISOString(),
+      }),
       pollProfilePinReset: vi.fn().mockResolvedValue({ status: "denied" }),
       setProfilePin: vi.fn(),
     } as unknown as StreamerApi;

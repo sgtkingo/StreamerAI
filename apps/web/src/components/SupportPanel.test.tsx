@@ -164,21 +164,19 @@ it("shows remaining characters and preserves long reports without truncation", a
 it("downloads a separate ZIP of logs when opening GitHub", async () => {
   vi.stubGlobal(
     "fetch",
-    vi
-      .fn()
-      .mockResolvedValue({
-        ok: true,
-        json: async () => ({
-          available: true,
-          entries: [
-            {
-              time: "2026-11-10T10:00:00.000Z",
-              level: 50,
-              code: "PLAYBACK_MANIFEST_FAILED",
-            },
-          ],
-        }),
+    vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        available: true,
+        entries: [
+          {
+            time: "2026-11-10T10:00:00.000Z",
+            level: 50,
+            code: "PLAYBACK_MANIFEST_FAILED",
+          },
+        ],
       }),
+    }),
   );
   const createUrl = vi.fn().mockReturnValue("blob:archive");
   vi.stubGlobal(
