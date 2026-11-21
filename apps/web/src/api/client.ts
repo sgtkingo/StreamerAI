@@ -24,6 +24,9 @@ import type {
   SourceFeedback,
   SourceAiPickResponse,
   PreferredSourceSelection,
+  CatalogTitle,
+  MediaFormat,
+  PlaybackLanguageAvailability,
 } from "@streamer-ai/contracts";
 import {
   AppearancePreferencesSchema,
@@ -214,6 +217,36 @@ export interface OfflineDownload {
   bytes: number;
   totalBytes: number | null;
   error: string | null;
+  /** Fast Search downloads have no title; label is the saved file name. */
+  label?: string;
+  direct?: boolean;
+}
+
+/** One file found by Fast Search, read from the provider's result. */
+export interface DirectSearchItem {
+  providerId: string;
+  candidateId: string;
+  directId: string;
+  releaseName: string;
+  sizeBytes: number | null;
+  providerRank: number;
+  similarity: number;
+  format: Pick<
+    MediaFormat,
+    "container" | "resolution" | "videoCodec" | "audioLanguages"
+  >;
+  episode: { seasonNumber: number; episodeNumber: number } | null;
+  votes: { positive: number; negative: number } | null;
+  downloadable: boolean;
+}
+export interface DirectSearchPage {
+  provider: string;
+  items: DirectSearchItem[];
+  hasMore: boolean;
+}
+export interface DirectSearchDetails {
+  format: MediaFormat;
+  languages: PlaybackLanguageAvailability | null;
 }
 
 export interface PlaybackStartResult {
@@ -506,8 +539,31 @@ export interface StreamerApi {
     rootId: string,
     replaceExisting?: boolean,
   ): Promise<OfflineDownload>;
+  startDirectDownload?(
+    profileId: string,
+    candidateId: string,
+    rootId: string,
+    replaceExisting?: boolean,
+  ): Promise<OfflineDownload>;
   cancelOfflineDownload(profileId: string, downloadId: string): Promise<void>;
   deleteOfflineDownload?(profileId: string, downloadId: string): Promise<void>;
+  getDirectSearchProviders?(
+    profileId: string,
+  ): Promise<{ providers: { id: string; name: string }[] }>;
+  directSearch?(
+    profileId: string,
+    providerId: string,
+    query: string,
+    offset?: number,
+  ): Promise<DirectSearchPage>;
+  inspectDirectSource?(
+    profileId: string,
+    item: Pick<DirectSearchItem, "providerId" | "candidateId">,
+  ): Promise<DirectSearchDetails>;
+  prepareDirectPlayback?(
+    profileId: string,
+    item: Pick<DirectSearchItem, "providerId" | "candidateId" | "releaseName">,
+  ): Promise<{ playback: PlaybackGrantContract; title: CatalogTitle }>;
   getSetupStatus(profileId?: string): Promise<SetupStatus>;
   connectTmdb(token: string, profileId?: string): Promise<ConnectionResult>;
   connectWebshare(
@@ -1344,6 +1400,45 @@ export const apiClient: StreamerApi = {
       {
         method: "POST",
         body: JSON.stringify({ titleId, sourceId, rootId, replaceExisting }),
+      },
+    ),
+  startDirectDownload: (profileId, candidateId, rootId, replaceExisting) =>
+    request<OfflineDownload>(
+      `/profiles/${encodeURIComponent(profileId)}/offline-downloads/direct`,
+      {
+        method: "POST",
+        body: JSON.stringify({ candidateId, rootId, replaceExisting }),
+      },
+    ),
+  getDirectSearchProviders: (profileId) =>
+    request<{ providers: { id: string; name: string }[] }>(
+      `/profiles/${encodeURIComponent(profileId)}/direct-search/providers`,
+    ),
+  directSearch: (profileId, providerId, query, offset = 0) =>
+    request<DirectSearchPage>(
+      `/profiles/${encodeURIComponent(profileId)}/direct-search?${new URLSearchParams({ provider: providerId, q: query, offset: String(offset) })}`,
+    ),
+  inspectDirectSource: (profileId, item) =>
+    request<DirectSearchDetails>(
+      `/profiles/${encodeURIComponent(profileId)}/direct-search/inspect`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          providerId: item.providerId,
+          candidateId: item.candidateId,
+        }),
+      },
+    ),
+  prepareDirectPlayback: (profileId, item) =>
+    request<{ playback: PlaybackGrantContract; title: CatalogTitle }>(
+      `/profiles/${encodeURIComponent(profileId)}/direct-search/play`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          providerId: item.providerId,
+          candidateId: item.candidateId,
+          releaseName: item.releaseName,
+        }),
       },
     ),
   cancelOfflineDownload: (profileId, downloadId) =>

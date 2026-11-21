@@ -165,6 +165,18 @@ export const MediaSearchRequestSchema = z
   .strict();
 export type MediaSearchRequest = z.infer<typeof MediaSearchRequestSchema>;
 
+/** Free-text search in a provider's own index (Fast Search), without a title. */
+export const MediaTextSearchRequestSchema = z
+  .object({
+    query: z.string().trim().min(1).max(200),
+    limit: z.number().int().min(1).max(100),
+    offset: z.number().int().min(0).max(1_000),
+  })
+  .strict();
+export type MediaTextSearchRequest = z.infer<
+  typeof MediaTextSearchRequestSchema
+>;
+
 export const MediaCandidateRefSchema = z
   .object({
     providerId: z.string().trim().min(1).max(80),
@@ -576,6 +588,14 @@ export interface MediaProvider {
   health(context: ProviderContext): Promise<ProviderHealth>;
   search(
     request: MediaSearchRequest,
+    context: ProviderContext,
+  ): Promise<MediaCandidate[]>;
+  /**
+   * Optional direct search by file name, in the provider's own result order.
+   * Candidates carry no title; season/episode are null.
+   */
+  searchText?(
+    request: MediaTextSearchRequest,
     context: ProviderContext,
   ): Promise<MediaCandidate[]>;
   inspect(

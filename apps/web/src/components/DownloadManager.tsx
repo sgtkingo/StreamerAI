@@ -13,7 +13,11 @@ import type {
   TitleDetail,
   TitleSource,
 } from "@streamer-ai/contracts";
-import type { OfflineDownload, StreamerApi } from "../api/client";
+import type {
+  DirectSearchItem,
+  OfflineDownload,
+  StreamerApi,
+} from "../api/client";
 import { safeErrorMessage } from "../api/client";
 import { useToasts } from "./ToastProvider";
 import { formatDownloadSize } from "./download-size";
@@ -108,6 +112,8 @@ interface DownloadContextValue {
     source: TitleSource,
     replaceExisting?: boolean,
   ) => void;
+  /** Fast Search: saves a Webshare file into the "Fast Search" folder. */
+  requestDirect: (item: DirectSearchItem, replaceExisting?: boolean) => void;
   stopSource: (jobId: string) => Promise<void>;
   confirmDelete: (jobs: OfflineDownload[], label: string) => void;
   findSources: (
@@ -885,6 +891,67 @@ export function DownloadProvider({
     },
     [api, profileId, showToast, updateJobs],
   );
+  const requestDirect = useCallback(
+    (item: DirectSearchItem, replaceExisting = false) => {
+      void (async () => {
+        try {
+          if (!api.startDirectDownload) return;
+          const roots = (await api.getLocalFolders()).roots;
+          if (roots.length === 0) {
+            showToast(
+              "Connect a Local folder in Settings before downloading.",
+              "error",
+            );
+            return;
+          }
+          if (folderPromptRef.current) {
+            showToast(
+              "Choose a folder for the pending download first.",
+              "warning",
+            );
+            return;
+          }
+          const existingRootId = replaceExisting
+            ? jobsRef.current.find(
+                (job) =>
+                  job.titleId === item.directId && job.state === "complete",
+              )?.rootId
+            : undefined;
+          const defaultRootId =
+            roots.find((root) => root.id === existingRootId)?.id ??
+            roots[0]!.id;
+          const start = async (rootId: string) => {
+            try {
+              const job = await api.startDirectDownload!(
+                profileId,
+                item.candidateId,
+                rootId,
+                replaceExisting,
+              );
+              updateJobs([...jobsRef.current, job]);
+              showToast(`Downloading ${item.releaseName}.`, "success");
+            } catch (error) {
+              showToast(safeErrorMessage(error), "error");
+            }
+          };
+          if (roots.length > 1) {
+            const prompt: FolderPrompt = {
+              roots,
+              rootId: defaultRootId,
+              label: item.releaseName,
+              start: (rootId) => void start(rootId),
+              cancel: () => undefined,
+            };
+            folderPromptRef.current = prompt;
+            setFolderPrompt(prompt);
+          } else void start(defaultRootId);
+        } catch (error) {
+          showToast(safeErrorMessage(error), "error");
+        }
+      })();
+    },
+    [api, profileId, showToast, updateJobs],
+  );
   const activateMovie = useCallback(
     (title: CatalogTitle) => {
       const view = movieFor(title);
@@ -974,6 +1041,7 @@ export function DownloadProvider({
         activateMovie,
         stopBatch,
         requestSource,
+        requestDirect,
         stopSource,
         confirmDelete,
         findSources,

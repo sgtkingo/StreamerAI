@@ -3,6 +3,7 @@ import {
   CONNECTOR_CONTRACT_VERSION,
   MediaCandidateRefSchema,
   MediaSearchRequestSchema,
+  MediaTextSearchRequestSchema,
   PlaybackRequestSchema,
   PlaybackGrantSchema,
   PlaybackSourceRefreshRequestSchema,
@@ -13,6 +14,7 @@ import {
   type MediaCandidate,
   type MediaCandidateRef,
   type MediaSearchRequest,
+  type MediaTextSearchRequest,
   type MediaVariant,
   type PlaybackRequest,
   type PlaybackGrant,
@@ -134,6 +136,28 @@ export class HellspyMediaProvider implements MediaProvider {
       sizeBytes: item.size,
       seasonNumber: request.seasonNumber,
       episodeNumber: request.episodeNumber,
+      confidence: 0.5,
+      provenance: this.provenance(true),
+    }));
+  }
+  async searchText(
+    raw: MediaTextSearchRequest,
+    context: ProviderContext,
+  ): Promise<MediaCandidate[]> {
+    const request = MediaTextSearchRequestSchema.parse(raw);
+    const items = await this.options.client.search(
+      context.profileId ?? "default",
+      request.query,
+      request.limit,
+      context.signal,
+      request.offset,
+    );
+    return items.map((item) => ({
+      ref: { providerId: "hellspy", candidateId: hellspyCandidateId(item) },
+      releaseName: item.title,
+      sizeBytes: item.size,
+      seasonNumber: null,
+      episodeNumber: null,
       confidence: 0.5,
       provenance: this.provenance(true),
     }));

@@ -76,6 +76,10 @@ import {
 import { registerTmdbRoutes } from "./routes/tmdb.js";
 import { registerWebshareRoutes } from "./routes/webshare.js";
 import { registerLocalFilesRoutes } from "./routes/local-files.js";
+import {
+  registerDirectSearchRoutes,
+  type DirectSearchBackend,
+} from "./routes/direct-search.js";
 import { registerEnvironmentRoutes } from "./routes/environment.js";
 import {
   OpenMeteoClient,
@@ -155,6 +159,8 @@ export interface CreateAppOptions {
   database?: StreamerDatabase;
   databaseFilename?: string;
   contentProvider?: StreamerContentProvider;
+  /** Fast Search backend; defaults to the live source coordinator. */
+  directSearch?: DirectSearchBackend;
   /** Additional trusted connector adapters. Their descriptors are registered for setup. */
   metadataProviders?: readonly MetadataProvider[];
   mediaProviders?: readonly MediaProvider[];
@@ -1020,8 +1026,18 @@ export function createApp(options: CreateAppOptions = {}): FastifyInstance {
       if (profileId !== "default")
         database.settings.delete(manualAgentSettingKey(profileId));
       profileInferenceConfigs.delete(profileId);
+      core.directPositions.deleteProfile(profileId);
     },
   });
+  registerDirectSearchRoutes(
+    app,
+    core,
+    options.directSearch ??
+      (contentProvider instanceof LiveContentCoordinator
+        ? contentProvider
+        : undefined),
+    now,
+  );
   registerLocalFilesRoutes(
     app,
     localMediaLibrary,

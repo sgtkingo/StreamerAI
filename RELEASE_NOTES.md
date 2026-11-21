@@ -6,7 +6,14 @@ section moves under the new version and is copied into the GitHub release.
 
 ## Unreleased
 
-_Nothing yet._
+### New
+
+- **Fast search:** a new page next to Download searches file names directly in
+  Webshare, Hellspy and local folders, without AI or catalog matching. Results
+  arrive per source, sorted by best match or in each source's own order, with
+  filters for source, name, format, video, audio and size. Play a file straight
+  away or save a Webshare file into the _Fast Search_ folder; playback resumes
+  where you stopped but stays out of Library and history.
 
 ## v0.12.0 (2026-11-21)
 

@@ -43,6 +43,7 @@ import {
   type StreamerContentProvider,
 } from "./content-provider.js";
 import { PreferredSourceStore } from "./preferred-source-store.js";
+import { DirectPositionStore, isDirectTitleId } from "./direct-search.js";
 import { TitlePriorityStore } from "./title-priority-store.js";
 import { connectedTitleSources } from "./connected-title-sources.js";
 import {
@@ -102,6 +103,8 @@ export class StreamerCore {
   private readonly activeDiscoveries = new Map<string, AbortController>();
   private readonly cancelledDiscoveries = new Map<string, number>();
   private readonly preferredSources: PreferredSourceStore;
+  /** Resume positions for Fast Search files, which have no catalog title. */
+  readonly directPositions: DirectPositionStore;
   private readonly priorities: TitlePriorityStore;
   private scheduledChecksRunning = false;
   private scheduledProfileCursor = 0;
@@ -128,6 +131,7 @@ export class StreamerCore {
     ) => SourceSelectionContext,
   ) {
     this.preferredSources = new PreferredSourceStore(database);
+    this.directPositions = new DirectPositionStore(database);
     this.priorities = new TitlePriorityStore(database, now);
     for (const item of contentProvider.bootstrapTitles()) {
       this.database.titles.upsert(storageTitle(item));
@@ -1357,6 +1361,9 @@ export class StreamerCore {
     source?: { providerId: string; candidateId: string },
   ): { eventId: string; library: LibraryResponse } {
     this.requireProfile(profileId);
+    // Fast Search playback keeps only a resume position: no Library or history.
+    if (isDirectTitleId(titleId))
+      return { eventId: randomUUID(), library: this.library(profileId) };
     const item = this.database.titles.get(titleId);
     if (item === null) throw new UnknownTitleError(titleId);
     const now = this.now().toISOString();
@@ -1420,6 +1427,19 @@ export class StreamerCore {
     episode?: EpisodeSelection,
   ): void {
     this.requireProfile(profileId);
+    if (isDirectTitleId(titleId)) {
+      this.directPositions.set(
+        profileId,
+        titleId,
+        {
+          positionSeconds: Math.max(0, positionSeconds),
+          durationSeconds: Math.max(0, durationSeconds),
+          progressPercent: Math.max(0, Math.min(100, progressPercent)),
+        },
+        this.now(),
+      );
+      return;
+    }
     if (this.database.titles.get(titleId) === null) {
       throw new UnknownTitleError(titleId);
     }

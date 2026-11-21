@@ -15,16 +15,18 @@ import { VideoPlayer } from "./VideoPlayer";
 import { TitleDetail } from "./TitleDetail";
 import { useDownloadManager } from "./DownloadManager";
 import { DownloadPage } from "./DownloadPage";
+import { FastSearchPage } from "./FastSearchPage";
 import { useTheme } from "../theme/ThemeProvider";
 import { ThemeSelect } from "../theme/ThemeSelect";
 
-type Route = "home" | "library" | "downloads" | ProfilePage;
+type Route = "home" | "library" | "downloads" | "search" | ProfilePage;
 
 function routeFromLocation(): Route {
   const path = window.location.pathname.slice(1);
   return [
     "library",
     "downloads",
+    "search",
     "settings",
     "preferences",
     "profile",
@@ -190,6 +192,14 @@ export function AppShell({
           >
             Download
           </button>
+          <button
+            type="button"
+            className={route === "search" ? "is-active" : ""}
+            aria-current={route === "search" ? "page" : undefined}
+            onClick={() => navigate("search")}
+          >
+            Fast search
+          </button>
         </nav>
         <div className="topbar__profile-actions">
           <div className="topbar__report-group">
@@ -329,6 +339,15 @@ export function AppShell({
         />
       ) : route === "downloads" ? (
         <DownloadPage onOpenTitle={openDetail} />
+      ) : route === "search" ? (
+        <FastSearchPage
+          api={api}
+          profileId={profileId}
+          onPlaybackReady={(title, grant) => {
+            setPlaybackClosing(false);
+            setActivePlayback({ title, grant });
+          }}
+        />
       ) : (
         <ProfilePages
           key={`${profile.id}:${route}`}

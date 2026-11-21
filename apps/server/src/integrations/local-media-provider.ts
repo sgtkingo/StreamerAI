@@ -4,6 +4,7 @@ import { pathToFileURL } from "node:url";
 import {
   MediaCandidateRefSchema,
   MediaSearchRequestSchema,
+  MediaTextSearchRequestSchema,
   PlaybackGrantSchema,
   PlaybackRequestSchema,
   PlaybackSourceRefreshRequestSchema,
@@ -11,6 +12,7 @@ import {
   type MediaCandidate,
   type MediaCandidateRef,
   type MediaProvider,
+  type MediaTextSearchRequest,
   type MediaVariant,
   type PlaybackGrant,
   type PlaybackRequest,
@@ -119,6 +121,40 @@ export class LocalMediaProvider implements MediaProvider {
         sizeBytes: file.sizeBytes,
         seasonNumber: episode(file.name)?.season ?? null,
         episodeNumber: episode(file.name)?.number ?? null,
+        confidence: 0.9,
+        provenance: {
+          providerId: "local-files",
+          retrievedAt,
+          connectorVersion: VERSION,
+          confidence: 0.9,
+          validationState: "verified" as const,
+          expiresAt: null,
+        },
+      }));
+  }
+
+  /** Every query word must appear in the file name; results are name-ordered. */
+  async searchText(
+    raw: MediaTextSearchRequest,
+    _context: ProviderContext,
+  ): Promise<MediaCandidate[]> {
+    const request = MediaTextSearchRequestSchema.parse(raw);
+    const words = normalize(request.query).split(" ").filter(Boolean);
+    const retrievedAt = this.now().toISOString();
+    return this.library
+      .uniqueFiles()
+      .filter((file) => {
+        const name = ` ${normalize(file.name)} `;
+        return words.every((word) => name.includes(word));
+      })
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .slice(request.offset, request.offset + request.limit)
+      .map((file) => ({
+        ref: { providerId: "local-files", candidateId: file.id },
+        releaseName: file.name,
+        sizeBytes: file.sizeBytes,
+        seasonNumber: null,
+        episodeNumber: null,
         confidence: 0.9,
         provenance: {
           providerId: "local-files",

@@ -1,15 +1,16 @@
 import {
   MediaCandidateRefSchema,
   MediaSearchRequestSchema,
+  MediaTextSearchRequestSchema,
   PlaybackGrantSchema,
   PlaybackSourceRefreshRequestSchema,
   PlaybackRequestSchema,
   ProviderHealthSchema,
   type MediaCandidate,
   type MediaCandidateRef,
-  type MediaFormat,
   type MediaProvider,
   type MediaSearchRequest,
+  type MediaTextSearchRequest,
   type MediaVariant,
   type PlaybackGrant,
   type PlaybackLanguageAvailability,
@@ -21,7 +22,12 @@ import {
 } from "@streamer-ai/contracts";
 import { randomUUID } from "node:crypto";
 import { ProviderRequestError } from "./provider-http.js";
-import { WebshareClient, type WebshareFileInfo } from "./webshare-client.js";
+import { formatFromReleaseName } from "./release-name.js";
+import {
+  WebshareClient,
+  type WebshareFileInfo,
+  type WebshareSearchItem,
+} from "./webshare-client.js";
 import type { PlaybackTicketInput } from "../services/playback-ticket-store.js";
 import {
   traceDiscovery,
@@ -48,46 +54,6 @@ function provenance(retrievedAt: string) {
     confidence: 1,
     validationState: "verified" as const,
     expiresAt: null,
-  };
-}
-
-function mediaFormat(name: string, type: string | null): MediaFormat {
-  const normalized = name.toLowerCase();
-  const resolutionHint =
-    /(?:^|[. _-])(2160p|4k|uhd|1080p|720p|480p)(?:[. _-]|$)/i
-      .exec(name)?.[1]
-      ?.toLowerCase() ?? null;
-  const resolution =
-    resolutionHint === "4k" || resolutionHint === "uhd"
-      ? "2160p"
-      : resolutionHint;
-  const codec = /(?:x265|h[. ]?265|hevc)/i.test(name)
-    ? "H.265"
-    : /(?:x264|h[. ]?264|avc)/i.test(name)
-      ? "H.264"
-      : null;
-  const extension =
-    /\.([a-z0-9]{2,5})$/i.exec(name)?.[1]?.toLowerCase() ?? null;
-  const audioLanguages = [
-    ...(/(?:^|[. _-])(?:cz|cze|ces)(?:[. _-]|$)/i.test(normalized)
-      ? ["cs"]
-      : []),
-    ...(/(?:^|[. _-])(?:en|eng)(?:[. _-]|$)/i.test(normalized) ? ["en"] : []),
-    ...(/(?:^|[^a-z0-9])(?:ja|jpn|jap|japanese)(?:[^a-z0-9]|$)/i.test(
-      normalized,
-    )
-      ? ["ja"]
-      : []),
-  ];
-  return {
-    label:
-      [resolution, codec, type ?? extension].filter(Boolean).join(" · ") ||
-      "Video",
-    container: extension,
-    resolution,
-    videoCodec: codec,
-    audioLanguages,
-    subtitleLanguages: [],
   };
 }
 
@@ -195,15 +161,41 @@ export class WebshareMediaProvider implements MediaProvider {
     const result = await this.#client
       .forProfile(context.profileId ?? "default")
       .search({ query, limit: request.limit }, context.signal);
+    return this.#candidates(
+      result.items,
+      request.seasonNumber,
+      request.episodeNumber,
+    );
+  }
+
+  async searchText(
+    rawRequest: MediaTextSearchRequest,
+    context: ProviderContext,
+  ): Promise<MediaCandidate[]> {
+    const request = MediaTextSearchRequestSchema.parse(rawRequest);
+    const result = await this.#client
+      .forProfile(context.profileId ?? "default")
+      .search(
+        { query: request.query, limit: request.limit, offset: request.offset },
+        context.signal,
+      );
+    return this.#candidates(result.items, null, null);
+  }
+
+  #candidates(
+    items: WebshareSearchItem[],
+    seasonNumber: number | null,
+    episodeNumber: number | null,
+  ): MediaCandidate[] {
     const retrievedAt = this.#now().toISOString();
-    return result.items
+    return items
       .filter((item) => !item.passwordProtected)
       .map((item) => ({
         ref: { providerId: "webshare", candidateId: item.ident },
         releaseName: item.name,
         sizeBytes: item.size,
-        seasonNumber: request.seasonNumber,
-        episodeNumber: request.episodeNumber,
+        seasonNumber,
+        episodeNumber,
         confidence: 0.5,
         ...(item.positiveVotes !== null && item.negativeVotes !== null
           ? {
@@ -245,7 +237,7 @@ export class WebshareMediaProvider implements MediaProvider {
       variant: {
         ref: candidate,
         variantId: candidate.candidateId,
-        format: mediaFormat(file.name, file.type),
+        format: formatFromReleaseName(file.name, file.type),
         directPlay: true,
         supportsHttpRange: true,
         embeddedSubtitles: [],

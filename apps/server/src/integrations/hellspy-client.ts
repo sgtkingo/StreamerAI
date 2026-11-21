@@ -281,11 +281,12 @@ export class HellspyClient {
     query: string,
     limit: number,
     signal?: AbortSignal,
+    offset = 0,
   ): Promise<HellspyVideo[]> {
     const token = await this.authorize(profileId, signal);
     const data = object(
       await this.request(
-        `/gw/search?${new URLSearchParams({ query, offset: "0", limit: String(Math.min(64, limit)) })}`,
+        `/gw/search?${new URLSearchParams({ query, offset: String(Math.max(0, Math.trunc(offset))), limit: String(Math.min(64, limit)) })}`,
         token,
         undefined,
         signal,

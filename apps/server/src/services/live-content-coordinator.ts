@@ -2365,6 +2365,97 @@ export class LiveContentCoordinator implements StreamerContentProvider {
     throw lastError;
   }
 
+  // ------------------------------------------------------------ Fast Search
+  /** Connected media providers that support direct file-name search. */
+  async directSearchProviders(
+    profileId: string,
+  ): Promise<{ id: string; name: string }[]> {
+    return (await this.activeProviders(this.#mediaProviders, profileId))
+      .filter(([, provider]) => typeof provider.searchText === "function")
+      .map(([id, provider]) => ({
+        id,
+        name: provider.descriptor().displayName,
+      }));
+  }
+
+  /** One provider's results for a free-text query, in the provider's order. */
+  async directSearch(
+    profileId: string,
+    providerId: string,
+    query: string,
+    offset: number,
+    limit: number,
+  ): Promise<MediaCandidate[]> {
+    const provider = await this.#directProvider(profileId, providerId);
+    const context = this.#directContext(profileId, query);
+    return provider.searchText!(
+      { query, offset, limit },
+      this.scopedContext(providerId, context),
+    );
+  }
+
+  /** Verified details of one file (tracks, languages) on request. */
+  async directInspect(profileId: string, ref: MediaCandidateRef) {
+    const provider = await this.#directProvider(profileId, ref.providerId);
+    const context = this.scopedContext(
+      ref.providerId,
+      this.#directContext(profileId, ref.candidateId),
+    );
+    const variant = await provider.inspect(ref, context);
+    const languages = provider.checkPlayback
+      ? await provider.checkPlayback(ref, context).catch(() => undefined)
+      : undefined;
+    return { format: variant.format, languages: languages ?? null };
+  }
+
+  /** Plays a Fast Search file under its synthetic title id (no Library). */
+  async prepareDirectPlayback(
+    profileId: string,
+    ref: MediaCandidateRef,
+    titleId: string,
+  ) {
+    const provider = await this.#directProvider(profileId, ref.providerId);
+    const context = this.scopedContext(
+      ref.providerId,
+      this.#directContext(profileId, ref.candidateId),
+    );
+    const variant = await provider.inspect(ref, context);
+    return provider.createPlayback(
+      {
+        profileId,
+        titleId,
+        seasonNumber: null,
+        episodeNumber: null,
+        variant: { ...ref, variantId: variant.variantId },
+        startPositionSeconds: 0,
+      },
+      context,
+    );
+  }
+
+  async #directProvider(
+    profileId: string,
+    providerId: string,
+  ): Promise<MediaProvider> {
+    const active = await this.activeProviders(this.#mediaProviders, profileId);
+    const provider = active.find(([id]) => id === providerId)?.[1];
+    if (!provider || typeof provider.searchText !== "function")
+      throw new Error("This source is not connected for Fast Search.");
+    return provider;
+  }
+
+  #directContext(profileId: string, message: string): ProviderContext {
+    return providerContext(
+      {
+        profileId,
+        message: message.slice(0, 500),
+        idempotencyKey: `direct-${createHash("sha256").update(`${profileId}:${message}:${this.#now().toISOString()}`).digest("hex").slice(0, 24)}`,
+      },
+      this.#localeForProfile(profileId),
+      this.#now(),
+    );
+  }
+
   async getSeriesDetail(
     profileId: string,
     title: CatalogTitle,

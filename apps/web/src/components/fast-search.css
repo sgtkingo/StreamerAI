@@ -1,0 +1,379 @@
+.fast-search {
+  width: min(1280px, calc(100% - 48px));
+  margin: 0 auto;
+  padding: 48px 0 90px;
+}
+.fast-search__header h1 {
+  margin: 8px 0 10px;
+  font-size: clamp(30px, 4vw, 44px);
+  letter-spacing: -0.035em;
+}
+.fast-search__header p:not(.eyebrow) {
+  max-width: 640px;
+  color: var(--slate);
+  line-height: 1.6;
+}
+.fast-search__bar {
+  display: flex;
+  gap: 12px;
+  margin-top: 28px;
+}
+.fast-search__input {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+.fast-search__input svg {
+  position: absolute;
+  top: 50%;
+  left: 16px;
+  width: 20px;
+  height: 20px;
+  z-index: 1;
+  transform: translateY(-50%);
+  color: var(--muted);
+  pointer-events: none;
+}
+.fast-search__input input {
+  width: 100%;
+  min-height: 52px;
+  padding: 0 16px 0 46px;
+  border: 1px solid #38383d;
+  border-radius: 10px;
+  background: #111111;
+  color: var(--white);
+  font: inherit;
+  font-size: 16px;
+}
+.fast-search__input input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.fast-search__notice {
+  margin: 22px 0 0;
+  color: var(--slate);
+}
+.fast-search__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-top: 18px;
+}
+.fast-search__sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.fast-search__source {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+.fast-search__source.is-selected {
+  border-color: #4a4a50;
+  background: var(--surface-raised);
+  color: var(--white);
+}
+.fast-search__source:not(.is-selected) .source-icon {
+  opacity: 0.45;
+}
+.fast-search__source small {
+  color: var(--muted);
+  font-size: 12px;
+}
+.fast-search__source small.is-error {
+  color: var(--error);
+}
+.fast-search__order {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--slate);
+  font-size: 14px;
+}
+.fast-search__order select,
+.fast-search__row--filters select,
+.fast-search__row--filters input {
+  min-height: 34px;
+  padding: 0 10px;
+  border: 1px solid #38383d;
+  border-radius: 6px;
+  background: #111111;
+  color: var(--white);
+  font: inherit;
+  font-size: 13px;
+}
+.fast-search__results {
+  margin-top: 22px;
+}
+.fast-search__summary {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 0 0 10px;
+  color: var(--slate);
+  font-size: 14px;
+}
+
+/* Table: a CSS grid so it can turn into cards on narrow screens. */
+.fast-search__table {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+.fast-search__row {
+  display: grid;
+  grid-template-columns: 72px minmax(240px, 1fr) 112px 132px 112px 184px 96px;
+  align-items: center;
+  border-top: 1px solid var(--border);
+}
+.fast-search__row:first-child {
+  border-top: 0;
+}
+.fast-search__row:not(
+    .fast-search__row--head,
+    .fast-search__row--filters
+  ):hover {
+  background: #141416;
+}
+.fast-search__row--head {
+  background: var(--surface);
+  color: var(--slate);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.fast-search__row--head button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  cursor: pointer;
+}
+.fast-search__row--filters {
+  background: #101012;
+}
+.fast-search__row--filters input,
+.fast-search__row--filters select {
+  width: 100%;
+  min-width: 0;
+}
+.fast-search__cell {
+  min-width: 0;
+  padding: 10px 12px;
+  font-size: 14px;
+}
+.fast-search__cell--source {
+  display: flex;
+  justify-content: center;
+}
+.fast-search__cell--name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.fast-search__cell--format,
+.fast-search__cell--video,
+.fast-search__cell--audio,
+.fast-search__cell--size {
+  color: var(--slate);
+  white-space: nowrap;
+}
+.fast-search__size-filter {
+  display: flex;
+  gap: 6px;
+}
+.fast-search__cell--actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.fast-search__name {
+  min-width: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  background: none;
+  color: var(--white);
+  font: inherit;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.fast-search__name:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.fast-search__badge {
+  flex: none;
+  padding: 2px 7px;
+  border: 1px solid #3a3a40;
+  border-radius: 5px;
+  color: var(--slate);
+  font-size: 11px;
+  font-weight: 700;
+}
+.fast-search__play {
+  display: inline-grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--black);
+  cursor: pointer;
+  transition: transform 0.15s ease;
+}
+.fast-search__play svg {
+  width: 18px;
+  height: 18px;
+  margin-left: 2px;
+}
+.fast-search__play:hover:not(:disabled) {
+  transform: scale(1.06);
+}
+.fast-search__play:disabled {
+  opacity: 0.55;
+  cursor: progress;
+}
+.fast-search__play:focus-visible,
+.fast-search__name:focus-visible,
+.fast-search__source:focus-visible {
+  outline: 3px solid var(--slate);
+  outline-offset: 3px;
+}
+.fast-search__spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: fast-search-spin 0.8s linear infinite;
+}
+@keyframes fast-search-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.fast-search__details {
+  padding: 4px 12px 14px 56px;
+  border-top: 1px dashed var(--border);
+  background: #0f0f11;
+  color: var(--slate);
+  font-size: 13px;
+}
+.fast-search__details dl {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 28px;
+  margin: 8px 0 0;
+}
+.fast-search__details dt {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.fast-search__details dd {
+  margin: 2px 0 0;
+  color: var(--white);
+}
+.fast-search__more {
+  display: block;
+  margin: 18px auto 0;
+}
+
+@media (max-width: 860px) {
+  .fast-search {
+    width: calc(100% - 32px);
+    padding-top: 28px;
+  }
+  .fast-search__bar {
+    flex-direction: column;
+  }
+  .fast-search__row--head {
+    display: none;
+  }
+  .fast-search__row--filters {
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    padding: 10px;
+  }
+  .fast-search__row--filters .fast-search__cell {
+    padding: 0;
+  }
+  .fast-search__row--filters .fast-search__cell--source,
+  .fast-search__row--filters .fast-search__cell--actions {
+    display: none;
+  }
+  .fast-search__row--filters .fast-search__cell--name {
+    grid-column: 1 / -1;
+  }
+  /* Each file becomes a card: name on top, details below, actions at the end. */
+  .fast-search__row:not(.fast-search__row--head, .fast-search__row--filters) {
+    grid-template-columns: 32px 1fr auto;
+    grid-template-areas:
+      "source name actions"
+      "source meta actions";
+    padding: 8px 0;
+  }
+  .fast-search__row:not(.fast-search__row--head, .fast-search__row--filters)
+    .fast-search__cell--source {
+    grid-area: source;
+  }
+  .fast-search__row:not(.fast-search__row--head, .fast-search__row--filters)
+    .fast-search__cell--name {
+    grid-area: name;
+    padding-bottom: 2px;
+  }
+  .fast-search__row:not(.fast-search__row--head, .fast-search__row--filters)
+    .fast-search__cell--actions {
+    grid-area: actions;
+  }
+  .fast-search__row:not(.fast-search__row--head, .fast-search__row--filters)
+    .fast-search__cell--format,
+  .fast-search__row:not(.fast-search__row--head, .fast-search__row--filters)
+    .fast-search__cell--video,
+  .fast-search__row:not(.fast-search__row--head, .fast-search__row--filters)
+    .fast-search__cell--audio,
+  .fast-search__row:not(.fast-search__row--head, .fast-search__row--filters)
+    .fast-search__cell--size {
+    display: none;
+  }
+  .fast-search__row:not(
+      .fast-search__row--head,
+      .fast-search__row--filters
+    )::after {
+    content: attr(data-meta);
+    grid-area: meta;
+    padding: 0 12px;
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .fast-search__details {
+    padding-left: 44px;
+  }
+}
+/* Saving is not offered for this file (local files, other sources). */
+.fast-search .download-button:disabled:not(.download-button--complete) {
+  opacity: 0.32;
+  cursor: not-allowed;
+}

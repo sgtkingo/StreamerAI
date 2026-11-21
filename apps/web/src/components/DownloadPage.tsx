@@ -97,7 +97,8 @@ export function DownloadPage({
   const titleIds = useMemo(
     () => [
       ...new Set([
-        ...jobs.map((job) => job.titleId),
+        // Fast Search files have no catalog title to load.
+        ...jobs.filter((job) => !job.direct).map((job) => job.titleId),
         ...batches.map((batch) => batch.titleId),
       ]),
     ],
@@ -162,6 +163,7 @@ export function DownloadPage({
     (job) => job.state === "downloading" && !batchJobIds.has(job.id),
   );
   const savedJobs = jobs.filter((job) => job.state === "complete");
+  const savedDirect = savedJobs.filter((job) => job.direct);
   const savedGroups = titleIds
     .map((titleId) => ({
       titleId,
@@ -349,11 +351,12 @@ export function DownloadPage({
               <div className="downloads-transfer__heading">
                 <div>
                   <strong>
-                    {title?.title ?? job.titleId} ·{" "}
-                    {source ? episodeCode(source) : "Source"}
+                    {job.direct
+                      ? "Fast Search"
+                      : `${title?.title ?? job.titleId} · ${source ? episodeCode(source) : "Source"}`}
                   </strong>
                   <p>
-                    {source?.releaseName ?? job.sourceId} ·{" "}
+                    {job.label ?? source?.releaseName ?? job.sourceId} ·{" "}
                     {formatDownloadSize(job.bytes)}
                     {job.totalBytes
                       ? ` / ${formatDownloadSize(job.totalBytes)}`
@@ -365,7 +368,12 @@ export function DownloadPage({
                   progress={job.totalBytes ? percent : null}
                   pending={pendingStops.has(job.id)}
                   stopLabel="Stop"
-                  label={source?.releaseName ?? title?.title ?? "download"}
+                  label={
+                    job.label ??
+                    source?.releaseName ??
+                    title?.title ??
+                    "download"
+                  }
                   onClick={() => stopIndividual(job.id)}
                 />
               </div>
@@ -386,7 +394,7 @@ export function DownloadPage({
 
       <section className="downloads-library" aria-label="Saved files">
         <h2>Saved files</h2>
-        {savedGroups.length === 0 && (
+        {savedGroups.length === 0 && savedDirect.length === 0 && (
           <p className="downloads-empty">
             No local files yet. Download a movie or an episode to see it here.
           </p>
@@ -578,6 +586,46 @@ export function DownloadPage({
             </article>
           );
         })}
+        {savedDirect.length > 0 && (
+          <article className="downloads-title">
+            <div className="downloads-title__heading">
+              <div>
+                <h3>Fast Search</h3>
+                <p>
+                  {savedDirect.length} saved{" "}
+                  {savedDirect.length === 1 ? "file" : "files"} ·{" "}
+                  {formatDownloadSize(
+                    savedDirect.reduce((sum, job) => sum + job.bytes, 0),
+                  )}
+                </p>
+              </div>
+            </div>
+            <div className="downloads-title__files">
+              {savedDirect.map((job) => (
+                <div className="downloads-file-block" key={job.id}>
+                  <div className="downloads-file">
+                    <div>
+                      <strong>File</strong>
+                      <span>{job.label ?? job.sourceId}</span>
+                      <small>{formatDownloadSize(job.bytes)}</small>
+                    </div>
+                    <div className="downloads-file__actions">
+                      <IconAction
+                        label={`Delete ${job.label ?? "file"}`}
+                        tone="danger"
+                        onClick={() =>
+                          manager?.confirmDelete([job], job.label ?? "file")
+                        }
+                      >
+                        <TrashGlyph />
+                      </IconAction>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </article>
+        )}
       </section>
     </main>
   );

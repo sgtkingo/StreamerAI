@@ -231,6 +231,47 @@ export function registerLocalFilesRoutes(
       }
     },
   );
+  app.post(
+    "/api/v1/profiles/:profileId/offline-downloads/direct",
+    {
+      schema: {
+        params: profileParams,
+        body: {
+          type: "object",
+          required: ["candidateId", "rootId"],
+          additionalProperties: false,
+          properties: {
+            candidateId: { type: "string", minLength: 1, maxLength: 240 },
+            rootId: { type: "string", format: "uuid" },
+            replaceExisting: { type: "boolean" },
+          },
+        },
+      },
+    },
+    async (request, reply) => {
+      try {
+        const job = await downloads.startDirect({
+          profileId: (request.params as { profileId: string }).profileId,
+          ...(request.body as {
+            candidateId: string;
+            rootId: string;
+            replaceExisting?: boolean;
+          }),
+        });
+        return reply.code(202).send(job);
+      } catch (error) {
+        return reply.code(400).send({
+          error: {
+            code: "OFFLINE_DOWNLOAD_REJECTED",
+            message:
+              error instanceof Error
+                ? error.message
+                : "Offline download could not start.",
+          },
+        });
+      }
+    },
+  );
   app.delete(
     "/api/v1/profiles/:profileId/offline-downloads/:downloadId",
     {
