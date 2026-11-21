@@ -46,7 +46,10 @@ export const FORMAT_STATUS = "streamerai-update-status/v1";
 const VERSION =
   /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z.-]+))?$/;
 const SERVICES = ["Server", "Gateway"];
-const DATABASE_FILES = /^(?:streamer-ai\.db(?:-wal|-shm)?|secrets\.vault)$/;
+// Backed up while the server is stopped. SQLite's -shm file is only a shared
+// memory index: it is never copied and is removed on restore.
+const DATABASE_FILES = /^(?:streamer-ai\.db(?:-wal)?|secrets\.vault)$/;
+const SHARED_MEMORY = /^streamer-ai\.db-shm$/;
 const LOCK_STALE_MS = 2 * 60 * 60 * 1000;
 
 export function compareVersions(left, right) {
@@ -275,7 +278,10 @@ function backupDatabase(paths, version, now) {
 function restoreDatabase(paths, backup) {
   assertPlainPath(paths.stateRoot, paths.data);
   for (const name of readdirSync(paths.data))
-    if (DATABASE_FILES.test(name) && !backup.files.includes(name))
+    if (
+      SHARED_MEMORY.test(name) ||
+      (DATABASE_FILES.test(name) && !backup.files.includes(name))
+    )
       rmSync(path.join(paths.data, name), { force: true });
   for (const name of backup.files)
     copyFileSync(
@@ -480,8 +486,9 @@ export async function activateRelease({
     log(
       `Activating StreamerAI ${version}${current ? ` (from ${current.version})` : ""}…`,
     );
-    const backup = current ? backupDatabase(paths, current.version, now) : null;
+    // Stop first: copying a live SQLite database is not a consistent backup.
     for (const service of [...SERVICES].reverse()) control.stop(service);
+    const backup = current ? backupDatabase(paths, current.version, now) : null;
     writeServiceDefinitions(paths, SERVICES, target);
     let healthy = false;
     try {

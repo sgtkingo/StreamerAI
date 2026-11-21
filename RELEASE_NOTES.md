@@ -18,6 +18,8 @@ section moves under the new version and is copied into the GitHub release.
 - Automatic updates rolled back every new version: the updater's health check
   could not read the server version without a session. A rollback now also
   starts the services again even when one restore step fails.
+- The pre-update database backup is taken after the services stop, and SQLite's
+  temporary shared-memory file is no longer copied (restoring it could fail).
 
 ### Changed
 

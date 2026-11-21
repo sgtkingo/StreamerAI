@@ -3,6 +3,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   symlinkSync,
@@ -246,6 +247,59 @@ test("a release that does not become ready is rolled back with its database", as
     );
     assert.equal(currentRelease(paths).version, "0.1.0");
     assert.ok(!existsSync(paths.lock));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("the database is backed up after the services stop and SQLite shared memory is never restored", async () => {
+  const { root, paths } = installation();
+  try {
+    writeFileSync(path.join(paths.data, "streamer-ai.db-wal"), "old-wal");
+    writeFileSync(path.join(paths.data, "streamer-ai.db-shm"), "live-shm");
+    const control = fakeControl();
+    const stop = control.stop;
+    control.stop = (service) => {
+      // A stopping server checkpoints; the backup must contain that state.
+      if (service === "Server")
+        writeFileSync(path.join(paths.data, "streamer-ai.db"), "stopped-db");
+      stop(service);
+    };
+    await assert.rejects(
+      activateRelease({
+        source: release(root, "0.2.0"),
+        paths,
+        control,
+        verifyBundle: () => {},
+        waitHealthy: async (version) => {
+          if (version === "0.2.0") {
+            writeFileSync(path.join(paths.data, "streamer-ai.db"), "migrated");
+            writeFileSync(path.join(paths.data, "streamer-ai.db-wal"), "new");
+            writeFileSync(path.join(paths.data, "streamer-ai.db-shm"), "new");
+          }
+          return version === "0.1.0";
+        },
+        mode: "service",
+        ownRelease: null,
+        retryDelayMs: 0,
+      }),
+      (error) => error.code === "UPDATE_ROLLED_BACK",
+    );
+    const [point] = readdirSync(paths.rollback);
+    assert.deepEqual(readdirSync(path.join(paths.rollback, point)).sort(), [
+      "secrets.vault",
+      "streamer-ai.db",
+      "streamer-ai.db-wal",
+    ]);
+    assert.equal(
+      readFileSync(path.join(paths.data, "streamer-ai.db"), "utf8"),
+      "stopped-db",
+    );
+    assert.equal(
+      readFileSync(path.join(paths.data, "streamer-ai.db-wal"), "utf8"),
+      "old-wal",
+    );
+    assert.ok(!existsSync(path.join(paths.data, "streamer-ai.db-shm")));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
