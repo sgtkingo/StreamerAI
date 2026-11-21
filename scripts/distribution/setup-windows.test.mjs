@@ -16,6 +16,18 @@ import { test } from "node:test";
 import { buildWindowsSetup } from "./setup-windows.mjs";
 
 const isWindows = process.platform === "win32";
+
+/**
+ * Environment for spawning Windows PowerShell 5.1. A PSModulePath inherited from
+ * PowerShell 7 (as on hosted CI runners) stops built-in modules such as
+ * Microsoft.PowerShell.Security (Get-Acl) from loading, so drop it.
+ */
+function windowsPowerShellEnv(extra) {
+  const env = { ...process.env, ...extra };
+  for (const key of Object.keys(env))
+    if (key.toLowerCase() === "psmodulepath") delete env[key];
+  return env;
+}
 function fixture() {
   const temporary = mkdtempSync(
     path.join(os.tmpdir(), "streamerai-setup-test-"),
@@ -144,7 +156,7 @@ test(
         {
           encoding: "utf8",
           windowsHide: true,
-          env: { ...process.env, STREAMERAI_TEST_PREVIEW: image },
+          env: windowsPowerShellEnv({ STREAMERAI_TEST_PREVIEW: image }),
           timeout: 15000,
         },
       );
@@ -209,7 +221,7 @@ test(
         {
           windowsHide: true,
           encoding: "utf8",
-          env: { ...process.env, STREAMERAI_TEST_STATE: state },
+          env: windowsPowerShellEnv({ STREAMERAI_TEST_STATE: state }),
           timeout: 10000,
         },
       );
@@ -259,13 +271,12 @@ test(
         {
           encoding: "utf8",
           windowsHide: true,
-          env: {
-            ...process.env,
+          env: windowsPowerShellEnv({
             STREAMERAI_SCRIPT_TO_CHECK: path.resolve(
               "packaging/templates/install-windows.ps1",
             ),
             STREAMERAI_TEST_DIRECTORY: item.temporary,
-          },
+          }),
           timeout: 10000,
         },
       );
@@ -310,7 +321,7 @@ test(
       {
         encoding: "utf8",
         windowsHide: true,
-        env: { ...process.env, STREAMERAI_SCRIPT_TO_CHECK: filename },
+        env: windowsPowerShellEnv({ STREAMERAI_SCRIPT_TO_CHECK: filename }),
         timeout: 10000,
       },
     );

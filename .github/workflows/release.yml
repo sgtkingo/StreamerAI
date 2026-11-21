@@ -180,7 +180,14 @@ jobs:
           STREAMERAI_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.STREAMERAI_ANDROID_KEYSTORE_PASSWORD }}
           STREAMERAI_ANDROID_KEY_ALIAS: ${{ secrets.STREAMERAI_ANDROID_KEY_ALIAS }}
           STREAMERAI_ANDROID_KEY_PASSWORD: ${{ secrets.STREAMERAI_ANDROID_KEY_PASSWORD }}
-        run: ./gradlew assembleRelease testDebugUnitTest --no-daemon
+        # Maven Central sometimes rate-limits hosted runners (HTTP 429); downloads
+        # completed by an earlier attempt are reused from the Gradle cache.
+        run: |
+          for attempt in 1 2 3; do
+            ./gradlew assembleRelease testDebugUnitTest --no-daemon && exit 0
+            [ "$attempt" = 3 ] || { echo "Gradle attempt $attempt failed; retrying in 60 s."; sleep 60; }
+          done
+          exit 1
       - name: Verify signature and name the APK
         run: |
           version="${{ needs.bump.outputs.version }}"
