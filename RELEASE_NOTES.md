@@ -6,6 +6,10 @@ section moves under the new version and is copied into the GitHub release.
 
 ## Unreleased
 
+_Nothing yet._
+
+## v0.13.1 (2026-11-22)
+
 ### Improved
 
 - **Real file details from Webshare:** resolution, video codec, length and
