@@ -238,3 +238,81 @@ it("keeps other sources' results when one source fails", async () => {
   expect(await screen.findByText("Moon.2009.avi")).toBeVisible();
   expect(await screen.findByText("Did not answer")).toBeVisible();
 });
+
+it("replaces name guesses with the streams the source measured", async () => {
+  const getDirectSearchDetails = vi.fn().mockResolvedValue({
+    items: [
+      {
+        candidateId: "w1",
+        format: {
+          container: "mkv",
+          resolution: "1080p",
+          videoCodec: "H.264",
+          audioLanguages: ["en", "cs"],
+          details: {
+            durationSeconds: 8179,
+            width: 1920,
+            height: 816,
+            bitrate: 7036521,
+            audioTracks: [
+              { codec: "DTS", channels: 6, language: "en" },
+              { codec: "AC3", channels: 2, language: "cs" },
+            ],
+          },
+        },
+      },
+      { candidateId: "w2", format: null },
+    ],
+  });
+  const client = api({
+    getDirectSearchProviders: vi.fn().mockResolvedValue({
+      providers: [{ id: "webshare", name: "Webshare", mediaDetails: true }],
+    }),
+    directSearch: vi.fn().mockResolvedValue({
+      provider: "webshare",
+      hasMore: false,
+      items: [
+        item("webshare", "w1", "Dune.1984.1080p.mkv", {
+          format: {
+            container: "mkv",
+            resolution: "1080p",
+            videoCodec: null,
+            audioLanguages: [],
+          },
+        }),
+        item("webshare", "w2", "Dune.Removed.mkv"),
+      ],
+    }),
+    getDirectSearchDetails,
+  } as Partial<StreamerApi>);
+  render(
+    <FastSearchPage api={client} profileId="p1" onPlaybackReady={vi.fn()} />,
+  );
+  await screen.findByRole("button", { name: /Webshare/ });
+  fireEvent.change(screen.getByLabelText("Search file names"), {
+    target: { value: "dune" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Search" }));
+  await screen.findByText("2 h 16 min");
+  expect(getDirectSearchDetails).toHaveBeenCalledWith("p1", "webshare", [
+    "w1",
+    "w2",
+  ]);
+  const rows = screen.getAllByRole("row");
+  const measured = rows.find((row) =>
+    within(row).queryByText("Dune.1984.1080p.mkv"),
+  )!;
+  expect(within(measured).getByText("EN, CS")).toBeVisible();
+  expect(within(measured).getByText("EN, CS")).toHaveAttribute(
+    "title",
+    "EN · DTS 5.1\nCS · AC3 2.0",
+  );
+  expect(within(measured).getAllByText("(measured)")).toHaveLength(2);
+  const removed = rows.find((row) =>
+    within(row).queryByText("Dune.Removed.mkv"),
+  )!;
+  expect(within(removed).getByText("Unavailable")).toBeVisible();
+  expect(
+    within(removed).getByRole("button", { name: "Play Dune.Removed.mkv" }),
+  ).toBeDisabled();
+});

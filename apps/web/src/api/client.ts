@@ -26,6 +26,7 @@ import type {
   PreferredSourceSelection,
   CatalogTitle,
   MediaFormat,
+  MediaDetails,
   PlaybackLanguageAvailability,
 } from "@streamer-ai/contracts";
 import {
@@ -231,13 +232,24 @@ export interface DirectSearchItem {
   sizeBytes: number | null;
   providerRank: number;
   similarity: number;
-  format: Pick<
-    MediaFormat,
-    "container" | "resolution" | "videoCodec" | "audioLanguages"
-  >;
+  format: DirectSearchFormat;
   episode: { seasonNumber: number; episodeNumber: number } | null;
   votes: { positive: number; negative: number } | null;
   downloadable: boolean;
+  /** Set once the source reported the file's real streams. */
+  measured?: boolean;
+  /** The source refused the file (removed, restricted or not a video). */
+  unavailable?: boolean;
+}
+export type DirectSearchFormat = Pick<
+  MediaFormat,
+  "container" | "resolution" | "videoCodec" | "audioLanguages"
+> & { details?: MediaDetails };
+export interface DirectSearchProvider {
+  id: string;
+  name: string;
+  /** The source reports measured resolution, codec and audio tracks. */
+  mediaDetails?: boolean;
 }
 export interface DirectSearchPage {
   provider: string;
@@ -549,7 +561,14 @@ export interface StreamerApi {
   deleteOfflineDownload?(profileId: string, downloadId: string): Promise<void>;
   getDirectSearchProviders?(
     profileId: string,
-  ): Promise<{ providers: { id: string; name: string }[] }>;
+  ): Promise<{ providers: DirectSearchProvider[] }>;
+  getDirectSearchDetails?(
+    profileId: string,
+    providerId: string,
+    candidateIds: string[],
+  ): Promise<{
+    items: { candidateId: string; format: DirectSearchFormat | null }[];
+  }>;
   directSearch?(
     profileId: string,
     providerId: string,
@@ -1411,9 +1430,16 @@ export const apiClient: StreamerApi = {
       },
     ),
   getDirectSearchProviders: (profileId) =>
-    request<{ providers: { id: string; name: string }[] }>(
+    request<{ providers: DirectSearchProvider[] }>(
       `/profiles/${encodeURIComponent(profileId)}/direct-search/providers`,
     ),
+  getDirectSearchDetails: (profileId, providerId, candidateIds) =>
+    request<{
+      items: { candidateId: string; format: DirectSearchFormat | null }[];
+    }>(`/profiles/${encodeURIComponent(profileId)}/direct-search/details`, {
+      method: "POST",
+      body: JSON.stringify({ providerId, candidateIds }),
+    }),
   directSearch: (profileId, providerId, query, offset = 0) =>
     request<DirectSearchPage>(
       `/profiles/${encodeURIComponent(profileId)}/direct-search?${new URLSearchParams({ provider: providerId, q: query, offset: String(offset) })}`,

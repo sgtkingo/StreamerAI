@@ -26,6 +26,20 @@ export interface WebshareSearchItem {
   negativeVotes: number | null;
 }
 
+/** Stream details Webshare measured on the file, as reported by file_info. */
+export interface WebshareMediaInfo {
+  durationSeconds: number | null;
+  width: number | null;
+  height: number | null;
+  bitrate: number | null;
+  videoCodec: string | null;
+  audio: {
+    codec: string | null;
+    channels: number | null;
+    language: string | null;
+  }[];
+}
+
 export interface WebshareFileInfo {
   ident: string;
   name: string;
@@ -34,6 +48,51 @@ export interface WebshareFileInfo {
   downloadable: boolean;
   passwordProtected: boolean;
   copyrighted: boolean;
+  /** Null when Webshare has not analysed the file. */
+  media: WebshareMediaInfo | null;
+}
+
+function label(value: string | null, max: number): string | null {
+  const trimmed = value?.trim() ?? "";
+  return trimmed.length > 0 && trimmed.length <= max ? trimmed : null;
+}
+
+function positive(value: string | null, max: number): number | null {
+  const parsed = integer(value);
+  return parsed !== null && parsed > 0 && parsed <= max ? parsed : null;
+}
+
+function mediaInfo(xml: string): WebshareMediaInfo | null {
+  // Read top-level values before the nested stream blocks, which reuse names.
+  const top = xml.replace(/<(video|audio)>[\s\S]*?<\/\1>/gi, "");
+  const video = blocks(rawTag(xml, "video") ?? "", "stream")[0] ?? "";
+  const audio = blocks(rawTag(xml, "audio") ?? "", "stream")
+    .slice(0, 16)
+    .map((stream) => ({
+      codec: label(tag(stream, "format"), 32),
+      channels: positive(tag(stream, "channels"), 32),
+      language: label(tag(stream, "language"), 16)?.toLowerCase() ?? null,
+    }));
+  const lengthSeconds = Number(tag(top, "length"));
+  const media: WebshareMediaInfo = {
+    durationSeconds:
+      Number.isFinite(lengthSeconds) &&
+      lengthSeconds > 0 &&
+      lengthSeconds <= 86_400
+        ? Math.round(lengthSeconds)
+        : null,
+    width: positive(tag(video, "width") ?? tag(top, "width"), 16_384),
+    height: positive(tag(video, "height") ?? tag(top, "height"), 16_384),
+    bitrate: positive(tag(top, "bitrate"), Number.MAX_SAFE_INTEGER),
+    videoCodec: label(tag(video, "format") ?? tag(top, "format"), 32),
+    audio,
+  };
+  return media.width === null &&
+    media.videoCodec === null &&
+    media.durationSeconds === null &&
+    audio.length === 0
+    ? null
+    : media;
 }
 
 export interface WebshareSimilarSubtitleItem {
@@ -379,6 +438,7 @@ export class WebshareClient {
       downloadable: booleanFlag(available),
       passwordProtected: booleanFlag(password),
       copyrighted: booleanFlag(copyrighted),
+      media: mediaInfo(xml),
     };
   }
 

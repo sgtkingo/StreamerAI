@@ -35,6 +35,8 @@ export const SOURCE_CONNECTOR_CAPABILITIES = {
     "https",
     "embedded-subtitles",
     "local-files",
+    // Inspect reports measured resolution, codec and audio tracks.
+    "media-details",
   ],
   subtitle: [
     "movie-search",

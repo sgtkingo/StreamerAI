@@ -43,6 +43,30 @@ export const SourceRatingSchema = z
   });
 export type SourceRating = z.infer<typeof SourceRatingSchema>;
 
+export const MediaAudioTrackSchema = z
+  .object({
+    codec: z.string().trim().min(1).max(32).nullable(),
+    channels: z.number().int().positive().max(32).nullable(),
+    language: z.string().trim().min(2).max(16).nullable(),
+  })
+  .strict();
+export type MediaAudioTrack = z.infer<typeof MediaAudioTrackSchema>;
+
+/**
+ * Technical details the provider measured on the file itself (not guessed
+ * from its name). Present only when the provider reports them.
+ */
+export const MediaDetailsSchema = z
+  .object({
+    durationSeconds: z.number().int().positive().max(86_400).nullable(),
+    width: z.number().int().positive().max(16_384).nullable(),
+    height: z.number().int().positive().max(16_384).nullable(),
+    bitrate: z.number().int().positive().nullable(),
+    audioTracks: z.array(MediaAudioTrackSchema).max(16),
+  })
+  .strict();
+export type MediaDetails = z.infer<typeof MediaDetailsSchema>;
+
 export const MediaFormatSchema = z
   .object({
     label: z.string().trim().min(1).max(80),
@@ -51,6 +75,8 @@ export const MediaFormatSchema = z
     videoCodec: z.string().trim().min(1).max(32).nullable(),
     audioLanguages: z.array(z.string().trim().min(2).max(16)).max(12),
     subtitleLanguages: z.array(z.string().trim().min(2).max(16)).max(12),
+    /** Measured by the provider; absent when the format is read from the name. */
+    details: MediaDetailsSchema.optional(),
   })
   .strict();
 export type MediaFormat = z.infer<typeof MediaFormatSchema>;

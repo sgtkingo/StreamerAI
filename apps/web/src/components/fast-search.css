@@ -230,6 +230,32 @@
   font-size: 11px;
   font-weight: 700;
 }
+.fast-search__badge--quiet {
+  border-color: transparent;
+  font-weight: 600;
+}
+.fast-search__badge--warn {
+  border-color: color-mix(in srgb, var(--warning) 45%, transparent);
+  color: var(--warning);
+}
+.fast-search__measured {
+  display: inline-flex;
+  vertical-align: -2px;
+  margin-left: 5px;
+  color: var(--success);
+}
+.fast-search__measured svg {
+  width: 13px;
+  height: 13px;
+}
+.fast-search__row.is-unavailable
+  .fast-search__cell:not(.fast-search__cell--name) {
+  opacity: 0.45;
+}
+.fast-search__row.is-unavailable .fast-search__name {
+  color: var(--slate);
+  text-decoration: line-through;
+}
 .fast-search__play {
   display: inline-grid;
   place-items: center;

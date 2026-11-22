@@ -65,6 +65,13 @@ import {
   type ThematicDiscoveryIntent,
 } from "./thematic-discovery-intent.js";
 
+const DIRECT_DETAIL_CONCURRENCY = 4;
+const DIRECT_FORMAT_TTL_MS = 6 * 60 * 60_000;
+
+function hasMediaDetails(provider: MediaProvider): boolean {
+  return provider.descriptor().capabilities?.includes("media-details") ?? false;
+}
+
 const AGENT_SCHEMA = {
   type: "object",
   additionalProperties: false,
@@ -947,6 +954,11 @@ export class LiveContentCoordinator implements StreamerContentProvider {
   readonly #seriesJobs = new Map<string, SeriesSearchJob>();
   readonly #manualSeriesSearches = new Set<string>();
   readonly #forcedEpisodeSources = new Map<string, TitleSource[]>();
+  /** Measured Fast Search formats; a file's streams never change. */
+  readonly #directFormats = new Map<
+    string,
+    { format: MediaFormat | null; expiresAt: number }
+  >();
 
   constructor(options: LiveContentCoordinatorOptions) {
     this.#agent = options.agent;
@@ -2369,13 +2381,76 @@ export class LiveContentCoordinator implements StreamerContentProvider {
   /** Connected media providers that support direct file-name search. */
   async directSearchProviders(
     profileId: string,
-  ): Promise<{ id: string; name: string }[]> {
+  ): Promise<{ id: string; name: string; mediaDetails: boolean }[]> {
     return (await this.activeProviders(this.#mediaProviders, profileId))
       .filter(([, provider]) => typeof provider.searchText === "function")
-      .map(([id, provider]) => ({
-        id,
-        name: provider.descriptor().displayName,
-      }));
+      .map(([id, provider]) => {
+        const descriptor = provider.descriptor();
+        return {
+          id,
+          name: descriptor.displayName,
+          mediaDetails: hasMediaDetails(provider),
+        };
+      });
+  }
+
+  /**
+   * Measured formats (resolution, codec, audio tracks) for result rows. Null
+   * marks a file the provider would not serve (removed, restricted, not video).
+   */
+  async directDetails(
+    profileId: string,
+    providerId: string,
+    candidateIds: readonly string[],
+  ): Promise<{ candidateId: string; format: MediaFormat | null }[]> {
+    const provider = await this.#directProvider(profileId, providerId);
+    if (!hasMediaDetails(provider)) return [];
+    const results = new Map<string, MediaFormat | null>();
+    const pending = [...new Set(candidateIds)].filter((candidateId) => {
+      const cached = this.#directFormats.get(`${providerId}:${candidateId}`);
+      if (!cached || cached.expiresAt <= this.#now().getTime()) return true;
+      results.set(candidateId, cached.format);
+      return false;
+    });
+    const worker = async () => {
+      for (let next = pending.shift(); next; next = pending.shift()) {
+        const ref = { providerId, candidateId: next };
+        let format: MediaFormat | null = null;
+        let lasting = true;
+        try {
+          format = (
+            await provider.inspect(
+              ref,
+              this.scopedContext(
+                providerId,
+                this.#directContext(profileId, next),
+              ),
+            )
+          ).format;
+        } catch (error) {
+          // Only a definite refusal is remembered; outages are retried.
+          lasting = (error as { kind?: unknown } | null)?.kind === "forbidden";
+        }
+        results.set(next, format);
+        if (!lasting || (format && !format.details)) continue;
+        this.#directFormats.set(`${providerId}:${next}`, {
+          format,
+          expiresAt: this.#now().getTime() + DIRECT_FORMAT_TTL_MS,
+        });
+        if (this.#directFormats.size > 2_000) {
+          const oldest = this.#directFormats.keys().next().value;
+          if (oldest !== undefined) this.#directFormats.delete(oldest);
+        }
+      }
+    };
+    await Promise.all(
+      Array.from({ length: DIRECT_DETAIL_CONCURRENCY }, worker),
+    );
+    return candidateIds.flatMap((candidateId) =>
+      results.has(candidateId)
+        ? [{ candidateId, format: results.get(candidateId) ?? null }]
+        : [],
+    );
   }
 
   /** One provider's results for a free-text query, in the provider's order. */

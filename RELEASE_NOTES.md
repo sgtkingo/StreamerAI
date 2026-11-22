@@ -6,7 +6,19 @@ section moves under the new version and is copied into the GitHub release.
 
 ## Unreleased
 
-_Nothing yet._
+### Improved
+
+- **Real file details from Webshare:** resolution, video codec, length and
+  every audio track (language, codec, channels) now come from what Webshare
+  measured on the file instead of being guessed from its name. A widescreen
+  1920×816 release counts as 1080p, and a Czech dub is found even when the
+  name does not mention it.
+- Source choice for titles and episodes ranks by these real audio languages and
+  resolutions, so the preferred dub wins more reliably.
+- **Fast search** fills the Video and Audio columns with the measured values
+  (marked with a check) shortly after results appear, shows each file's length
+  and marks files Webshare no longer serves as unavailable. Hover a cell for
+  the exact picture size, bitrate and audio tracks.
 
 ## v0.13.0 (2026-11-21)
 

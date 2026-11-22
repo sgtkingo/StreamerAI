@@ -3197,3 +3197,95 @@ describe("LiveContentCoordinator", () => {
     );
   });
 });
+
+describe("Fast Search measured details", () => {
+  it("reads measured formats once per file and remembers only definite refusals", async () => {
+    const format = {
+      label: "1080p · H.264 · mkv",
+      container: "mkv",
+      resolution: "1080p",
+      videoCodec: "H.264",
+      audioLanguages: ["en", "cs"],
+      subtitleLanguages: [],
+      details: {
+        durationSeconds: 8179,
+        width: 1920,
+        height: 816,
+        bitrate: 7036521,
+        audioTracks: [{ codec: "AC3", channels: 2, language: "cs" }],
+      },
+    };
+    let outage = true;
+    const inspect = vi.fn(async (ref: { candidateId: string }) => {
+      if (ref.candidateId === "gone")
+        throw Object.assign(new Error("forbidden"), { kind: "forbidden" });
+      if (ref.candidateId === "flaky" && outage)
+        throw Object.assign(new Error("timeout"), { kind: "timeout" });
+      return {
+        ref: { providerId: "webshare", ...ref },
+        variantId: ref.candidateId,
+        format,
+        directPlay: true,
+        supportsHttpRange: true,
+        embeddedSubtitles: [],
+        provenance: { ...provenance, providerId: "webshare" },
+        expiresAt: null,
+      };
+    });
+    const webshare = {
+      descriptor: () => ({
+        id: "webshare",
+        displayName: "Webshare",
+        connectorVersion: "test",
+        capabilities: ["movie-search", "media-details"],
+      }),
+      search: vi.fn(),
+      searchText: vi.fn(),
+      inspect,
+      createPlayback: vi.fn(),
+    } as unknown as MediaProvider;
+    const coordinator = new LiveContentCoordinator({
+      ...coordinatorDependencies(),
+      media: registry([webshare]),
+      integrationStateStore: await connectedStateStore(),
+      inference: {
+        provider: "ollama",
+        baseUrl: "http://127.0.0.1:11434",
+        model: "test",
+        minimumVersion: "0.5.0",
+        contextTokens: 4096,
+        maxOutputTokens: 512,
+        timeoutMs: 60_000,
+      },
+      localeForProfile: () => "en",
+      now: () => new Date(NOW),
+    });
+
+    expect(await coordinator.directSearchProviders("default")).toEqual([
+      { id: "webshare", name: "Webshare", mediaDetails: true },
+    ]);
+    const first = await coordinator.directDetails("default", "webshare", [
+      "a",
+      "gone",
+      "flaky",
+    ]);
+    expect(first).toEqual([
+      { candidateId: "a", format },
+      { candidateId: "gone", format: null },
+      { candidateId: "flaky", format: null },
+    ]);
+    outage = false;
+    const second = await coordinator.directDetails("default", "webshare", [
+      "a",
+      "gone",
+      "flaky",
+    ]);
+    expect(second.map((entry) => entry.format)).toEqual([format, null, format]);
+    // "a" and "gone" came from the cache; only the outage was retried.
+    expect(
+      inspect.mock.calls.map(
+        ([ref]) => (ref as { candidateId: string }).candidateId,
+      ),
+    ).toEqual(["a", "gone", "flaky", "flaky"]);
+  });
+});

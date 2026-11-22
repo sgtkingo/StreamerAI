@@ -22,7 +22,7 @@ import {
 } from "@streamer-ai/contracts";
 import { randomUUID } from "node:crypto";
 import { ProviderRequestError } from "./provider-http.js";
-import { formatFromReleaseName } from "./release-name.js";
+import { formatFromMeasuredMedia } from "./release-name.js";
 import {
   WebshareClient,
   type WebshareFileInfo,
@@ -97,7 +97,13 @@ export class WebshareMediaProvider implements MediaProvider {
       family: "media",
       displayName: "Webshare",
       connectorVersion: CONNECTOR_VERSION,
-      capabilities: ["movie-search", "episode-search", "direct-play", "https"],
+      capabilities: [
+        "movie-search",
+        "episode-search",
+        "direct-play",
+        "https",
+        "media-details",
+      ],
       supportedLocales: ["cs", "en", "de"],
       setupMode: "credentials",
       credentialFields: [
@@ -237,7 +243,7 @@ export class WebshareMediaProvider implements MediaProvider {
       variant: {
         ref: candidate,
         variantId: candidate.candidateId,
-        format: formatFromReleaseName(file.name, file.type),
+        format: formatFromMeasuredMedia(file.name, file.type, file.media),
         directPlay: true,
         supportsHttpRange: true,
         embeddedSubtitles: [],

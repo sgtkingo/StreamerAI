@@ -683,6 +683,93 @@ describe("provider HTTP clients", () => {
     expect(probeCount).toBe(1);
   });
 
+  it("reads Webshare's measured streams from file_info into the source format", async () => {
+    // Captured from the live API (2026-11-22), widescreen 1080p with CZ dub.
+    const xml =
+      '<?xml version="1.0" encoding="UTF-8"?><response><status>OK</status><name>Dune.1984.1080p.BluRay.DL.DTS.x264-MAJO.mkv</name><description></description><size>7193191779</size><type>mkv</type><adult>0</adult><queued>0</queued><positive_votes>2</positive_votes><negative_votes>1</negative_votes><available>1</available><password>0</password><removed>0</removed><removed_at/><removal_reason/><copyrighted>0</copyrighted><yours>0</yours><stripe_count>10</stripe_count><stripe>https://img.webshare.cz/static2/p/002452/BvN7TrrHhw-L.jpg</stripe><length>8179</length><bitrate>7036521</bitrate><format>H264</format><width>1920</width><height>816</height><fps>23.976023976024</fps><video><stream><format>H264</format><width>1920</width><height>816</height><bitrate>6044521</bitrate><fps>23.976023976024</fps></stream></video><audio><stream><format>DTS</format><channels>6</channels><bitrate>768000</bitrate><language>ENG</language></stream><stream><format>AC3</format><channels>2</channels><bitrate>224000</bitrate><language>CZE</language></stream></audio><app_version>30</app_version></response>';
+    const secrets = new NonPersistentMemorySecretStore();
+    await secrets.set(WEBSHARE_WST_SECRET_KEY, "test-wst");
+    const client = new WebshareClient({
+      secretStore: secrets,
+      fetch: async () => response(200, xml),
+      baseUrl: "https://webshare.test/api",
+    });
+    const file = await client.fileInfo("zMAZnJanNH");
+    expect(file.media).toEqual({
+      durationSeconds: 8179,
+      width: 1920,
+      height: 816,
+      bitrate: 7036521,
+      videoCodec: "H264",
+      audio: [
+        { codec: "DTS", channels: 6, language: "eng" },
+        { codec: "AC3", channels: 2, language: "cze" },
+      ],
+    });
+
+    const variant = await new WebshareMediaProvider({
+      client,
+      issuePlaybackTicket: () => "/unused",
+    }).inspect(
+      { providerId: "webshare", candidateId: "zMAZnJanNH" },
+      {
+        requestId: "request-0001",
+        profileId: "default",
+        locale: "cs",
+        deadlineAt: "2099-01-01T00:00:00.000Z",
+        secretRef: null,
+      },
+    );
+    expect(variant.format).toMatchObject({
+      label: "1080p · H.264 · mkv",
+      resolution: "1080p",
+      videoCodec: "H.264",
+      audioLanguages: ["en", "cs"],
+      details: {
+        durationSeconds: 8179,
+        width: 1920,
+        height: 816,
+        audioTracks: [
+          { codec: "DTS", channels: 6, language: "en" },
+          { codec: "AC3", channels: 2, language: "cs" },
+        ],
+      },
+    });
+  });
+
+  it("keeps the name-based format when Webshare has not analysed a file", async () => {
+    const secrets = new NonPersistentMemorySecretStore();
+    await secrets.set(WEBSHARE_WST_SECRET_KEY, "test-wst");
+    const client = new WebshareClient({
+      secretStore: secrets,
+      fetch: async () =>
+        response(
+          200,
+          "<response><status>OK</status><name>Moon.2009.720p.CZ.avi</name><type>avi</type><size>9</size><available>1</available><password>0</password><copyrighted>0</copyrighted></response>",
+        ),
+      baseUrl: "https://webshare.test/api",
+    });
+    expect((await client.fileInfo("x")).media).toBeNull();
+    const variant = await new WebshareMediaProvider({
+      client,
+      issuePlaybackTicket: () => "/unused",
+    }).inspect(
+      { providerId: "webshare", candidateId: "x" },
+      {
+        requestId: "request-0001",
+        profileId: "default",
+        locale: "cs",
+        deadlineAt: "2099-01-01T00:00:00.000Z",
+        secretRef: null,
+      },
+    );
+    expect(variant.format).toMatchObject({
+      resolution: "720p",
+      audioLanguages: ["cs"],
+    });
+    expect(variant.format.details).toBeUndefined();
+  });
+
   it("rejects TMDB calls when the integration is not configured", async () => {
     const client = new TmdbApiClient({
       secretStore: new NonPersistentMemorySecretStore(),

@@ -17,7 +17,7 @@ import type { StreamerCore } from "../services/streamer-core.js";
 export interface DirectSearchBackend {
   directSearchProviders(
     profileId: string,
-  ): Promise<{ id: string; name: string }[]>;
+  ): Promise<{ id: string; name: string; mediaDetails?: boolean }[]>;
   directSearch(
     profileId: string,
     providerId: string,
@@ -25,6 +25,12 @@ export interface DirectSearchBackend {
     offset: number,
     limit: number,
   ): Promise<MediaCandidate[]>;
+  /** Measured formats for result rows; empty when the source has none. */
+  directDetails?(
+    profileId: string,
+    providerId: string,
+    candidateIds: readonly string[],
+  ): Promise<{ candidateId: string; format: MediaFormat | null }[]>;
   directInspect(
     profileId: string,
     ref: MediaCandidateRef,
@@ -138,6 +144,64 @@ export function registerDirectSearchRoutes(
           error instanceof Error && /not connected/.test(error.message)
             ? error.message
             : "This source did not answer. Try again in a moment.",
+        );
+      }
+    },
+  );
+
+  app.post(
+    "/api/v1/profiles/:profileId/direct-search/details",
+    {
+      schema: {
+        params: profileParams,
+        body: {
+          type: "object",
+          required: ["providerId", "candidateIds"],
+          additionalProperties: false,
+          properties: {
+            providerId: refBody.providerId,
+            candidateIds: {
+              type: "array",
+              minItems: 1,
+              maxItems: PAGE,
+              items: refBody.candidateId,
+            },
+          },
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!backend) return unavailable(reply);
+      const { profileId } = request.params as { profileId: string };
+      const { providerId, candidateIds } = request.body as {
+        providerId: string;
+        candidateIds: string[];
+      };
+      try {
+        const found =
+          (await backend.directDetails?.(
+            profileId,
+            providerId,
+            candidateIds,
+          )) ?? [];
+        return {
+          items: found.map(({ candidateId, format }) => ({
+            candidateId,
+            format: format && {
+              container: format.container,
+              resolution: format.resolution,
+              videoCodec: format.videoCodec,
+              audioLanguages: format.audioLanguages,
+              ...(format.details ? { details: format.details } : {}),
+            },
+          })),
+        };
+      } catch {
+        return failure(
+          reply,
+          502,
+          "DIRECT_DETAILS_FAILED",
+          "File details are unavailable right now.",
         );
       }
     },

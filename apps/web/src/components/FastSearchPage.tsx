@@ -3,6 +3,8 @@ import type { CatalogTitle, PlaybackGrant } from "@streamer-ai/contracts";
 import type {
   DirectSearchDetails,
   DirectSearchItem,
+  DirectSearchFormat,
+  DirectSearchProvider,
   StreamerApi,
 } from "../api/client";
 import { safeErrorMessage } from "../api/client";
@@ -14,11 +16,14 @@ import { useToasts } from "./ToastProvider";
 import {
   EMPTY_FILTERS,
   audioLabel,
+  durationLabel,
   filterItems,
   filterOptions,
   formatLabel,
   itemKey,
+  pictureLabel,
   sortItems,
+  trackLabel,
   videoLabel,
   type FastSearchFilters,
   type FastSearchSort,
@@ -50,6 +55,26 @@ function PlayGlyph() {
   );
 }
 
+function MeasuredMark() {
+  return (
+    <span
+      className="fast-search__measured"
+      title="Measured on the file by the source"
+    >
+      <svg aria-hidden="true" viewBox="0 0 16 16" fill="none">
+        <path
+          d="m3.5 8.5 3 3 6-7"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+      <span className="sr-only">(measured)</span>
+    </span>
+  );
+}
+
 /**
  * Direct file search across connected stream sources: no AI and no catalog
  * matching. Results arrive per source and can be played or saved at once.
@@ -65,9 +90,7 @@ export function FastSearchPage({
 }) {
   const manager = useDownloadManager();
   const { showToast } = useToasts();
-  const [providers, setProviders] = useState<{ id: string; name: string }[]>(
-    [],
-  );
+  const [providers, setProviders] = useState<DirectSearchProvider[]>([]);
   const [providersError, setProvidersError] = useState("");
   const [query, setQuery] = useState("");
   const [submitted, setSubmitted] = useState("");
@@ -100,6 +123,46 @@ export function FastSearchPage({
     };
   }, [api, profileId]);
 
+  /** Replaces name guesses with the streams the source measured. */
+  const loadDetails = async (
+    id: number,
+    providerId: string,
+    candidateIds: string[],
+  ) => {
+    if (!api.getDirectSearchDetails || candidateIds.length === 0) return;
+    let found: { candidateId: string; format: DirectSearchFormat | null }[];
+    try {
+      found = (
+        await api.getDirectSearchDetails(profileId, providerId, candidateIds)
+      ).items;
+    } catch {
+      return; // The name-based columns stay usable.
+    }
+    if (searchId.current !== id) return;
+    const byId = new Map(found.map((entry) => [entry.candidateId, entry]));
+    setResults((current) => {
+      const state = current[providerId];
+      if (!state) return current;
+      return {
+        ...current,
+        [providerId]: {
+          ...state,
+          items: state.items.map((item) => {
+            const entry = byId.get(item.candidateId);
+            if (!entry) return item;
+            if (entry.format === null)
+              return { ...item, unavailable: true, downloadable: false };
+            return {
+              ...item,
+              format: entry.format,
+              measured: Boolean(entry.format.details),
+            };
+          }),
+        },
+      };
+    });
+  };
+
   const loadPage = async (
     id: number,
     providerId: string,
@@ -117,6 +180,14 @@ export function FastSearchPage({
           hasMore: page.hasMore,
         },
       }));
+      if (
+        providers.find((provider) => provider.id === providerId)?.mediaDetails
+      )
+        void loadDetails(
+          id,
+          providerId,
+          page.items.map((item) => item.candidateId),
+        );
     } catch (error) {
       if (searchId.current !== id) return;
       setResults((current) => ({
@@ -542,10 +613,15 @@ export function FastSearchPage({
               const status = downloadState(item);
               const detail = details[key];
               const downloadBlocked = !item.downloadable;
+              const tracks = item.format.details?.audioTracks ?? [];
+              const duration = durationLabel(
+                item.format.details?.durationSeconds,
+              );
               const meta = [
                 formatLabel(item),
                 videoLabel(item),
                 audioLabel(item),
+                duration,
                 item.sizeBytes === null
                   ? ""
                   : formatDownloadSize(item.sizeBytes),
@@ -554,7 +630,16 @@ export function FastSearchPage({
                 .join(" · ");
               return (
                 <Fragment key={key}>
-                  <div className="fast-search__row" role="row" data-meta={meta}>
+                  <div
+                    className={`fast-search__row${item.unavailable ? " is-unavailable" : ""}`}
+                    role="row"
+                    data-meta={meta}
+                    title={
+                      item.unavailable
+                        ? "The source no longer serves this file (removed or restricted)."
+                        : undefined
+                    }
+                  >
                     <div
                       role="cell"
                       className="fast-search__cell fast-search__cell--source"
@@ -583,6 +668,16 @@ export function FastSearchPage({
                           {String(item.episode.episodeNumber).padStart(2, "0")}
                         </span>
                       )}
+                      {duration && (
+                        <span className="fast-search__badge fast-search__badge--quiet">
+                          {duration}
+                        </span>
+                      )}
+                      {item.unavailable && (
+                        <span className="fast-search__badge fast-search__badge--warn">
+                          Unavailable
+                        </span>
+                      )}
                     </div>
                     <div
                       role="cell"
@@ -595,15 +690,19 @@ export function FastSearchPage({
                       role="cell"
                       className="fast-search__cell fast-search__cell--video"
                       data-label="Video"
+                      title={pictureLabel(item.format.details) || undefined}
                     >
                       {videoLabel(item) || "—"}
+                      {item.measured && <MeasuredMark />}
                     </div>
                     <div
                       role="cell"
                       className="fast-search__cell fast-search__cell--audio"
                       data-label="Audio"
+                      title={tracks.map(trackLabel).join("\n") || undefined}
                     >
                       {audioLabel(item) || "—"}
+                      {item.measured && tracks.length > 0 && <MeasuredMark />}
                     </div>
                     <div
                       role="cell"
@@ -623,7 +722,7 @@ export function FastSearchPage({
                         className="fast-search__play"
                         aria-label={`Play ${item.releaseName}`}
                         aria-busy={starting === key || undefined}
-                        disabled={starting !== null}
+                        disabled={starting !== null || item.unavailable}
                         onClick={() => void play(item)}
                       >
                         {starting === key ? (
@@ -673,15 +772,37 @@ export function FastSearchPage({
                               <dt>Format</dt>
                               <dd>{detail.format.label}</dd>
                             </div>
+                            {pictureLabel(detail.format.details) && (
+                              <div>
+                                <dt>Picture</dt>
+                                <dd>{pictureLabel(detail.format.details)}</dd>
+                              </div>
+                            )}
+                            {durationLabel(
+                              detail.format.details?.durationSeconds,
+                            ) && (
+                              <div>
+                                <dt>Length</dt>
+                                <dd>
+                                  {durationLabel(
+                                    detail.format.details?.durationSeconds,
+                                  )}
+                                </dd>
+                              </div>
+                            )}
                             <div>
                               <dt>Audio</dt>
                               <dd>
-                                {(
-                                  detail.languages?.audioLanguages ??
-                                  detail.format.audioLanguages
-                                )
-                                  .map((code) => code.toUpperCase())
-                                  .join(", ") || "Unknown"}
+                                {detail.format.details?.audioTracks.length
+                                  ? detail.format.details.audioTracks
+                                      .map(trackLabel)
+                                      .join(", ")
+                                  : (
+                                      detail.languages?.audioLanguages ??
+                                      detail.format.audioLanguages
+                                    )
+                                      .map((code) => code.toUpperCase())
+                                      .join(", ") || "Unknown"}
                               </dd>
                             </div>
                             <div>

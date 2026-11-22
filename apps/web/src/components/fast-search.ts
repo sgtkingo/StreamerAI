@@ -1,3 +1,4 @@
+import type { MediaAudioTrack, MediaDetails } from "@streamer-ai/contracts";
 import type { DirectSearchItem } from "../api/client";
 
 export type FastSearchSortKey =
@@ -52,6 +53,43 @@ export function audioLabel(item: DirectSearchItem): string {
 }
 export function formatLabel(item: DirectSearchItem): string {
   return item.format.container?.toUpperCase() ?? "";
+}
+
+const CHANNEL_LAYOUTS: Record<number, string> = {
+  1: "mono",
+  2: "2.0",
+  6: "5.1",
+  8: "7.1",
+};
+/** "CS · AC3 2.0" for one measured audio track. */
+export function trackLabel(track: MediaAudioTrack): string {
+  const layout =
+    track.channels === null
+      ? ""
+      : (CHANNEL_LAYOUTS[track.channels] ?? `${track.channels} ch`);
+  return [
+    track.language?.toUpperCase() ?? "Unknown language",
+    [track.codec, layout].filter(Boolean).join(" "),
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+export function durationLabel(seconds: number | null | undefined): string {
+  if (!seconds) return "";
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes} min`;
+  const rest = minutes % 60;
+  return `${Math.floor(minutes / 60)} h${rest ? ` ${rest} min` : ""}`;
+}
+/** "1920×816 · 7.0 Mbit/s" for the measured picture. */
+export function pictureLabel(details: MediaDetails | undefined): string {
+  if (!details) return "";
+  return [
+    details.width && details.height ? `${details.width}×${details.height}` : "",
+    details.bitrate ? `${(details.bitrate / 1_000_000).toFixed(1)} Mbit/s` : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
 }
 
 /** Distinct values offered by the column filters, from the current results. */

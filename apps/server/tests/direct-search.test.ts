@@ -395,3 +395,79 @@ describe("Fast Search downloads", () => {
     db.close();
   });
 });
+
+describe("Fast Search measured details route", () => {
+  it("returns measured formats per file and marks refused files", async () => {
+    const database = openStreamerDatabase({ filename: ":memory:" });
+    database.profiles.create({ id: "p1", name: "Viewer", locale: "en" });
+    const directDetails = vi.fn(async () => [
+      {
+        candidateId: "a",
+        format: {
+          ...formatFromReleaseName("Movie.mkv"),
+          resolution: "1080p",
+          details: {
+            durationSeconds: 60,
+            width: 1920,
+            height: 800,
+            bitrate: null,
+            audioTracks: [{ codec: "AAC", channels: 2, language: "cs" }],
+          },
+        },
+      },
+      { candidateId: "b", format: null },
+    ]);
+    const app = createApp({
+      environment: "test",
+      logger: false,
+      database,
+      directSearch: {
+        directSearchProviders: async () => [],
+        directSearch: async () => [],
+        directDetails,
+        directInspect: async () => {
+          throw new Error("unused");
+        },
+        prepareDirectPlayback: async () => {
+          throw new Error("unused");
+        },
+      },
+    });
+    apps.push(app);
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/profiles/p1/direct-search/details",
+      payload: { providerId: "webshare", candidateIds: ["a", "b"] },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(directDetails).toHaveBeenCalledWith("p1", "webshare", ["a", "b"]);
+    expect(response.json().items).toEqual([
+      {
+        candidateId: "a",
+        format: {
+          container: "mkv",
+          resolution: "1080p",
+          videoCodec: null,
+          audioLanguages: [],
+          details: {
+            durationSeconds: 60,
+            width: 1920,
+            height: 800,
+            bitrate: null,
+            audioTracks: [{ codec: "AAC", channels: 2, language: "cs" }],
+          },
+        },
+      },
+      { candidateId: "b", format: null },
+    ]);
+    const tooMany = await app.inject({
+      method: "POST",
+      url: "/api/v1/profiles/p1/direct-search/details",
+      payload: {
+        providerId: "webshare",
+        candidateIds: Array.from({ length: 51 }, (_, index) => `f${index}`),
+      },
+    });
+    expect(tooMany.statusCode).toBe(400);
+  });
+});
