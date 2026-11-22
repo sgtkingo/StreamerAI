@@ -47,6 +47,13 @@ it("lets only the owner connect agent hosts and limits the bridge token to its p
       }),
     );
     const ownerHeaders = { ...headers, cookie: owner };
+    const entered = await app.inject({
+      method: "POST",
+      url: "/api/v1/auth/local",
+      headers: ownerHeaders,
+      payload: {},
+    });
+    expect(entered.statusCode).toBe(200);
     const profiles = await app.inject({
       url: "/api/v1/profiles",
       headers: ownerHeaders,

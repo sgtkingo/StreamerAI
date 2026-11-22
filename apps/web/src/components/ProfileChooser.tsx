@@ -169,11 +169,9 @@ export function ProfileChooser({
           {profiles.length} of 5 profiles
           {accountName ? ` · ${accountName}` : ""}
         </small>
-        {!onCreate && (
-          <p>
-            <a href="/admin">Open household administration</a>
-          </p>
-        )}
+        <p>
+          <a href="/admin">Open household administration</a>
+        </p>
       </div>
       {adding && (
         <div className="profile-chooser__overlay" role="presentation">

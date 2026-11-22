@@ -115,6 +115,14 @@ describe("owner-only encrypted household API", () => {
         return String(response.headers["set-cookie"]).split(";", 1)[0]!;
       };
       const originalOwner = await owner(original.app, true);
+      // Finish local household setup before authorizing a viewer client.
+      const entered = await original.app.inject({
+        method: "POST",
+        url: "/api/v1/auth/local",
+        headers: { ...headers, cookie: originalOwner },
+        payload: {},
+      });
+      expect(entered.statusCode).toBe(200);
       const destinationOwner = await owner(destination.app);
       const denied = await original.app.inject({
         method: "POST",

@@ -5,6 +5,7 @@ import { LOG_LEVELS, type LogLevel } from "./logging.js";
 const DEFAULT_SERVER_PORT = 4400;
 const DEFAULT_OLLAMA_BASE_URL = "http://127.0.0.1:11434";
 const DEFAULT_OLLAMA_MODEL = "qwen3.5:4b";
+const DEFAULT_ACCOUNT_SERVICE_URL = "https://cloud.streamer-ai.workers.dev";
 
 export interface RuntimeConfig {
   readonly deployment?: {
@@ -131,7 +132,14 @@ function ollamaBaseUrl(value: string | undefined): string {
 export function readRuntimeConfig(
   env: Environment = process.env,
 ): RuntimeConfig {
-  const accountService = env.STREAMERAI_ACCOUNT_SERVICE_URL?.trim();
+  const accessMode = env.STREAMERAI_ACCESS_MODE?.trim() || "trusted-local";
+  if (accessMode !== "paired" && accessMode !== "trusted-local")
+    throw new Error("STREAMERAI_ACCESS_MODE must be paired or trusted-local.");
+  // Installed servers can offer explicit cloud pairing without an environment edit.
+  // The household stays local until its owner approves a device grant.
+  const accountService =
+    env.STREAMERAI_ACCOUNT_SERVICE_URL?.trim() ||
+    (accessMode === "paired" ? DEFAULT_ACCOUNT_SERVICE_URL : "");
   let accountServiceUrl: string | null = null;
   if (accountService) {
     const parsed = new URL(accountService);
@@ -250,14 +258,7 @@ export function readRuntimeConfig(
           );
         return url.origin;
       })(),
-      accessMode: (() => {
-        const mode = env.STREAMERAI_ACCESS_MODE?.trim() || "trusted-local";
-        if (mode !== "paired" && mode !== "trusted-local")
-          throw new Error(
-            "STREAMERAI_ACCESS_MODE must be paired or trusted-local.",
-          );
-        return mode;
-      })(),
+      accessMode,
     },
     accounts: {
       serviceUrl: accountServiceUrl,

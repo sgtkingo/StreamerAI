@@ -12,8 +12,15 @@ yet.
 
 ## Enable accounts
 
-Deploy the identity service as described in [CLOUD_AUTH.md](CLOUD_AUTH.md), then
-set these non-secret values in the home server's `.env` and restart it:
+Paired installations use `https://cloud.streamer-ai.workers.dev` by default,
+including when `STREAMERAI_ACCOUNT_SERVICE_URL` is empty. Open
+**Administration → Cloud → Connect cloud**, sign in with Google or an e-mail
+code, and explicitly approve the displayed device code. Until approval, the
+household stays local and does not contact the cloud service.
+
+To use another identity service, deploy it as described in
+[CLOUD_AUTH.md](CLOUD_AUTH.md), set these non-secret values in the home server's
+`.env` and restart it:
 
 ```dotenv
 STREAMERAI_ACCOUNT_SERVICE_URL=https://cloud.streamer-ai.workers.dev
@@ -27,7 +34,8 @@ the public Worker, never to a private LAN address. Keep the home server on
 the private network or behind a VPN. Public hosting of playback is outside
 this deployment's scope.
 
-An empty account-service URL keeps the existing trusted local mode. That mode
+In `STREAMERAI_ACCESS_MODE=trusted-local`, an empty account-service URL keeps
+the existing trusted local mode. That mode
 does not authenticate a household administrator; anyone able to reach its
 API is trusted. Existing signed-in cloud sessions can keep using local data
 during a cloud outage until their 30-day expiry. New sign-in and online PIN

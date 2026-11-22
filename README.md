@@ -84,11 +84,13 @@ requests to the local server. Copy `.env.example` to `.env` only for non-secret
 runtime overrides. Provider keys and passwords belong in the guided setup flow,
 not in environment files or source control.
 
-To enable Google accounts, set `STREAMERAI_ACCOUNT_SERVICE_URL` to the deployed
-identity Worker and restart the server. See [account setup and migration](docs/ACCOUNTS.md)
-and [Cloudflare deployment](docs/CLOUD_AUTH.md). Leaving it empty keeps the
-household on the home server without cloud management. Online accounts support
-Google and e-mail codes. Apple and Google Drive remain planned.
+To connect an existing household, open **Administration → Cloud → Connect cloud**
+and approve the displayed code after signing in. Paired installations use the
+hosted cloud service by default; an empty `STREAMERAI_ACCOUNT_SERVICE_URL` needs
+no additional setup. Set this variable and restart to use another identity
+Worker. See [account setup and migration](docs/ACCOUNTS.md) and
+[Cloudflare deployment](docs/CLOUD_AUTH.md). Online accounts support Google and
+e-mail codes. Apple and Google Drive remain planned.
 
 The household owns its profiles, shared services and Master PIN. Connecting or
 disconnecting cloud management preserves its identity, data and paired clients.

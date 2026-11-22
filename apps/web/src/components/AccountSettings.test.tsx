@@ -96,6 +96,7 @@ describe("account management", () => {
         ...overview,
         account: { ...overview.account, cloudLinked: false },
         manageUrl: null,
+        cloudConfigured: true,
       }),
       startDeviceAuthorization: vi.fn().mockResolvedValue({
         deviceCode: "grant",
@@ -103,11 +104,16 @@ describe("account management", () => {
         verificationUri: "https://example.com/device",
         verificationUriComplete: "https://example.com/device",
         expiresAt: new Date(Date.now() + 300000).toISOString(),
-        interval: 5,
+        interval: 1,
       }),
+      pollDeviceAuthorization: vi
+        .fn()
+        .mockResolvedValue({ status: "approved" }),
       logout: vi.fn(),
     } as unknown as StreamerApi;
     render(<AccountSettings api={api} profile={profile} />);
+    expect(await screen.findByText("Local only")).toBeVisible();
+    expect(api.startDeviceAuthorization).not.toHaveBeenCalled();
     fireEvent.click(
       await screen.findByRole("button", { name: "Connect cloud" }),
     );
@@ -119,6 +125,15 @@ describe("account management", () => {
         adoptLocalAccount: true,
       }),
     );
+    vi.mocked(api.getAccount!).mockResolvedValue({
+      ...overview,
+      cloudConfigured: true,
+      account: { ...overview.account, cloudLinked: true },
+    });
+    expect(
+      await screen.findByText("Connected", {}, { timeout: 2500 }),
+    ).toBeVisible();
+    expect(api.pollDeviceAuthorization).toHaveBeenCalledWith("grant");
     expect(api.logout).not.toHaveBeenCalled();
   });
   it("disconnects cloud while preserving the household session", async () => {

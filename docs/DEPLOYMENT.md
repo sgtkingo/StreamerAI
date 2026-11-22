@@ -36,10 +36,12 @@ The helper uses the same Dockerfile and cached layers as the server.
 The published web port is bound to host loopback. For local CLI agents and the
 MCP stdio bridge, see [Agent and MCP integration](AGENT_INTEGRATION.md).
 
-Google accounts and TV pairing are optional. Follow [ACCOUNTS.md](ACCOUNTS.md)
-to enable the already deployed identity service through
-`STREAMERAI_ACCOUNT_SERVICE_URL` and configure the actual web origin. The
-first Google owner claims legacy local profiles. Pre-account database upgrades
+Cloud management is optional. Paired installations offer
+**Administration → Cloud → Connect cloud** using the hosted identity service
+without additional environment configuration. Follow [ACCOUNTS.md](ACCOUNTS.md)
+to use another service through `STREAMERAI_ACCOUNT_SERVICE_URL` and configure
+the actual web origin. Client pairing works independently of cloud management.
+Pre-account database upgrades
 create a verified SQLite backup before migrating. Cloudflare infrastructure
 and secret deployment are covered in [CLOUD_AUTH.md](CLOUD_AUTH.md).
 

@@ -13,7 +13,7 @@ import {
   openStreamerDatabase,
   type StreamerDatabase,
 } from "@streamer-ai/database";
-import { fixture, origin } from "../../cloud/test/helpers.js";
+import { fixture } from "../../cloud/test/helpers.js";
 import {
   registeredHousehold,
   profileOperation,
@@ -55,15 +55,17 @@ function server(f: ReturnType<typeof fixture>, name: string) {
   databases.push(database);
   const directory = mkdtempSync(join(tmpdir(), `household-${name}-`));
   directories.push(directory);
+  const cloudRequests: string[] = [];
   const make = () =>
     createApp({
       environment: "test",
       logger: false,
       database,
       secretStore: secrets,
-      accountServiceUrl: origin,
-      accountFetch: (input, init) =>
-        f.worker.fetch(new Request(String(input), init), f.env),
+      accountFetch: (input, init) => {
+        cloudRequests.push(String(input));
+        return f.worker.fetch(new Request(String(input), init), f.env);
+      },
       now: () => new Date(f.now()),
       runtimeConfig: readRuntimeConfig({
         NODE_ENV: "test",
@@ -75,7 +77,7 @@ function server(f: ReturnType<typeof fixture>, name: string) {
     });
   const app = make();
   apps.push(app);
-  return { app, database, secrets, make, directory };
+  return { app, database, secrets, make, directory, cloudRequests };
 }
 async function owner(app: FastifyInstance) {
   const result = await app.inject({
@@ -184,7 +186,13 @@ it("pairs clients locally, preserves the household and PIN through cloud attach/
         headers: clientHeaders,
       })
     ).json(),
-  ).toMatchObject({ authenticated: true, householdReady: true });
+  ).toMatchObject({
+    authenticated: true,
+    householdReady: true,
+    cloudConfigured: true,
+    account: { cloudLinked: false },
+  });
+  expect(first.cloudRequests).toEqual([]);
   expect(
     (
       await first.app.inject({

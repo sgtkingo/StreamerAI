@@ -6,7 +6,12 @@ section moves under the new version and is copied into the GitHub release.
 
 ## Unreleased
 
-_Nothing yet._
+### Improved
+
+- **Cloud connection:** connect an existing local household to cloud management
+  from administration without manually configuring the cloud service address.
+  Pairing preserves the household, profiles and Master PIN.
+- The profile chooser now links directly to household administration.
 
 ## v0.13.1 (2026-11-22)
 
