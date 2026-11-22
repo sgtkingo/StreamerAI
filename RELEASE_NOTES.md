@@ -6,6 +6,10 @@ section moves under the new version and is copied into the GitHub release.
 
 ## Unreleased
 
+_Nothing yet._
+
+## v0.14.0 (2026-11-22)
+
 ### Improved
 
 - **Cloud connection:** connect an existing local household to cloud management
